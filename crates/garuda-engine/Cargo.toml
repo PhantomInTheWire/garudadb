@@ -1,0 +1,17 @@
+[package]
+name = "garuda-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+garuda-meta = { path = "../garuda-meta" }
+garuda-planner = { path = "../garuda-planner" }
+garuda-segment = { path = "../garuda-segment" }
+garuda-storage = { path = "../garuda-storage" }
+garuda-types = { path = "../garuda-types" }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

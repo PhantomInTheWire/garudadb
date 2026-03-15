@@ -1,0 +1,13 @@
+target/
+
+# Lockfile for binary workspace only; ignore until publishing policy is settled.
+Cargo.lock
+
+# macOS
+.DS_Store
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo

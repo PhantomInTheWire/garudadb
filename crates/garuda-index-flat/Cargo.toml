@@ -1,0 +1,9 @@
+[package]
+name = "garuda-index-flat"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+garuda-math = { path = "../garuda-math" }
+garuda-types = { path = "../garuda-types" }

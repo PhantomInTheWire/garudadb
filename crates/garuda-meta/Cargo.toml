@@ -1,0 +1,8 @@
+[package]
+name = "garuda-meta"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+garuda-types = { path = "../garuda-types" }

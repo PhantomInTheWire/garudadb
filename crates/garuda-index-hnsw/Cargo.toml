@@ -1,0 +1,9 @@
+[package]
+name = "garuda-index-hnsw"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+garuda-index-flat = { path = "../garuda-index-flat" }
+garuda-types = { path = "../garuda-types" }

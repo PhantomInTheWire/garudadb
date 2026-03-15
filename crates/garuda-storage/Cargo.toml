@@ -1,0 +1,10 @@
+[package]
+name = "garuda-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+garuda-types = { path = "../garuda-types" }
+serde.workspace = true
+serde_json.workspace = true
