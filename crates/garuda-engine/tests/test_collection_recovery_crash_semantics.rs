@@ -1,8 +1,13 @@
 mod common;
 
-use common::{build_doc, collection_name, database, default_options, default_schema, doc_id};
+use common::{
+    build_doc, collection_name, database, default_options, default_schema, doc_id,
+    options_with_segment_max_docs,
+};
 use garuda_segment::{WalOp, append_wal_ops};
 use garuda_storage::WRITING_SEGMENT_ID;
+use garuda_types::ScalarValue;
+use std::fs;
 
 #[test]
 fn reopen_after_unflushed_writes_should_follow_a_clear_recovery_policy() {
@@ -72,4 +77,96 @@ fn stale_wal_after_flush_does_not_duplicate_checkpointed_writes() {
 
     assert_eq!(reopened.stats().doc_count, 1);
     assert_eq!(fetched.len(), 1);
+}
+
+#[test]
+fn stale_insert_wal_after_flush_does_not_break_reopen_when_doc_was_updated() {
+    let (_root, db) = database("recovery-stale-insert-after-update");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+
+    let original = build_doc("doc-1", 1, "alpha", 0.9, [1.0, 0.0, 0.0, 0.0]);
+    let mut updated = original.clone();
+    updated
+        .fields
+        .insert("category".to_string(), ScalarValue::String("beta".to_string()));
+
+    let inserted = collection.insert(vec![original.clone()]);
+    assert!(inserted[0].status.is_ok());
+
+    let updated_result = collection.update(vec![updated.clone()]);
+    assert!(updated_result[0].status.is_ok());
+
+    collection.flush().expect("flush");
+    append_wal_ops(
+        &collection.path(),
+        WRITING_SEGMENT_ID,
+        &[WalOp::Insert(original)],
+    )
+    .expect("append stale insert");
+    drop(collection);
+
+    let reopened = db
+        .open_collection(&collection_name("docs"))
+        .expect("reopen after stale insert");
+    let fetched = reopened.fetch(vec![doc_id("doc-1")]);
+    let doc = fetched.get(&doc_id("doc-1")).expect("doc present");
+
+    assert_eq!(
+        doc.fields.get("category"),
+        Some(&ScalarValue::String("beta".to_string()))
+    );
+}
+
+#[test]
+fn stale_wal_after_flush_with_rolled_segments_keeps_flushed_docs_visible() {
+    let (_root, db) = database("recovery-stale-wal-rolled-segment");
+    let collection = db
+        .create_collection(default_schema("docs"), options_with_segment_max_docs(1))
+        .expect("create collection");
+
+    let first = build_doc("doc-1", 1, "alpha", 0.9, [1.0, 0.0, 0.0, 0.0]);
+    let second = build_doc("doc-2", 2, "beta", 0.8, [0.0, 1.0, 0.0, 0.0]);
+
+    assert!(collection.insert(vec![first])[0].status.is_ok());
+    assert!(collection.insert(vec![second.clone()])[0].status.is_ok());
+
+    collection.flush().expect("flush");
+    append_wal_ops(
+        &collection.path(),
+        WRITING_SEGMENT_ID,
+        &[WalOp::Insert(second)],
+    )
+    .expect("append stale wal");
+    drop(collection);
+
+    let reopened = db
+        .open_collection(&collection_name("docs"))
+        .expect("reopen after stale wal");
+
+    assert_eq!(reopened.stats().doc_count, 2);
+    assert!(reopened.fetch(vec![doc_id("doc-1")]).contains_key(&doc_id("doc-1")));
+    assert!(reopened.fetch(vec![doc_id("doc-2")]).contains_key(&doc_id("doc-2")));
+}
+
+#[test]
+fn truncated_wal_entry_header_returns_an_error_instead_of_panicking() {
+    let (_root, db) = database("recovery-truncated-wal-header");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+
+    collection.flush().expect("flush");
+
+    let wal_path = collection.path().join("0").join("data.wal");
+    let mut wal_bytes = fs::read(&wal_path).expect("read wal");
+    wal_bytes.truncate(wal_bytes.len() - std::mem::size_of::<u32>());
+    wal_bytes.push(0);
+    wal_bytes.extend_from_slice(&0u32.to_le_bytes());
+    fs::write(&wal_path, wal_bytes).expect("write truncated wal");
+    drop(collection);
+
+    let reopened = db.open_collection(&collection_name("docs"));
+    assert!(reopened.is_err());
 }

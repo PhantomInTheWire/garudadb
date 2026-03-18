@@ -39,7 +39,7 @@ impl CollectionState {
 
     fn is_redundant_wal_op(&self, op: &WalOp) -> bool {
         match op {
-            WalOp::Insert(doc) => self.live_doc_matches(doc),
+            WalOp::Insert(doc) => self.insert_already_applied(doc),
             WalOp::Upsert(doc) => self.live_doc_matches(doc),
             WalOp::Update(doc) => self.update_already_applied(doc),
             WalOp::Delete(doc_id) => self.find_live_record(doc_id).is_none(),
@@ -232,6 +232,10 @@ impl CollectionState {
         };
 
         record.doc == *doc
+    }
+
+    fn insert_already_applied(&self, doc: &Doc) -> bool {
+        self.find_live_record(&doc.id).is_some()
     }
 
     fn update_already_applied(&self, doc: &Doc) -> bool {

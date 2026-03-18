@@ -43,5 +43,4 @@ fn collection_uses_binary_engine_files_instead_of_json_artifacts() {
     assert!(!collection_dir.join("DELETE_STORE.json").exists());
     assert!(!collection_dir.join("VERSION.json").exists());
     assert!(!collection_dir.join("segments").exists());
-    assert!(!collection_dir.join("segments").join("segment-00000000000000000001.json").exists());
 }

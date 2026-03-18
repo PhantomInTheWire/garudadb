@@ -1,8 +1,8 @@
 mod common;
 
 use common::{
-    build_doc, database, default_options, default_schema, dense_vector, doc_id, field_name,
-    seed_collection,
+    build_doc, collection_name, database, default_options, default_schema, dense_vector, doc_id,
+    field_name, seed_collection,
 };
 use garuda_types::{Doc, IndexKind, ScalarType, ScalarValue};
 use std::fs;
@@ -250,4 +250,33 @@ fn failed_checkpoint_restores_rewritten_segment_files() {
             .any(|field| field.name == field_name("is_public"))
     );
     assert!(!doc.fields.contains_key("is_public"));
+}
+
+#[test]
+fn manifest_write_failure_keeps_wal_for_recovery() {
+    let (root, db) = database("exception-manifest-wal");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+
+    let insert = collection.insert(vec![build_doc(
+        "doc-rollback",
+        1,
+        "alpha",
+        0.9,
+        [1.0, 0.0, 0.0, 0.0],
+    )]);
+    assert!(insert[0].status.is_ok());
+
+    let manifest_path = root.join("docs").join("manifest.1");
+    fs::create_dir_all(&manifest_path).expect("create blocking manifest dir");
+
+    assert!(collection.flush().is_err());
+    drop(collection);
+
+    let reopened = db
+        .open_collection(&collection_name("docs"))
+        .expect("reopen after wal-backed recovery");
+    assert_eq!(reopened.fetch(vec![doc_id("doc-rollback")]).len(), 1);
+    assert!(manifest_path.is_dir());
 }

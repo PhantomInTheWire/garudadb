@@ -63,12 +63,26 @@ pub fn read_wal_ops(root: &std::path::Path, segment_id: u64) -> Result<Vec<WalOp
         let tag = bytes[cursor];
         cursor += 1;
 
+        let header_remaining = payload_len.saturating_sub(cursor);
+        if header_remaining < 8 {
+            return Err(Status::err(
+                StatusCode::Internal,
+                "wal entry header is truncated",
+            ));
+        }
+
         let payload_size =
             u64::from_le_bytes(bytes[cursor..cursor + 8].try_into().expect("fixed length"))
                 as usize;
         cursor += 8;
 
-        let end = cursor + payload_size;
+        let Some(end) = cursor.checked_add(payload_size) else {
+            return Err(Status::err(
+                StatusCode::Internal,
+                "wal entry exceeds file payload",
+            ));
+        };
+
         if end > payload_len {
             return Err(Status::err(
                 StatusCode::Internal,
