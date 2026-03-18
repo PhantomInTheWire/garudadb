@@ -54,12 +54,15 @@ fn write_checkpoint_files(
     write_id_map_snapshot(
         &state.path,
         state.manifest.id_map_snapshot_id,
-        &state.id_map,
+        state
+            .id_map
+            .iter()
+            .map(|(doc_id, internal_doc_id)| (doc_id.as_str().to_string(), *internal_doc_id)),
     )?;
     write_delete_snapshot(
         &state.path,
         state.manifest.delete_snapshot_id,
-        &state.deleted_doc_ids,
+        state.delete_store.iter().copied(),
     )?;
     version_manager.write_manifest(&state.manifest)?;
 

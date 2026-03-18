@@ -1,4 +1,5 @@
 use crate::state::CollectionState;
+use garuda_meta::{DeleteStore, IdMap};
 use garuda_segment::{SegmentFile, read_segment, read_wal_ops, sync_segment_meta};
 use garuda_storage::{
     VersionManager, WRITING_SEGMENT_ID, read_delete_snapshot, read_id_map_snapshot,
@@ -7,7 +8,6 @@ use garuda_types::{
     CollectionOptions, CollectionSchema, Manifest, ManifestVersionId, SegmentMeta, SnapshotId,
     Status,
 };
-use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 const INITIAL_DOC_ID: u64 = 1;
@@ -38,8 +38,8 @@ pub(crate) fn create_collection_state(
         manifest,
         persisted_segments: Vec::new(),
         writing_segment,
-        id_map: HashMap::new(),
-        deleted_doc_ids: HashSet::new(),
+        id_map: IdMap::new(),
+        delete_store: DeleteStore::new(),
     }
 }
 
@@ -47,8 +47,8 @@ pub(crate) fn load_collection_state(path: PathBuf) -> Result<CollectionState, St
     let manifest = VersionManager::new(&path).read_latest_manifest()?;
     let writing_segment = load_segment(&path, &manifest.writing_segment)?;
     let persisted_segments = load_persisted_segments(&path, &manifest)?;
-    let id_map = read_id_map_snapshot(&path, manifest.id_map_snapshot_id)?;
-    let deleted_doc_ids = read_delete_snapshot(&path, manifest.delete_snapshot_id)?;
+    let id_map = IdMap::from(read_id_map_snapshot(&path, manifest.id_map_snapshot_id)?);
+    let delete_store = DeleteStore::from(read_delete_snapshot(&path, manifest.delete_snapshot_id)?);
 
     let mut state = CollectionState {
         path,
@@ -56,7 +56,7 @@ pub(crate) fn load_collection_state(path: PathBuf) -> Result<CollectionState, St
         persisted_segments,
         writing_segment,
         id_map,
-        deleted_doc_ids,
+        delete_store,
     };
     replay_writing_segment_wal(&mut state)?;
 

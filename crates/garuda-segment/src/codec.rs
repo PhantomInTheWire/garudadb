@@ -1,6 +1,6 @@
 use garuda_types::{Doc, DocId, ScalarValue, SegmentMeta, Status, StatusCode};
 
-use crate::{SegmentFile, StoredRecord};
+use crate::{RecordState, SegmentFile, StoredRecord};
 
 const SEGMENT_MAGIC: &[u8; 8] = b"GRDSEG01";
 const FORMAT_VERSION: u16 = 1;
@@ -13,7 +13,7 @@ pub fn encode_segment(segment: &SegmentFile) -> Result<Vec<u8>, Status> {
 
     for record in &segment.records {
         writer.write_u64(record.doc_id);
-        writer.write_bool(record.deleted);
+        writer.write_u8(record_state_tag(record.state));
         write_doc(&mut writer, &record.doc)?;
     }
 
@@ -29,13 +29,9 @@ pub fn decode_segment(bytes: &[u8]) -> Result<SegmentFile, Status> {
 
     for _ in 0..record_count {
         let doc_id = reader.read_u64()?;
-        let deleted = reader.read_bool()?;
+        let state = read_record_state(reader.read_u8()?)?;
         let doc = read_doc(&mut reader)?;
-        records.push(StoredRecord {
-            doc_id,
-            deleted,
-            doc,
-        });
+        records.push(StoredRecord { doc_id, state, doc });
     }
 
     reader.finish()?;
@@ -155,6 +151,24 @@ fn read_scalar_value(reader: &mut BinaryReader<'_>) -> Result<ScalarValue, Statu
         _ => Err(Status::err(
             StatusCode::Internal,
             "unrecognized scalar value tag",
+        )),
+    }
+}
+
+fn record_state_tag(state: RecordState) -> u8 {
+    match state {
+        RecordState::Live => 0,
+        RecordState::Deleted => 1,
+    }
+}
+
+fn read_record_state(tag: u8) -> Result<RecordState, Status> {
+    match tag {
+        0 => Ok(RecordState::Live),
+        1 => Ok(RecordState::Deleted),
+        _ => Err(Status::err(
+            StatusCode::Internal,
+            "unrecognized record state tag",
         )),
     }
 }

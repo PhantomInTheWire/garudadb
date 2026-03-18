@@ -9,10 +9,16 @@ use garuda_storage::{
 use garuda_types::{Doc, DocId, SegmentMeta, Status};
 pub use wal::{WalOp, append_wal_ops, read_wal_ops, reset_wal};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecordState {
+    Live,
+    Deleted,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct StoredRecord {
     pub doc_id: u64,
-    pub deleted: bool,
+    pub state: RecordState,
     pub doc: Doc,
 }
 
@@ -47,7 +53,7 @@ pub fn sync_segment_meta(segment: &mut SegmentFile) {
         min_doc_id = Some(min_doc_id.unwrap_or(record_id).min(record_id));
         max_doc_id = Some(max_doc_id.unwrap_or(record_id).max(record_id));
 
-        if !record.deleted {
+        if matches!(record.state, RecordState::Live) {
             live_doc_count += 1;
         }
     }
@@ -95,5 +101,5 @@ pub fn remove_segment(root: &std::path::Path, segment_id: u64) -> Result<(), Sta
 pub fn doc_exists(records: &[StoredRecord], id: &DocId) -> bool {
     records
         .iter()
-        .any(|record| record.doc.id == *id && !record.deleted)
+        .any(|record| record.doc.id == *id && matches!(record.state, RecordState::Live))
 }

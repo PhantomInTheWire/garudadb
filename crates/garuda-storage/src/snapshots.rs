@@ -16,12 +16,9 @@ pub enum SnapshotKind {
 pub fn write_id_map_snapshot(
     root: &Path,
     snapshot_id: SnapshotId,
-    entries: &HashMap<DocId, u64>,
+    entries: impl IntoIterator<Item = (String, u64)>,
 ) -> Result<(), Status> {
-    let mut ordered_entries = entries
-        .iter()
-        .map(|(doc_id, internal_doc_id)| (doc_id.as_str().to_string(), *internal_doc_id))
-        .collect::<Vec<_>>();
+    let mut ordered_entries = entries.into_iter().collect::<Vec<_>>();
     ordered_entries.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
 
     let bytes = encode_id_map(&ordered_entries)?;
@@ -46,9 +43,9 @@ pub fn read_id_map_snapshot(
 pub fn write_delete_snapshot(
     root: &Path,
     snapshot_id: SnapshotId,
-    deleted_doc_ids: &HashSet<u64>,
+    deleted_doc_ids: impl IntoIterator<Item = u64>,
 ) -> Result<(), Status> {
-    let mut ids = deleted_doc_ids.iter().copied().collect::<Vec<_>>();
+    let mut ids = deleted_doc_ids.into_iter().collect::<Vec<_>>();
     ids.sort_unstable();
 
     let bytes = encode_delete_snapshot(&ids)?;
