@@ -3,7 +3,6 @@ mod checkpoint_service;
 mod filter;
 mod filter_parser;
 mod lock;
-mod optimize;
 mod query;
 mod recovery_service;
 mod schema_ddl;
@@ -17,7 +16,6 @@ mod write_service;
 
 use checkpoint_service::checkpoint_state;
 use lock::CollectionLock;
-use optimize::optimize_segments;
 use query::{collect_matching_doc_ids, execute_query};
 use recovery_service::{create_collection_state, load_collection_state};
 use schema::{validate_create_options, validate_schema};
@@ -169,11 +167,9 @@ impl Collection {
 
     pub fn optimize(&self, _options: OptimizeOptions) -> Result<(), Status> {
         self.mutate_and_checkpoint(|state| {
-            optimize_segments(
-                &mut state.segments,
-                &mut state.catalog.next_segment_id,
-                state.catalog.options.segment_max_docs,
-            );
+            state
+                .segments
+                .optimize(&mut state.catalog.next_segment_id, state.catalog.options.segment_max_docs);
             state.rebuild_indexes();
 
             Ok(())
