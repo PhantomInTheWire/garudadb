@@ -15,11 +15,9 @@ mod validation;
 mod write_service;
 
 use checkpoint_service::checkpoint_state;
-use garuda_math::score_doc;
-use garuda_meta::evaluate_filter;
 use lock::CollectionLock;
 use optimize::optimize_segments;
-use query::{apply_query_projection, parse_query_filter, resolve_query_vector};
+use query::{collect_matching_doc_ids, execute_query};
 use recovery_service::{create_collection_state, load_collection_state};
 use schema::{validate_create_options, validate_schema};
 use schema_ddl::{
@@ -43,7 +41,7 @@ use write_service::{WriteCommand, apply_write_command};
 
 use garuda_types::{
     CollectionName, CollectionOptions, CollectionSchema, CollectionStats, Doc, DocId, FieldName,
-    IndexParams, OptimizeOptions, ScalarFieldSchema, Status, StatusCode, VectorQuery, WriteResult,
+    IndexParams, OptimizeOptions, ScalarFieldSchema, Status, VectorQuery, WriteResult,
 };
 
 #[derive(Clone)]
@@ -204,12 +202,10 @@ impl Collection {
 
     pub fn delete_by_filter(&self, raw_filter: &str) -> Result<(), Status> {
         let state = self.read_state();
-        let filter = parse_query_filter(Some(raw_filter), &state.manifest.schema)?;
-        let Some(filter) = filter else {
+        let ids = collect_matching_doc_ids(&state, raw_filter)?;
+        if ids.is_empty() {
             return Ok(());
-        };
-
-        let ids = collect_matching_doc_ids(&state, &filter);
+        }
         drop(state);
 
         for result in self.delete(ids) {
@@ -240,13 +236,7 @@ impl Collection {
 
     pub fn query(&self, query: VectorQuery) -> Result<Vec<Doc>, Status> {
         let state = self.read_state();
-        ensure_query_uses_known_vector_field(&state, &query)?;
-
-        let filter = parse_query_filter(query.filter.as_deref(), &state.manifest.schema)?;
-        let query_vector = resolve_query_vector(&query, &state)?;
-        let docs = collect_matching_docs(&state, &query, filter.as_ref())?;
-
-        Ok(score_and_sort_docs(&state, docs, &query_vector, &query))
+        execute_query(&state, query)
     }
 
     fn checkpoint(&self) -> Result<(), Status> {
@@ -296,82 +286,4 @@ fn fetch_doc(state: &CollectionState, id: &DocId) -> Option<Doc> {
     let mut doc = record.doc.clone();
     doc.score = Some(0.0);
     Some(doc)
-}
-
-fn ensure_query_uses_known_vector_field(
-    state: &CollectionState,
-    query: &VectorQuery,
-) -> Result<(), Status> {
-    if query.field_name == state.manifest.schema.vector.name {
-        return Ok(());
-    }
-
-    Err(Status::err(
-        StatusCode::InvalidArgument,
-        "unknown vector field",
-    ))
-}
-
-fn collect_matching_docs(
-    state: &CollectionState,
-    query: &VectorQuery,
-    filter: Option<&garuda_types::FilterExpr>,
-) -> Result<Vec<Doc>, Status> {
-    let mut docs = state.all_live_docs();
-
-    if let Some(filter) = filter {
-        docs.retain(|doc| evaluate_filter(filter, &doc.fields));
-    }
-
-    if query.top_k == 0 {
-        return Ok(Vec::new());
-    }
-
-    Ok(docs)
-}
-
-fn collect_matching_doc_ids(
-    state: &CollectionState,
-    filter: &garuda_types::FilterExpr,
-) -> Vec<DocId> {
-    let mut ids = Vec::new();
-
-    for record in state.all_live_records() {
-        if !evaluate_filter(filter, &record.doc.fields) {
-            continue;
-        }
-
-        ids.push(record.doc.id);
-    }
-
-    ids
-}
-
-fn score_and_sort_docs(
-    state: &CollectionState,
-    docs: Vec<Doc>,
-    query_vector: &[f32],
-    query: &VectorQuery,
-) -> Vec<Doc> {
-    let mut scored_docs = Vec::new();
-
-    for mut doc in docs {
-        doc.score = Some(score_doc(
-            state.manifest.schema.vector.metric,
-            query_vector,
-            &doc.vector,
-        ));
-        apply_query_projection(&mut doc, query);
-        scored_docs.push(doc);
-    }
-
-    scored_docs.sort_by(|lhs, rhs| {
-        rhs.score
-            .unwrap_or_default()
-            .total_cmp(&lhs.score.unwrap_or_default())
-            .then_with(|| lhs.id.cmp(&rhs.id))
-    });
-    scored_docs.truncate(query.top_k);
-
-    scored_docs
 }

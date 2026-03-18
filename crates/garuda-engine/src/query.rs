@@ -1,6 +1,9 @@
 use crate::filter::{parse_filter, validate_filter};
 use crate::state::CollectionState;
-use garuda_types::{CollectionSchema, Doc, QueryVectorSource, Status, StatusCode, VectorQuery};
+use garuda_math::score_doc;
+use garuda_meta::evaluate_filter;
+use garuda_planner::{QueryPlan, SegmentScanMode, build_query_plan};
+use garuda_types::{CollectionSchema, Doc, DocId, QueryVectorSource, Status, StatusCode, VectorQuery};
 use std::collections::BTreeMap;
 
 pub(crate) fn parse_query_filter(
@@ -23,12 +26,52 @@ pub(crate) fn parse_required_filter(
     Ok(expr)
 }
 
-pub(crate) fn apply_query_projection(doc: &mut Doc, query: &VectorQuery) {
-    if !query.include_vector {
+pub(crate) fn execute_query(
+    state: &CollectionState,
+    query: VectorQuery,
+) -> Result<Vec<Doc>, Status> {
+    let filter = parse_query_filter(query.filter.as_deref(), &state.manifest.schema)?;
+    let plan = build_query_plan(query, filter);
+    ensure_query_uses_known_vector_field(state, &plan)?;
+
+    if plan.top_k == 0 {
+        return Ok(Vec::new());
+    }
+
+    let query_vector = resolve_query_vector(&plan, state)?;
+    let docs = collect_matching_docs(state, &plan);
+
+    Ok(score_and_sort_docs(state, docs, &query_vector, &plan))
+}
+
+pub(crate) fn collect_matching_doc_ids(
+    state: &CollectionState,
+    raw_filter: &str,
+) -> Result<Vec<DocId>, Status> {
+    let filter = parse_query_filter(Some(raw_filter), &state.manifest.schema)?;
+    let Some(filter) = filter else {
+        return Ok(Vec::new());
+    };
+
+    let mut ids = Vec::new();
+
+    for record in state.all_live_records() {
+        if !evaluate_filter(&filter, &record.doc.fields) {
+            continue;
+        }
+
+        ids.push(record.doc.id);
+    }
+
+    Ok(ids)
+}
+
+fn apply_query_projection(doc: &mut Doc, plan: &QueryPlan) {
+    if !plan.include_vector {
         doc.vector.clear();
     }
 
-    let Some(output_fields) = &query.output_fields else {
+    let Some(output_fields) = &plan.output_fields else {
         return;
     };
 
@@ -44,11 +87,8 @@ pub(crate) fn apply_query_projection(doc: &mut Doc, query: &VectorQuery) {
     doc.fields = filtered_fields;
 }
 
-pub(crate) fn resolve_query_vector(
-    query: &VectorQuery,
-    state: &CollectionState,
-) -> Result<Vec<f32>, Status> {
-    match &query.source {
+fn resolve_query_vector(plan: &QueryPlan, state: &CollectionState) -> Result<Vec<f32>, Status> {
+    match &plan.source {
         QueryVectorSource::Vector(vector) => {
             if vector.len() != state.manifest.schema.vector.dimension {
                 return Err(Status::err(
@@ -70,4 +110,61 @@ pub(crate) fn resolve_query_vector(
             Ok(record.doc.vector.clone())
         }
     }
+}
+
+fn ensure_query_uses_known_vector_field(
+    state: &CollectionState,
+    plan: &QueryPlan,
+) -> Result<(), Status> {
+    if plan.field_name == state.manifest.schema.vector.name {
+        return Ok(());
+    }
+
+    Err(Status::err(
+        StatusCode::InvalidArgument,
+        "unknown vector field",
+    ))
+}
+
+fn collect_matching_docs(state: &CollectionState, plan: &QueryPlan) -> Vec<Doc> {
+    let mut docs = state.all_live_docs();
+
+    if matches!(plan.scan_mode, SegmentScanMode::FilteredScan) {
+        let filter = plan
+            .filter
+            .as_ref()
+            .expect("filtered scans must carry a filter");
+        docs.retain(|doc| evaluate_filter(filter, &doc.fields));
+    }
+
+    docs
+}
+
+fn score_and_sort_docs(
+    state: &CollectionState,
+    docs: Vec<Doc>,
+    query_vector: &[f32],
+    plan: &QueryPlan,
+) -> Vec<Doc> {
+    let mut scored_docs = Vec::new();
+
+    for mut doc in docs {
+        doc.score = Some(score_doc(
+            state.manifest.schema.vector.metric,
+            query_vector,
+            &doc.vector,
+        ));
+        apply_query_projection(&mut doc, plan);
+        scored_docs.push(doc);
+    }
+
+    scored_docs.sort_by(|lhs, rhs| {
+        rhs.score
+            .unwrap_or_default()
+            .total_cmp(&lhs.score.unwrap_or_default())
+            .then_with(|| lhs.id.cmp(&rhs.id))
+    });
+    scored_docs.truncate(plan.top_k);
+
+    scored_docs
 }
