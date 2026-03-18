@@ -7,4 +7,3 @@ license.workspace = true
 [dependencies]
 garuda-types = { path = "../garuda-types" }
 serde.workspace = true
-serde_json.workspace = true
