@@ -1,12 +1,13 @@
 mod checkpoint_service;
-mod ddl;
 mod filter;
 mod filter_parser;
 mod lock;
 mod optimize;
 mod query;
 mod recovery_service;
+mod schema_ddl;
 mod schema;
+mod segment_ddl;
 mod segment_manager;
 mod state;
 mod storage;
@@ -14,11 +15,6 @@ mod validation;
 mod write_service;
 
 use checkpoint_service::checkpoint_state;
-use ddl::{
-    backfill_new_column, drop_column_from_schema, drop_column_from_state,
-    ensure_column_can_be_added, ensure_vector_index_field, flat_index_params,
-    rename_column_in_schema, rename_column_in_state, set_vector_index_params,
-};
 use garuda_math::score_doc;
 use garuda_meta::evaluate_filter;
 use lock::CollectionLock;
@@ -26,6 +22,15 @@ use optimize::optimize_segments;
 use query::{apply_query_projection, parse_query_filter, resolve_query_vector};
 use recovery_service::{create_collection_state, load_collection_state};
 use schema::{validate_create_options, validate_schema};
+use schema_ddl::{
+    drop_column as drop_column_from_schema, ensure_column_can_be_added,
+    ensure_vector_index_field, flat_index_params, rename_column as rename_column_in_schema,
+    set_vector_index_params,
+};
+use segment_ddl::{
+    backfill_new_column, drop_column as drop_column_from_state,
+    rename_column as rename_column_in_state,
+};
 use state::CollectionState;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -122,8 +127,8 @@ impl Collection {
 
     pub fn create_index(&self, field_name: &FieldName, params: IndexParams) -> Result<(), Status> {
         self.mutate_and_checkpoint(|state| {
-            ensure_vector_index_field(state, field_name)?;
-            set_vector_index_params(state, params);
+            ensure_vector_index_field(&state.manifest.schema, field_name)?;
+            set_vector_index_params(&mut state.manifest.schema, params);
             state.refresh_manifest();
 
             Ok(())
@@ -136,11 +141,11 @@ impl Collection {
 
     pub fn add_column(&self, field: ScalarFieldSchema) -> Result<(), Status> {
         self.mutate_and_checkpoint(|state| {
-            ensure_column_can_be_added(state, &field)?;
+            ensure_column_can_be_added(&state.manifest.schema, &field)?;
             validate_field_default(&field)?;
 
             state.manifest.schema.fields.push(field.clone());
-            backfill_new_column(state, &field);
+            backfill_new_column(&mut state.segments, &field);
             state.refresh_manifest();
 
             Ok(())
@@ -149,8 +154,8 @@ impl Collection {
 
     pub fn alter_column(&self, old_name: &FieldName, new_name: &FieldName) -> Result<(), Status> {
         self.mutate_and_checkpoint(|state| {
-            rename_column_in_schema(state, old_name, new_name)?;
-            rename_column_in_state(state, old_name, new_name);
+            rename_column_in_schema(&mut state.manifest.schema, old_name, new_name)?;
+            rename_column_in_state(&mut state.segments, old_name, new_name);
             state.refresh_manifest();
 
             Ok(())
@@ -159,8 +164,8 @@ impl Collection {
 
     pub fn drop_column(&self, name: &FieldName) -> Result<(), Status> {
         self.mutate_and_checkpoint(|state| {
-            drop_column_from_schema(state, name)?;
-            drop_column_from_state(state, name);
+            drop_column_from_schema(&mut state.manifest.schema, name)?;
+            drop_column_from_state(&mut state.segments, name);
             state.refresh_manifest();
 
             Ok(())
