@@ -1,6 +1,6 @@
 mod common;
 
-use common::{database, default_options, default_schema};
+use common::{database, default_options, default_schema, dense_vector, field_name};
 use garuda_types::VectorQuery;
 
 #[test]
@@ -13,7 +13,11 @@ fn top_k_should_cap_results_without_returning_more_documents() {
     common::seed_more_collection_docs(&collection);
 
     let results = collection
-        .query(VectorQuery::by_vector("embedding", vec![1.0, 0.0, 0.0, 0.0], 3))
+        .query(VectorQuery::by_vector(
+            field_name("embedding"),
+            dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
+            3,
+        ))
         .expect("query");
     assert!(results.len() <= 3);
 }
@@ -28,7 +32,11 @@ fn repeated_queries_should_not_duplicate_documents_in_one_result_set() {
     common::seed_more_collection_docs(&collection);
 
     let results = collection
-        .query(VectorQuery::by_vector("embedding", vec![0.0, 1.0, 0.0, 0.0], 10))
+        .query(VectorQuery::by_vector(
+            field_name("embedding"),
+            dense_vector(vec![0.0, 1.0, 0.0, 0.0]),
+            10,
+        ))
         .expect("query");
     let mut ids = results.iter().map(|doc| doc.id.clone()).collect::<Vec<_>>();
     ids.sort();

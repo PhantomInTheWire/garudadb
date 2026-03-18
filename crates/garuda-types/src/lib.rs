@@ -1,7 +1,145 @@
 use serde::{Deserialize, Serialize};
+use std::borrow::Borrow;
 use std::collections::BTreeMap;
+use std::fmt;
 
-pub type DocId = u64;
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct CollectionName(String);
+
+impl CollectionName {
+    pub fn parse(value: impl Into<String>) -> Result<Self, Status> {
+        let value = value.into();
+
+        if value.is_empty() {
+            return Err(Status::err(
+                StatusCode::InvalidArgument,
+                "collection name cannot be empty",
+            ));
+        }
+
+        let valid = value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-');
+
+        if !valid {
+            return Err(Status::err(
+                StatusCode::InvalidArgument,
+                "collection name may only use letters, numbers, '_' and '-'",
+            ));
+        }
+
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for CollectionName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl Borrow<str> for CollectionName {
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct FieldName(String);
+
+impl FieldName {
+    pub fn parse(value: impl Into<String>) -> Result<Self, Status> {
+        let value = value.into();
+
+        if value.is_empty() {
+            return Err(Status::err(
+                StatusCode::InvalidArgument,
+                "field name cannot be empty",
+            ));
+        }
+
+        let mut chars = value.chars();
+        let Some(first) = chars.next() else {
+            return Err(Status::err(
+                StatusCode::InvalidArgument,
+                "field name cannot be empty",
+            ));
+        };
+
+        if !first.is_ascii_alphabetic() && first != '_' {
+            return Err(Status::err(
+                StatusCode::InvalidArgument,
+                "field name must start with a letter or '_'",
+            ));
+        }
+
+        let valid = chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+        if !valid {
+            return Err(Status::err(
+                StatusCode::InvalidArgument,
+                "field name may only use letters, numbers, and '_'",
+            ));
+        }
+
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for FieldName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl Borrow<str> for FieldName {
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct DocId(String);
+
+impl DocId {
+    pub fn parse(value: impl Into<String>) -> Result<Self, Status> {
+        let value = value.into();
+
+        if value.is_empty() {
+            return Err(Status::err(
+                StatusCode::InvalidArgument,
+                "document id cannot be empty",
+            ));
+        }
+
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for DocId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl Borrow<str> for DocId {
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+
+pub type InternalDocId = u64;
 pub type SegmentId = u64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,14 +200,14 @@ impl IndexParams {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScalarFieldSchema {
-    pub name: String,
+    pub name: FieldName,
     pub field_type: ScalarType,
     pub nullable: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VectorFieldSchema {
-    pub name: String,
+    pub name: FieldName,
     pub dimension: usize,
     pub metric: DistanceMetric,
     pub index: IndexParams,
@@ -77,8 +215,8 @@ pub struct VectorFieldSchema {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CollectionSchema {
-    pub name: String,
-    pub primary_key: String,
+    pub name: CollectionName,
+    pub primary_key: FieldName,
     pub fields: Vec<ScalarFieldSchema>,
     pub vector: VectorFieldSchema,
 }
@@ -123,24 +261,52 @@ impl ScalarValue {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Doc {
-    pub id: String,
+    pub id: DocId,
     pub fields: BTreeMap<String, ScalarValue>,
     pub vector: Vec<f32>,
     pub score: Option<f32>,
 }
 
 impl Doc {
-    pub fn new(
-        id: impl Into<String>,
-        fields: BTreeMap<String, ScalarValue>,
-        vector: Vec<f32>,
-    ) -> Self {
+    pub fn new(id: DocId, fields: BTreeMap<String, ScalarValue>, vector: DenseVector) -> Self {
         Self {
-            id: id.into(),
+            id,
             fields,
-            vector,
+            vector: vector.into_vec(),
             score: None,
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DenseVector(Vec<f32>);
+
+impl DenseVector {
+    pub fn parse(values: Vec<f32>) -> Result<Self, Status> {
+        if values.is_empty() {
+            return Err(Status::err(
+                StatusCode::InvalidArgument,
+                "vector cannot be empty",
+            ));
+        }
+
+        Ok(Self(values))
+    }
+
+    pub fn as_slice(&self) -> &[f32] {
+        &self.0
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn into_vec(self) -> Vec<f32> {
+        self.0
     }
 }
 
@@ -158,9 +324,9 @@ pub enum FilterExpr {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VectorQuery {
-    pub field_name: String,
-    pub vector: Option<Vec<f32>>,
-    pub id: Option<String>,
+    pub field_name: FieldName,
+    pub vector: Option<DenseVector>,
+    pub id: Option<DocId>,
     pub top_k: usize,
     pub filter: Option<String>,
     pub include_vector: bool,
@@ -169,9 +335,9 @@ pub struct VectorQuery {
 }
 
 impl VectorQuery {
-    pub fn by_vector(field_name: impl Into<String>, vector: Vec<f32>, top_k: usize) -> Self {
+    pub fn by_vector(field_name: FieldName, vector: DenseVector, top_k: usize) -> Self {
         Self {
-            field_name: field_name.into(),
+            field_name,
             vector: Some(vector),
             id: None,
             top_k,
@@ -221,21 +387,21 @@ impl Status {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WriteResult {
-    pub id: String,
+    pub id: DocId,
     pub status: Status,
 }
 
 impl WriteResult {
-    pub fn ok(id: impl Into<String>) -> Self {
+    pub fn ok(id: DocId) -> Self {
         Self {
-            id: id.into(),
+            id,
             status: Status::ok(),
         }
     }
 
-    pub fn err(id: impl Into<String>, code: StatusCode, message: impl Into<String>) -> Self {
+    pub fn err(id: DocId, code: StatusCode, message: impl Into<String>) -> Self {
         Self {
-            id: id.into(),
+            id,
             status: Status::err(code, message),
         }
     }
@@ -251,8 +417,8 @@ pub struct CollectionStats {
 pub struct SegmentMeta {
     pub id: SegmentId,
     pub path: String,
-    pub min_doc_id: Option<DocId>,
-    pub max_doc_id: Option<DocId>,
+    pub min_doc_id: Option<InternalDocId>,
+    pub max_doc_id: Option<InternalDocId>,
     pub doc_count: usize,
 }
 
@@ -260,7 +426,7 @@ pub struct SegmentMeta {
 pub struct Manifest {
     pub schema: CollectionSchema,
     pub options: CollectionOptions,
-    pub next_doc_id: DocId,
+    pub next_doc_id: InternalDocId,
     pub next_segment_id: SegmentId,
     pub writing_segment: SegmentMeta,
     pub persisted_segments: Vec<SegmentMeta>,

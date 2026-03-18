@@ -1,6 +1,6 @@
 mod common;
 
-use common::{database, default_options, default_schema, seed_collection};
+use common::{collection_name, database, default_options, default_schema, doc_id, seed_collection};
 
 #[test]
 fn open_collection_after_writes_preserves_data() {
@@ -11,8 +11,10 @@ fn open_collection_after_writes_preserves_data() {
     seed_collection(&collection);
     collection.flush().expect("flush");
 
-    let reopened = db.open_collection("docs").expect("reopen");
+    let reopened = db
+        .open_collection(&collection_name("docs"))
+        .expect("reopen");
     assert_eq!(reopened.stats().doc_count, 4);
-    let fetched = reopened.fetch(vec!["doc-1".to_string(), "doc-4".to_string()]);
+    let fetched = reopened.fetch(vec![doc_id("doc-1"), doc_id("doc-4")]);
     assert_eq!(fetched.len(), 2);
 }

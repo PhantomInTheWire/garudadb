@@ -1,6 +1,8 @@
 mod common;
 
-use common::{database, default_options, default_schema, seed_collection};
+use common::{
+    database, default_options, default_schema, dense_vector, field_name, seed_collection,
+};
 use garuda_types::{IndexKind, VectorQuery};
 
 #[test]
@@ -13,18 +15,18 @@ fn hnsw_matches_flat_ground_truth_for_small_fixture() {
 
     let flat = collection
         .query(VectorQuery::by_vector(
-            "embedding",
-            vec![1.0, 0.0, 0.0, 0.0],
+            field_name("embedding"),
+            dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
             3,
         ))
         .expect("flat query");
     collection
-        .create_index("embedding", IndexKind::Hnsw)
+        .create_index(&field_name("embedding"), IndexKind::Hnsw)
         .expect("create hnsw");
     let hnsw = collection
         .query(VectorQuery::by_vector(
-            "embedding",
-            vec![1.0, 0.0, 0.0, 0.0],
+            field_name("embedding"),
+            dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
             3,
         ))
         .expect("hnsw query");

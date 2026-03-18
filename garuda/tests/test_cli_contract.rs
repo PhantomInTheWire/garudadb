@@ -41,20 +41,9 @@ fn init_should_create_or_validate_a_workspace_root() {
 #[test]
 fn create_and_stats_should_form_a_basic_user_journey() {
     let tmp = temp_root("create-stats-contract");
-    let create = run_cli(&[
-        "--root",
-        tmp.to_str().expect("utf8"),
-        "create",
-        "docs",
-        "4",
-    ]);
+    let create = run_cli(&["--root", tmp.to_str().expect("utf8"), "create", "docs", "4"]);
     assert!(create.status.success(), "create should succeed");
 
-    let stats = run_cli(&[
-        "--root",
-        tmp.to_str().expect("utf8"),
-        "stats",
-        "docs",
-    ]);
+    let stats = run_cli(&["--root", tmp.to_str().expect("utf8"), "stats", "docs"]);
     assert!(stats.status.success(), "stats should succeed after create");
 }

@@ -1,6 +1,9 @@
 mod common;
 
-use common::{database, default_options, default_schema, seed_collection, seed_more_collection_docs};
+use common::{
+    database, default_options, default_schema, dense_vector, field_name, seed_collection,
+    seed_more_collection_docs,
+};
 use garuda_types::VectorQuery;
 
 #[test]
@@ -12,7 +15,11 @@ fn filters_should_respect_boolean_grouping_and_not_leak_non_matching_docs() {
     seed_collection(&collection);
     seed_more_collection_docs(&collection);
 
-    let mut query = VectorQuery::by_vector("embedding", vec![0.0, 1.0, 0.0, 0.0], 10);
+    let mut query = VectorQuery::by_vector(
+        field_name("embedding"),
+        dense_vector(vec![0.0, 1.0, 0.0, 0.0]),
+        10,
+    );
     query.filter = Some("(category = 'beta' OR category = 'gamma') AND rank >= 4".to_string());
     let results = collection.query(query).expect("query");
 
@@ -33,11 +40,19 @@ fn filters_on_unknown_fields_or_invalid_types_should_error() {
         .expect("create collection");
     seed_collection(&collection);
 
-    let mut unknown_field = VectorQuery::by_vector("embedding", vec![1.0, 0.0, 0.0, 0.0], 5);
+    let mut unknown_field = VectorQuery::by_vector(
+        field_name("embedding"),
+        dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
+        5,
+    );
     unknown_field.filter = Some("missing_field = 'x'".to_string());
     assert!(collection.query(unknown_field).is_err());
 
-    let mut wrong_type = VectorQuery::by_vector("embedding", vec![1.0, 0.0, 0.0, 0.0], 5);
+    let mut wrong_type = VectorQuery::by_vector(
+        field_name("embedding"),
+        dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
+        5,
+    );
     wrong_type.filter = Some("rank = 'not-a-number'".to_string());
     assert!(collection.query(wrong_type).is_err());
 }

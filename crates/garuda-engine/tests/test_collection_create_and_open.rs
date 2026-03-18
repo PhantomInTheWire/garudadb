@@ -1,6 +1,6 @@
 mod common;
 
-use common::{database, default_options, default_schema};
+use common::{collection_name, database, default_options, default_schema};
 
 #[test]
 fn create_and_reopen_collection_roundtrips_schema_and_options() {
@@ -17,7 +17,9 @@ fn create_and_reopen_collection_roundtrips_schema_and_options() {
 
     collection.flush().expect("flush");
 
-    let reopened = db.open_collection("docs").expect("reopen collection");
+    let reopened = db
+        .open_collection(&collection_name("docs"))
+        .expect("reopen collection");
     assert_eq!(reopened.schema(), schema);
     assert_eq!(reopened.options(), options);
     assert_eq!(reopened.stats().doc_count, 0);

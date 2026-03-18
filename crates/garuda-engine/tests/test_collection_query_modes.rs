@@ -1,6 +1,8 @@
 mod common;
 
-use common::{database, default_options, default_schema, seed_collection};
+use common::{
+    database, default_options, default_schema, dense_vector, doc_id, field_name, seed_collection,
+};
 use garuda_types::VectorQuery;
 
 #[test]
@@ -12,9 +14,9 @@ fn query_by_document_id_should_behave_like_query_by_its_stored_vector() {
     seed_collection(&collection);
 
     let by_id = collection.query(VectorQuery {
-        field_name: "embedding".to_string(),
+        field_name: field_name("embedding"),
         vector: None,
-        id: Some("doc-1".to_string()),
+        id: Some(doc_id("doc-1")),
         top_k: 3,
         filter: None,
         include_vector: false,
@@ -32,7 +34,11 @@ fn include_vector_and_output_fields_should_control_result_shape() {
         .expect("create collection");
     seed_collection(&collection);
 
-    let mut query = VectorQuery::by_vector("embedding", vec![1.0, 0.0, 0.0, 0.0], 3);
+    let mut query = VectorQuery::by_vector(
+        field_name("embedding"),
+        dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
+        3,
+    );
     query.include_vector = true;
     query.output_fields = Some(vec!["category".to_string()]);
     let results = collection.query(query).expect("query");
@@ -51,10 +57,18 @@ fn same_query_should_be_stable_across_repeated_calls() {
     seed_collection(&collection);
 
     let first = collection
-        .query(VectorQuery::by_vector("embedding", vec![1.0, 0.0, 0.0, 0.0], 4))
+        .query(VectorQuery::by_vector(
+            field_name("embedding"),
+            dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
+            4,
+        ))
         .expect("first query");
     let second = collection
-        .query(VectorQuery::by_vector("embedding", vec![1.0, 0.0, 0.0, 0.0], 4))
+        .query(VectorQuery::by_vector(
+            field_name("embedding"),
+            dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
+            4,
+        ))
         .expect("second query");
 
     assert_eq!(

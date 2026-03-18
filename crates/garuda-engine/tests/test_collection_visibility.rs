@@ -1,6 +1,9 @@
 mod common;
 
-use common::{build_doc, database, default_options, default_schema, seed_collection};
+use common::{
+    build_doc, database, default_options, default_schema, dense_vector, doc_id, field_name,
+    seed_collection,
+};
 use garuda_types::VectorQuery;
 
 #[test]
@@ -11,16 +14,20 @@ fn deleted_documents_should_disappear_from_fetch_and_query() {
         .expect("create collection");
     seed_collection(&collection);
 
-    let deleted = collection.delete(vec!["doc-2".to_string()]);
+    let deleted = collection.delete(vec![doc_id("doc-2")]);
     assert!(deleted[0].status.is_ok());
 
-    let fetched = collection.fetch(vec!["doc-2".to_string()]);
+    let fetched = collection.fetch(vec![doc_id("doc-2")]);
     assert!(fetched.is_empty());
 
     let results = collection
-        .query(VectorQuery::by_vector("embedding", vec![1.0, 0.0, 0.0, 0.0], 10))
+        .query(VectorQuery::by_vector(
+            field_name("embedding"),
+            dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
+            10,
+        ))
         .expect("query after delete");
-    assert!(!results.iter().any(|doc| doc.id == "doc-2"));
+    assert!(!results.iter().any(|doc| doc.id == doc_id("doc-2")));
 }
 
 #[test]
@@ -57,7 +64,7 @@ fn update_and_upsert_should_change_visible_document_version_only_once() {
     )]);
     assert!(upserted[0].status.is_ok());
 
-    let fetched = collection.fetch(vec!["doc-1".to_string()]);
+    let fetched = collection.fetch(vec![doc_id("doc-1")]);
     assert_eq!(fetched.len(), 1);
     assert_eq!(
         fetched["doc-1"].fields["rank"],

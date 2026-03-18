@@ -1,6 +1,6 @@
 mod common;
 
-use common::{build_doc, database, default_options, default_schema};
+use common::{build_doc, database, default_options, default_schema, dense_vector, field_name};
 use garuda_types::VectorQuery;
 use std::thread;
 
@@ -31,8 +31,8 @@ fn concurrent_insert_and_query_do_not_panic() {
         thread::spawn(move || {
             for _ in 0..10 {
                 let _ = collection.query(VectorQuery::by_vector(
-                    "embedding",
-                    vec![1.0, 0.0, 0.0, 0.0],
+                    field_name("embedding"),
+                    dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
                     5,
                 ));
             }

@@ -1,6 +1,9 @@
 mod common;
 
-use common::{database, default_options, default_schema, seed_collection};
+use common::{
+    collection_name, database, default_options, default_schema, dense_vector, field_name,
+    seed_collection,
+};
 use garuda_types::VectorQuery;
 
 #[test]
@@ -14,16 +17,18 @@ fn reopen_after_flush_preserves_manifest_and_query_results() {
 
     let before = collection
         .query(VectorQuery::by_vector(
-            "embedding",
-            vec![1.0, 0.0, 0.0, 0.0],
+            field_name("embedding"),
+            dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
             3,
         ))
         .expect("query before");
-    let reopened = db.open_collection("docs").expect("reopen");
+    let reopened = db
+        .open_collection(&collection_name("docs"))
+        .expect("reopen");
     let after = reopened
         .query(VectorQuery::by_vector(
-            "embedding",
-            vec![1.0, 0.0, 0.0, 0.0],
+            field_name("embedding"),
+            dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
             3,
         ))
         .expect("query after");

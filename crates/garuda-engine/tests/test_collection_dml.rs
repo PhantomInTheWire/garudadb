@@ -1,6 +1,6 @@
 mod common;
 
-use common::{build_doc, database, default_options, default_schema, seed_collection};
+use common::{build_doc, database, default_options, default_schema, doc_id, seed_collection};
 
 #[test]
 fn insert_fetch_update_upsert_delete_flow_works() {
@@ -17,7 +17,7 @@ fn insert_fetch_update_upsert_delete_flow_works() {
         [1.0, 0.0, 0.0, 0.0],
     )]);
     assert!(insert[0].status.is_ok());
-    assert_eq!(collection.fetch(vec!["doc-1".to_string()]).len(), 1);
+    assert_eq!(collection.fetch(vec![doc_id("doc-1")]).len(), 1);
 
     let update = collection.update(vec![build_doc(
         "doc-1",
@@ -27,7 +27,7 @@ fn insert_fetch_update_upsert_delete_flow_works() {
         [1.0, 0.0, 0.0, 0.0],
     )]);
     assert!(update[0].status.is_ok());
-    let fetched = collection.fetch(vec!["doc-1".to_string()]);
+    let fetched = collection.fetch(vec![doc_id("doc-1")]);
     assert_eq!(
         fetched["doc-1"].fields["rank"],
         garuda_types::ScalarValue::Int64(11)
@@ -43,9 +43,9 @@ fn insert_fetch_update_upsert_delete_flow_works() {
     assert!(upsert[0].status.is_ok());
     assert_eq!(collection.stats().doc_count, 2);
 
-    let delete = collection.delete(vec!["doc-1".to_string()]);
+    let delete = collection.delete(vec![doc_id("doc-1")]);
     assert!(delete[0].status.is_ok());
-    assert!(collection.fetch(vec!["doc-1".to_string()]).is_empty());
+    assert!(collection.fetch(vec![doc_id("doc-1")]).is_empty());
 }
 
 #[test]

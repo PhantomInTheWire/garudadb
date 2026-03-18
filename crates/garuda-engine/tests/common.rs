@@ -1,7 +1,8 @@
 use garuda_engine::{Collection, Database};
 use garuda_types::{
-    CollectionOptions, CollectionSchema, DistanceMetric, Doc, FlatIndexParams, IndexParams,
-    ScalarFieldSchema, ScalarType, ScalarValue, VectorFieldSchema,
+    CollectionName, CollectionOptions, CollectionSchema, DenseVector, DistanceMetric, Doc, DocId,
+    FieldName, FlatIndexParams, IndexParams, ScalarFieldSchema, ScalarType, ScalarValue,
+    VectorFieldSchema,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -23,32 +24,32 @@ pub fn temp_root(prefix: &str) -> PathBuf {
 
 pub fn default_schema(name: &str) -> CollectionSchema {
     CollectionSchema {
-        name: name.to_string(),
-        primary_key: "pk".to_string(),
+        name: collection_name(name),
+        primary_key: field_name("pk"),
         fields: vec![
             ScalarFieldSchema {
-                name: "pk".to_string(),
+                name: field_name("pk"),
                 field_type: ScalarType::String,
                 nullable: false,
             },
             ScalarFieldSchema {
-                name: "rank".to_string(),
+                name: field_name("rank"),
                 field_type: ScalarType::Int64,
                 nullable: false,
             },
             ScalarFieldSchema {
-                name: "category".to_string(),
+                name: field_name("category"),
                 field_type: ScalarType::String,
                 nullable: false,
             },
             ScalarFieldSchema {
-                name: "score".to_string(),
+                name: field_name("score"),
                 field_type: ScalarType::Float64,
                 nullable: false,
             },
         ],
         vector: VectorFieldSchema {
-            name: "embedding".to_string(),
+            name: field_name("embedding"),
             dimension: 4,
             metric: DistanceMetric::Cosine,
             index: IndexParams::Flat(FlatIndexParams),
@@ -64,7 +65,7 @@ pub fn schema_with_dimension(name: &str, dimension: usize) -> CollectionSchema {
 
 pub fn schema_with_vector_name(name: &str, vector_name: &str) -> CollectionSchema {
     let mut schema = default_schema(name);
-    schema.vector.name = vector_name.to_string();
+    schema.vector.name = field_name(vector_name);
     schema
 }
 
@@ -76,7 +77,7 @@ pub fn schema_with_duplicate_field(name: &str) -> CollectionSchema {
 
 pub fn schema_missing_primary_field(name: &str) -> CollectionSchema {
     let mut schema = default_schema(name);
-    schema.primary_key = "missing_pk".to_string();
+    schema.primary_key = field_name("missing_pk");
     schema
 }
 
@@ -110,7 +111,27 @@ pub fn build_doc(id: &str, rank: i64, category: &str, score: f64, vector: [f32; 
         ScalarValue::String(category.to_string()),
     );
     fields.insert("score".to_string(), ScalarValue::Float64(score));
-    Doc::new(id, fields, vector.to_vec())
+    Doc::new(
+        doc_id(id),
+        fields,
+        DenseVector::parse(vector.to_vec()).expect("valid non-empty vector"),
+    )
+}
+
+pub fn doc_id(value: &str) -> DocId {
+    DocId::parse(value).expect("valid doc id")
+}
+
+pub fn collection_name(value: &str) -> CollectionName {
+    CollectionName::parse(value).expect("valid collection name")
+}
+
+pub fn field_name(value: &str) -> FieldName {
+    FieldName::parse(value).expect("valid field name")
+}
+
+pub fn dense_vector(values: Vec<f32>) -> DenseVector {
+    DenseVector::parse(values).expect("valid non-empty vector")
 }
 
 pub fn seed_collection(collection: &Collection) {
