@@ -2,7 +2,7 @@ use garuda_segment::{
     RecordState, SegmentFile, StoredRecord, segment_file_name, segment_meta, sync_segment_meta,
 };
 use garuda_storage::WRITING_SEGMENT_ID;
-use garuda_types::{Doc, DocId, Manifest};
+use garuda_types::{Doc, DocId};
 
 #[derive(Clone)]
 pub(crate) struct SegmentManager {
@@ -43,15 +43,6 @@ impl SegmentManager {
 
     pub(crate) fn segment_count(&self) -> usize {
         self.persisted_segments.len() + 1
-    }
-
-    pub(crate) fn refresh_manifest(&self, manifest: &mut Manifest) {
-        manifest.writing_segment = self.writing_segment.meta.clone();
-        manifest.persisted_segments = self
-            .persisted_segments
-            .iter()
-            .map(|segment| segment.meta.clone())
-            .collect();
     }
 
     pub(crate) fn all_live_records(&self) -> Vec<StoredRecord> {

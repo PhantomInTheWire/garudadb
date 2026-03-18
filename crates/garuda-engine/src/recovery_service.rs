@@ -1,5 +1,6 @@
+use crate::catalog::CollectionCatalog;
 use crate::segment_manager::SegmentManager;
-use crate::state::CollectionState;
+use crate::state::CollectionRuntime;
 use crate::write_service::replay_wal_ops;
 use garuda_meta::{DeleteStore, IdMap, MetadataStore};
 use garuda_segment::{SegmentFile, read_segment, read_wal_ops, sync_segment_meta};
@@ -21,7 +22,7 @@ pub(crate) fn create_collection_state(
     path: PathBuf,
     schema: CollectionSchema,
     options: CollectionOptions,
-) -> CollectionState {
+) -> CollectionRuntime {
     let writing_segment = SegmentManager::empty_writing_segment();
     let manifest = Manifest {
         schema,
@@ -35,24 +36,24 @@ pub(crate) fn create_collection_state(
         persisted_segments: Vec::new(),
     };
 
-    CollectionState {
+    CollectionRuntime {
         path,
-        manifest,
+        catalog: CollectionCatalog::from_manifest(manifest),
         segments: SegmentManager::new(Vec::new(), writing_segment),
         meta: MetadataStore::new(),
     }
 }
 
-pub(crate) fn load_collection_state(path: PathBuf) -> Result<CollectionState, Status> {
+pub(crate) fn load_collection_state(path: PathBuf) -> Result<CollectionRuntime, Status> {
     let manifest = VersionManager::new(&path).read_latest_manifest()?;
     let writing_segment = load_segment(&path, &manifest.writing_segment)?;
     let persisted_segments = load_persisted_segments(&path, &manifest)?;
     let id_map = IdMap::from(read_id_map_snapshot(&path, manifest.id_map_snapshot_id)?);
     let delete_store = DeleteStore::from(read_delete_snapshot(&path, manifest.delete_snapshot_id)?);
 
-    let mut state = CollectionState {
+    let mut state = CollectionRuntime {
         path,
-        manifest,
+        catalog: CollectionCatalog::from_manifest(manifest),
         segments: SegmentManager::new(persisted_segments, writing_segment),
         meta: MetadataStore::from_parts(id_map, delete_store),
     };

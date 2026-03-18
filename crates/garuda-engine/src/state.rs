@@ -1,8 +1,9 @@
+use crate::catalog::CollectionCatalog;
 use crate::segment_manager::SegmentManager;
 use crate::validation::{apply_schema_defaults, validate_doc};
 use garuda_meta::MetadataStore;
 use garuda_segment::{RecordState, SegmentFile, StoredRecord, sync_segment_meta};
-use garuda_types::{Doc, DocId, Manifest, StatusCode, WriteResult};
+use garuda_types::{Doc, DocId, StatusCode, WriteResult};
 use std::path::PathBuf;
 
 #[derive(Clone, Copy)]
@@ -12,19 +13,19 @@ pub(crate) enum WriteMode {
 }
 
 #[derive(Clone)]
-pub(crate) struct CollectionState {
+pub(crate) struct CollectionRuntime {
     pub(crate) path: PathBuf,
-    pub(crate) manifest: Manifest,
+    pub(crate) catalog: CollectionCatalog,
     pub(crate) segments: SegmentManager,
     pub(crate) meta: MetadataStore,
 }
 
-impl CollectionState {
+impl CollectionRuntime {
     pub(crate) fn insert_doc(&mut self, doc: Doc, mode: WriteMode) -> WriteResult {
         let mut doc = doc;
-        apply_schema_defaults(&self.manifest.schema, &mut doc);
+        apply_schema_defaults(&self.catalog.schema, &mut doc);
 
-        if let Err(status) = validate_doc(&self.manifest.schema, &doc) {
+        if let Err(status) = validate_doc(&self.catalog.schema, &doc) {
             return WriteResult::err(doc.id, status.code, status.message);
         }
 
@@ -42,7 +43,7 @@ impl CollectionState {
     }
 
     pub(crate) fn update_doc(&mut self, doc: Doc) -> WriteResult {
-        let schema = self.manifest.schema.clone();
+        let schema = self.catalog.schema.clone();
 
         let Some(record) = self.find_live_record_mut(&doc.id) else {
             return WriteResult::err(doc.id, StatusCode::NotFound, "document not found");
@@ -78,10 +79,6 @@ impl CollectionState {
         index_segment(self.segments.writing_segment_mut(), &mut self.meta);
     }
 
-    pub(crate) fn refresh_manifest(&mut self) {
-        self.segments.refresh_manifest(&mut self.manifest);
-    }
-
     pub(crate) fn live_doc_count(&self) -> usize {
         self.segments.all_live_records().len()
     }
@@ -106,20 +103,19 @@ impl CollectionState {
         self.segments.find_live_record_mut(id)
     }
     fn append_new_record(&mut self, doc: Doc) {
-        let doc_id = self.manifest.next_doc_id;
-        self.manifest.next_doc_id += 1;
+        let doc_id = self.catalog.next_doc_id;
+        self.catalog.next_doc_id += 1;
 
         self.segments.append_new_record(
             doc_id,
             doc,
-            &mut self.manifest.next_segment_id,
-            self.manifest.options.segment_max_docs,
+            &mut self.catalog.next_segment_id,
+            self.catalog.options.segment_max_docs,
         );
     }
 
     fn finish_mutation(&mut self) {
         self.rebuild_indexes();
-        self.refresh_manifest();
     }
 
     fn delete_existing_if_present(&mut self, id: &DocId) {

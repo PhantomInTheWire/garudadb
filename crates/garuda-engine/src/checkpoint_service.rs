@@ -1,4 +1,4 @@
-use crate::state::CollectionState;
+use crate::state::CollectionRuntime;
 use garuda_segment::{reset_wal, write_segment};
 use garuda_storage::{
     SnapshotKind, VersionManager, WRITING_SEGMENT_ID, delete_snapshot_path, id_map_snapshot_path,
@@ -10,17 +10,15 @@ use garuda_types::{Status, StatusCode};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-pub(crate) fn checkpoint_state(state: &mut CollectionState) -> Result<(), Status> {
+pub(crate) fn checkpoint_state(state: &mut CollectionRuntime) -> Result<(), Status> {
     let version_manager = VersionManager::new(&state.path);
     let had_manifest = version_manager.exists();
 
     if had_manifest {
-        state.manifest.id_map_snapshot_id = state.manifest.id_map_snapshot_id.next();
-        state.manifest.delete_snapshot_id = state.manifest.delete_snapshot_id.next();
-        state.manifest.manifest_version_id = state.manifest.manifest_version_id.next();
+        state.catalog.id_map_snapshot_id = state.catalog.id_map_snapshot_id.next();
+        state.catalog.delete_snapshot_id = state.catalog.delete_snapshot_id.next();
+        state.catalog.manifest_version_id = state.catalog.manifest_version_id.next();
     }
-
-    state.refresh_manifest();
 
     let rollback = capture_checkpoint_files(state)?;
     let persist_result = write_checkpoint_files(state, &version_manager);
@@ -33,12 +31,12 @@ pub(crate) fn checkpoint_state(state: &mut CollectionState) -> Result<(), Status
     let _ = remove_old_snapshots(
         &state.path,
         SnapshotKind::IdMap,
-        state.manifest.id_map_snapshot_id,
+        state.catalog.id_map_snapshot_id,
     );
     let _ = remove_old_snapshots(
         &state.path,
         SnapshotKind::Delete,
-        state.manifest.delete_snapshot_id,
+        state.catalog.delete_snapshot_id,
     );
 
     let _ = remove_stale_segment_dirs(state);
@@ -47,13 +45,16 @@ pub(crate) fn checkpoint_state(state: &mut CollectionState) -> Result<(), Status
 }
 
 fn write_checkpoint_files(
-    state: &CollectionState,
+    state: &CollectionRuntime,
     version_manager: &VersionManager,
 ) -> Result<(), Status> {
+    let manifest = state
+        .catalog
+        .to_manifest(state.segments.writing_segment(), state.segments.persisted_segments());
     write_all_segments(state)?;
     write_id_map_snapshot(
         &state.path,
-        state.manifest.id_map_snapshot_id,
+        state.catalog.id_map_snapshot_id,
         state
             .meta
             .id_map_entries()
@@ -61,10 +62,10 @@ fn write_checkpoint_files(
     )?;
     write_delete_snapshot(
         &state.path,
-        state.manifest.delete_snapshot_id,
+        state.catalog.delete_snapshot_id,
         state.meta.deleted_doc_ids().copied(),
     )?;
-    version_manager.write_manifest(&state.manifest)?;
+    version_manager.write_manifest(&manifest)?;
 
     if reset_wal(&state.path, WRITING_SEGMENT_ID).is_err() {
         return Ok(());
@@ -73,7 +74,7 @@ fn write_checkpoint_files(
     Ok(())
 }
 
-fn write_all_segments(state: &CollectionState) -> Result<(), Status> {
+fn write_all_segments(state: &CollectionRuntime) -> Result<(), Status> {
     for segment in state.segments.persisted_segments() {
         write_segment(&state.path, segment)?;
     }
@@ -81,7 +82,7 @@ fn write_all_segments(state: &CollectionState) -> Result<(), Status> {
     write_segment(&state.path, state.segments.writing_segment())
 }
 
-fn remove_stale_segment_dirs(state: &CollectionState) -> Result<(), Status> {
+fn remove_stale_segment_dirs(state: &CollectionRuntime) -> Result<(), Status> {
     let mut live_segment_ids = HashSet::new();
     live_segment_ids.insert(WRITING_SEGMENT_ID);
 
@@ -133,7 +134,7 @@ fn remove_stale_segment_dirs(state: &CollectionState) -> Result<(), Status> {
     Ok(())
 }
 
-fn capture_checkpoint_files(state: &CollectionState) -> Result<CheckpointFiles, Status> {
+fn capture_checkpoint_files(state: &CollectionRuntime) -> Result<CheckpointFiles, Status> {
     let mut files = Vec::new();
 
     for segment in state.segments.persisted_segments() {
@@ -149,11 +150,11 @@ fn capture_checkpoint_files(state: &CollectionState) -> Result<CheckpointFiles, 
     ))?);
     files.push(capture_file(&id_map_snapshot_path(
         &state.path,
-        state.manifest.id_map_snapshot_id,
+        state.catalog.id_map_snapshot_id,
     ))?);
     files.push(capture_file(&delete_snapshot_path(
         &state.path,
-        state.manifest.delete_snapshot_id,
+        state.catalog.delete_snapshot_id,
     ))?);
     files.push(capture_file(&segment_wal_path(
         &state.path,
@@ -161,7 +162,7 @@ fn capture_checkpoint_files(state: &CollectionState) -> Result<CheckpointFiles, 
     ))?);
     files.push(capture_file(&manifest_path(
         &state.path,
-        state.manifest.manifest_version_id,
+        state.catalog.manifest_version_id,
     ))?);
 
     Ok(CheckpointFiles { files })
