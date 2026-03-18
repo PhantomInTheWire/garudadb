@@ -1,7 +1,7 @@
 use crate::state::{CollectionState, WriteMode};
 use garuda_segment::{WalOp, append_wal_ops};
 use garuda_storage::WRITING_SEGMENT_ID;
-use garuda_types::{Doc, DocId, Status, WriteResult};
+use garuda_types::{Doc, DocId, Status, StatusCode, WriteResult};
 
 pub(crate) enum WriteCommand {
     Insert(Vec<Doc>),
@@ -21,11 +21,22 @@ pub(crate) fn apply_write_command(
         WriteCommand::Upsert(docs) => apply_doc_batch(state, docs, WalOp::Upsert, |state, doc| {
             state.insert_doc(doc, WriteMode::Upsert)
         }),
-        WriteCommand::Update(docs) => {
-            apply_doc_batch(state, docs, WalOp::Update, |state, doc| state.update_doc(doc))
-        }
+        WriteCommand::Update(docs) => apply_doc_batch(state, docs, WalOp::Update, |state, doc| {
+            state.update_doc(doc)
+        }),
         WriteCommand::Delete(ids) => apply_delete_batch(state, ids),
     }
+}
+
+pub(crate) fn replay_wal_ops(
+    state: &mut CollectionState,
+    wal_ops: Vec<WalOp>,
+) -> Result<(), Status> {
+    for wal_op in wal_ops {
+        apply_replayed_wal_op(state, &wal_op)?;
+    }
+
+    Ok(())
 }
 
 fn apply_doc_batch(
@@ -96,4 +107,69 @@ fn mark_persist_failure(results: &mut [WriteResult], status: &Status) {
 
         result.status = Status::err(status.code.clone(), status.message.clone());
     }
+}
+
+fn apply_replayed_wal_op(state: &mut CollectionState, wal_op: &WalOp) -> Result<(), Status> {
+    if is_redundant_wal_op(state, wal_op) {
+        return Ok(());
+    }
+
+    let result = match wal_op {
+        WalOp::Insert(doc) => state.insert_doc(doc.clone(), WriteMode::Insert),
+        WalOp::Upsert(doc) => state.insert_doc(doc.clone(), WriteMode::Upsert),
+        WalOp::Update(doc) => state.update_doc(doc.clone()),
+        WalOp::Delete(doc_id) => state.delete_doc(doc_id),
+    };
+
+    if result.status.is_ok() {
+        return Ok(());
+    }
+
+    if matches!(wal_op, WalOp::Update(_)) && result.status.code == StatusCode::NotFound {
+        return Ok(());
+    }
+
+    Err(Status::err(result.status.code, result.status.message))
+}
+
+fn is_redundant_wal_op(state: &CollectionState, wal_op: &WalOp) -> bool {
+    match wal_op {
+        WalOp::Insert(doc) => state.find_live_record(&doc.id).is_some(),
+        WalOp::Upsert(doc) => live_doc_matches(state, doc),
+        WalOp::Update(doc) => {
+            update_already_applied(state, doc) || state.find_live_record(&doc.id).is_none()
+        }
+        WalOp::Delete(doc_id) => state.find_live_record(doc_id).is_none(),
+    }
+}
+
+fn live_doc_matches(state: &CollectionState, doc: &Doc) -> bool {
+    let Some(record) = state.find_live_record(&doc.id) else {
+        return false;
+    };
+
+    record.doc == *doc
+}
+
+fn update_already_applied(state: &CollectionState, doc: &Doc) -> bool {
+    let Some(record) = state.find_live_record(&doc.id) else {
+        return false;
+    };
+
+    let merged_doc = merge_docs(&record.doc, doc);
+    merged_doc == record.doc
+}
+
+fn merge_docs(existing: &Doc, incoming: &Doc) -> Doc {
+    let mut merged = existing.clone();
+
+    for (key, value) in &incoming.fields {
+        merged.fields.insert(key.clone(), value.clone());
+    }
+
+    if !incoming.vector.is_empty() {
+        merged.vector = incoming.vector.clone();
+    }
+
+    merged
 }
