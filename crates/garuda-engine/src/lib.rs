@@ -1,6 +1,5 @@
 mod bootstrap;
 mod ddl;
-mod delete_store;
 mod filter;
 mod filter_parser;
 mod lock;
