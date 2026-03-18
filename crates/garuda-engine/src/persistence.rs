@@ -1,11 +1,14 @@
 use crate::state::CollectionState;
 use garuda_segment::{reset_wal, write_segment};
 use garuda_storage::{
-    SnapshotKind, VersionManager, WRITING_SEGMENT_ID, remove_old_snapshots, remove_path_if_exists,
-    segment_dir, write_delete_snapshot, write_id_map_snapshot,
+    SnapshotKind, VersionManager, WRITING_SEGMENT_ID, delete_snapshot_path, id_map_snapshot_path,
+    manifest_path, read_file, remove_old_snapshots, remove_path_if_exists, segment_data_path,
+    segment_dir, segment_wal_path, write_delete_snapshot, write_file_atomically,
+    write_id_map_snapshot,
 };
-use garuda_types::Status;
+use garuda_types::{Status, StatusCode};
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 pub(crate) fn checkpoint_state(state: &mut CollectionState) -> Result<(), Status> {
     let version_manager = VersionManager::new(&state.path);
@@ -19,20 +22,14 @@ pub(crate) fn checkpoint_state(state: &mut CollectionState) -> Result<(), Status
 
     state.refresh_manifest();
 
-    write_all_segments(state)?;
-    write_id_map_snapshot(
-        &state.path,
-        state.manifest.id_map_snapshot_id,
-        &state.id_map,
-    )?;
-    write_delete_snapshot(
-        &state.path,
-        state.manifest.delete_snapshot_id,
-        &state.deleted_doc_ids,
-    )?;
-    version_manager.write_manifest(&state.manifest)?;
+    let rollback = capture_checkpoint_files(state)?;
+    let persist_result = write_checkpoint_files(state, &version_manager);
 
-    let _ = reset_wal(&state.path, WRITING_SEGMENT_ID);
+    if let Err(status) = persist_result {
+        rollback.restore()?;
+        return Err(status);
+    }
+
     let _ = remove_old_snapshots(
         &state.path,
         SnapshotKind::IdMap,
@@ -47,6 +44,25 @@ pub(crate) fn checkpoint_state(state: &mut CollectionState) -> Result<(), Status
     let _ = remove_stale_segment_dirs(state);
 
     Ok(())
+}
+
+fn write_checkpoint_files(
+    state: &CollectionState,
+    version_manager: &VersionManager,
+) -> Result<(), Status> {
+    write_all_segments(state)?;
+    write_id_map_snapshot(
+        &state.path,
+        state.manifest.id_map_snapshot_id,
+        &state.id_map,
+    )?;
+    write_delete_snapshot(
+        &state.path,
+        state.manifest.delete_snapshot_id,
+        &state.deleted_doc_ids,
+    )?;
+    reset_wal(&state.path, WRITING_SEGMENT_ID)?;
+    version_manager.write_manifest(&state.manifest)
 }
 
 fn write_all_segments(state: &CollectionState) -> Result<(), Status> {
@@ -107,4 +123,93 @@ fn remove_stale_segment_dirs(state: &CollectionState) -> Result<(), Status> {
     }
 
     Ok(())
+}
+
+fn capture_checkpoint_files(state: &CollectionState) -> Result<CheckpointFiles, Status> {
+    let mut files = Vec::new();
+
+    for segment in &state.persisted_segments {
+        files.push(capture_file(&segment_data_path(
+            &state.path,
+            segment.meta.id,
+        ))?);
+    }
+
+    files.push(capture_file(&segment_data_path(
+        &state.path,
+        WRITING_SEGMENT_ID,
+    ))?);
+    files.push(capture_file(&id_map_snapshot_path(
+        &state.path,
+        state.manifest.id_map_snapshot_id,
+    ))?);
+    files.push(capture_file(&delete_snapshot_path(
+        &state.path,
+        state.manifest.delete_snapshot_id,
+    ))?);
+    files.push(capture_file(&segment_wal_path(
+        &state.path,
+        WRITING_SEGMENT_ID,
+    ))?);
+    files.push(capture_file(&manifest_path(
+        &state.path,
+        state.manifest.manifest_version_id,
+    ))?);
+
+    Ok(CheckpointFiles { files })
+}
+
+fn capture_file(path: &Path) -> Result<FileBackup, Status> {
+    let original_bytes = if path.exists() {
+        Some(read_file(path)?)
+    } else {
+        None
+    };
+
+    Ok(FileBackup {
+        path: path.to_path_buf(),
+        original_bytes,
+    })
+}
+
+struct CheckpointFiles {
+    files: Vec<FileBackup>,
+}
+
+impl CheckpointFiles {
+    fn restore(self) -> Result<(), Status> {
+        for file in self.files {
+            restore_file(file)?;
+        }
+
+        Ok(())
+    }
+}
+
+struct FileBackup {
+    path: PathBuf,
+    original_bytes: Option<Vec<u8>>,
+}
+
+fn restore_file(file: FileBackup) -> Result<(), Status> {
+    let Some(original_bytes) = file.original_bytes else {
+        remove_path_if_exists(&file.path)?;
+        return Ok(());
+    };
+
+    let parent = file.path.parent().ok_or_else(|| {
+        Status::err(
+            StatusCode::Internal,
+            format!("cannot determine parent for {}", file.path.display()),
+        )
+    })?;
+
+    std::fs::create_dir_all(parent).map_err(|error| {
+        Status::err(
+            StatusCode::Internal,
+            format!("failed to create directory {}: {error}", parent.display()),
+        )
+    })?;
+
+    write_file_atomically(&file.path, &original_bytes)
 }
