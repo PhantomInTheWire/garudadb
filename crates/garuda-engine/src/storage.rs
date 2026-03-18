@@ -1,13 +1,12 @@
-use garuda_types::{CollectionName, Doc, DocId, SegmentMeta, Status, StatusCode};
+use garuda_types::{CollectionName, Doc, SegmentMeta, Status, StatusCode};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::storage_io::{create_dir_all, create_empty_file, read_json_file, write_json_file};
 use crate::version::VersionStore;
 
 pub const LOCK_FILE_NAME: &str = "LOCK";
-pub const ID_MAP_FILE_NAME: &str = "IDMAP.json";
 pub const DELETE_STORE_FILE_NAME: &str = "DELETE_STORE.json";
 pub const SEGMENTS_DIR_NAME: &str = "segments";
 
@@ -22,11 +21,6 @@ pub struct StoredRecord {
 pub struct SegmentFile {
     pub meta: SegmentMeta,
     pub records: Vec<StoredRecord>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
-pub struct IdMapFile {
-    pub entries: HashMap<DocId, u64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -68,18 +62,6 @@ pub fn ensure_existing_collection_dir(path: &Path) -> Result<(), Status> {
         StatusCode::NotFound,
         "collection directory does not exist",
     ))
-}
-
-pub fn write_id_map(path: &Path, entries: &HashMap<DocId, u64>) -> Result<(), Status> {
-    let file = IdMapFile {
-        entries: entries.clone(),
-    };
-    write_json_file(&path.join(ID_MAP_FILE_NAME), &file)
-}
-
-pub fn read_id_map(path: &Path) -> Result<HashMap<DocId, u64>, Status> {
-    let file: IdMapFile = read_json_file(&path.join(ID_MAP_FILE_NAME))?;
-    Ok(file.entries)
 }
 
 pub fn write_delete_store(path: &Path, deleted_doc_ids: &HashSet<u64>) -> Result<(), Status> {

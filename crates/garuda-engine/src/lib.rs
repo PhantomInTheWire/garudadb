@@ -2,6 +2,7 @@ mod bootstrap;
 mod ddl;
 mod filter;
 mod filter_parser;
+mod id_map;
 mod lock;
 mod query;
 mod schema;
@@ -19,6 +20,7 @@ use ddl::{
     rename_column_in_state, set_vector_index_kind,
 };
 use filter::evaluate_filter;
+use id_map::write_id_map;
 use lock::CollectionLock;
 use query::{apply_query_projection, parse_query_filter, resolve_query_vector};
 use schema::{validate_create_options, validate_schema};
@@ -29,7 +31,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use storage::{
     collection_dir, ensure_database_root, ensure_existing_collection_dir,
-    ensure_new_collection_dir, sync_segment_meta, write_delete_store, write_id_map, write_segment,
+    ensure_new_collection_dir, sync_segment_meta, write_delete_store, write_segment,
 };
 use validation::validate_field_default;
 use version::VersionStore;

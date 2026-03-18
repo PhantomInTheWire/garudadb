@@ -1,5 +1,6 @@
+use crate::id_map::read_id_map;
 use crate::state::CollectionState;
-use crate::storage::{self, read_delete_store, read_id_map, read_segment, sync_segment_meta};
+use crate::storage::{self, read_delete_store, read_segment, sync_segment_meta};
 use crate::version::VersionStore;
 use garuda_types::{CollectionOptions, CollectionSchema, Manifest, SegmentMeta, Status};
 use std::collections::{HashMap, HashSet};
