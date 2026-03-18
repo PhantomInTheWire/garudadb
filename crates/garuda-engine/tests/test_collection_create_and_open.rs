@@ -16,6 +16,7 @@ fn create_and_reopen_collection_roundtrips_schema_and_options() {
     assert_eq!(collection.stats().doc_count, 0);
 
     collection.flush().expect("flush");
+    drop(collection);
 
     let reopened = db
         .open_collection(&collection_name("docs"))

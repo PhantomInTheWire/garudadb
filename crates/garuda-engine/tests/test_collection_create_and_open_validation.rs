@@ -59,6 +59,7 @@ fn read_only_collection_open_should_preserve_non_mutating_contract() {
         .create_collection(default_schema("docs"), default_options())
         .expect("create base collection");
     collection.flush().expect("flush");
+    drop(collection);
 
     let reopened = db.open_collection(&collection_name("docs"));
     assert!(reopened.is_ok());
