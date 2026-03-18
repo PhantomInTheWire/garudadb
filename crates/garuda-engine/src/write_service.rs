@@ -1,4 +1,4 @@
-use crate::state::{CollectionState, WriteMode};
+use crate::state::{CollectionRuntime, WriteMode};
 use garuda_segment::{WalOp, append_wal_ops};
 use garuda_storage::WRITING_SEGMENT_ID;
 use garuda_types::{Doc, DocId, Status, StatusCode, WriteResult};
@@ -11,7 +11,7 @@ pub(crate) enum WriteCommand {
 }
 
 pub(crate) fn apply_write_command(
-    state: &mut CollectionState,
+    state: &mut CollectionRuntime,
     command: WriteCommand,
 ) -> Vec<WriteResult> {
     match command {
@@ -29,7 +29,7 @@ pub(crate) fn apply_write_command(
 }
 
 pub(crate) fn replay_wal_ops(
-    state: &mut CollectionState,
+    state: &mut CollectionRuntime,
     wal_ops: Vec<WalOp>,
 ) -> Result<(), Status> {
     for wal_op in wal_ops {
@@ -40,10 +40,10 @@ pub(crate) fn replay_wal_ops(
 }
 
 fn apply_doc_batch(
-    state: &mut CollectionState,
+    state: &mut CollectionRuntime,
     docs: Vec<Doc>,
     wal_op: impl Fn(Doc) -> WalOp,
-    write_one: impl Fn(&mut CollectionState, Doc) -> WriteResult,
+    write_one: impl Fn(&mut CollectionRuntime, Doc) -> WriteResult,
 ) -> Vec<WriteResult> {
     let snapshot = state.clone();
     let mut results = Vec::new();
@@ -63,7 +63,7 @@ fn apply_doc_batch(
     results
 }
 
-fn apply_delete_batch(state: &mut CollectionState, ids: Vec<DocId>) -> Vec<WriteResult> {
+fn apply_delete_batch(state: &mut CollectionRuntime, ids: Vec<DocId>) -> Vec<WriteResult> {
     let snapshot = state.clone();
     let mut results = Vec::new();
     let mut wal_ops = Vec::new();
@@ -82,8 +82,8 @@ fn apply_delete_batch(state: &mut CollectionState, ids: Vec<DocId>) -> Vec<Write
 }
 
 fn finish_batch(
-    state: &mut CollectionState,
-    snapshot: CollectionState,
+    state: &mut CollectionRuntime,
+    snapshot: CollectionRuntime,
     results: &mut [WriteResult],
     wal_ops: Vec<WalOp>,
 ) {
@@ -109,7 +109,7 @@ fn mark_persist_failure(results: &mut [WriteResult], status: &Status) {
     }
 }
 
-fn apply_replayed_wal_op(state: &mut CollectionState, wal_op: &WalOp) -> Result<(), Status> {
+fn apply_replayed_wal_op(state: &mut CollectionRuntime, wal_op: &WalOp) -> Result<(), Status> {
     if is_redundant_wal_op(state, wal_op) {
         return Ok(());
     }
@@ -132,7 +132,7 @@ fn apply_replayed_wal_op(state: &mut CollectionState, wal_op: &WalOp) -> Result<
     Err(Status::err(result.status.code, result.status.message))
 }
 
-fn is_redundant_wal_op(state: &CollectionState, wal_op: &WalOp) -> bool {
+fn is_redundant_wal_op(state: &CollectionRuntime, wal_op: &WalOp) -> bool {
     match wal_op {
         WalOp::Insert(doc) => state.find_live_record(&doc.id).is_some(),
         WalOp::Upsert(doc) => live_doc_matches(state, doc),
@@ -143,7 +143,7 @@ fn is_redundant_wal_op(state: &CollectionState, wal_op: &WalOp) -> bool {
     }
 }
 
-fn live_doc_matches(state: &CollectionState, doc: &Doc) -> bool {
+fn live_doc_matches(state: &CollectionRuntime, doc: &Doc) -> bool {
     let Some(record) = state.find_live_record(&doc.id) else {
         return false;
     };
@@ -151,7 +151,7 @@ fn live_doc_matches(state: &CollectionState, doc: &Doc) -> bool {
     record.doc == *doc
 }
 
-fn update_already_applied(state: &CollectionState, doc: &Doc) -> bool {
+fn update_already_applied(state: &CollectionRuntime, doc: &Doc) -> bool {
     let Some(record) = state.find_live_record(&doc.id) else {
         return false;
     };

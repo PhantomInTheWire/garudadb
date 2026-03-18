@@ -1,5 +1,5 @@
 use crate::filter::{parse_filter, validate_filter};
-use crate::state::CollectionState;
+use crate::state::CollectionRuntime;
 use garuda_math::score_doc;
 use garuda_meta::evaluate_filter;
 use garuda_planner::{QueryPlan, SegmentScanMode, build_query_plan};
@@ -27,10 +27,10 @@ pub(crate) fn parse_required_filter(
 }
 
 pub(crate) fn execute_query(
-    state: &CollectionState,
+    state: &CollectionRuntime,
     query: VectorQuery,
 ) -> Result<Vec<Doc>, Status> {
-    let filter = parse_query_filter(query.filter.as_deref(), &state.manifest.schema)?;
+    let filter = parse_query_filter(query.filter.as_deref(), &state.catalog.schema)?;
     let plan = build_query_plan(query, filter);
     ensure_query_uses_known_vector_field(state, &plan)?;
 
@@ -45,10 +45,10 @@ pub(crate) fn execute_query(
 }
 
 pub(crate) fn collect_matching_doc_ids(
-    state: &CollectionState,
+    state: &CollectionRuntime,
     raw_filter: &str,
 ) -> Result<Vec<DocId>, Status> {
-    let filter = parse_query_filter(Some(raw_filter), &state.manifest.schema)?;
+    let filter = parse_query_filter(Some(raw_filter), &state.catalog.schema)?;
     let Some(filter) = filter else {
         return Ok(Vec::new());
     };
@@ -87,10 +87,10 @@ fn apply_query_projection(doc: &mut Doc, plan: &QueryPlan) {
     doc.fields = filtered_fields;
 }
 
-fn resolve_query_vector(plan: &QueryPlan, state: &CollectionState) -> Result<Vec<f32>, Status> {
+fn resolve_query_vector(plan: &QueryPlan, state: &CollectionRuntime) -> Result<Vec<f32>, Status> {
     match &plan.source {
         QueryVectorSource::Vector(vector) => {
-            if vector.len() != state.manifest.schema.vector.dimension {
+            if vector.len() != state.catalog.schema.vector.dimension {
                 return Err(Status::err(
                     StatusCode::InvalidArgument,
                     "query vector dimension does not match schema",
@@ -113,10 +113,10 @@ fn resolve_query_vector(plan: &QueryPlan, state: &CollectionState) -> Result<Vec
 }
 
 fn ensure_query_uses_known_vector_field(
-    state: &CollectionState,
+    state: &CollectionRuntime,
     plan: &QueryPlan,
 ) -> Result<(), Status> {
-    if plan.field_name == state.manifest.schema.vector.name {
+    if plan.field_name == state.catalog.schema.vector.name {
         return Ok(());
     }
 
@@ -126,7 +126,7 @@ fn ensure_query_uses_known_vector_field(
     ))
 }
 
-fn collect_matching_docs(state: &CollectionState, plan: &QueryPlan) -> Vec<Doc> {
+fn collect_matching_docs(state: &CollectionRuntime, plan: &QueryPlan) -> Vec<Doc> {
     let mut docs = state.all_live_docs();
 
     if matches!(plan.scan_mode, SegmentScanMode::FilteredScan) {
@@ -141,7 +141,7 @@ fn collect_matching_docs(state: &CollectionState, plan: &QueryPlan) -> Vec<Doc> 
 }
 
 fn score_and_sort_docs(
-    state: &CollectionState,
+    state: &CollectionRuntime,
     docs: Vec<Doc>,
     query_vector: &[f32],
     plan: &QueryPlan,
@@ -150,7 +150,7 @@ fn score_and_sort_docs(
 
     for mut doc in docs {
         doc.score = Some(score_doc(
-            state.manifest.schema.vector.metric,
+            state.catalog.schema.vector.metric,
             query_vector,
             &doc.vector,
         ));

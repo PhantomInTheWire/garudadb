@@ -1,3 +1,4 @@
+mod catalog;
 mod checkpoint_service;
 mod filter;
 mod filter_parser;
@@ -29,7 +30,7 @@ use segment_ddl::{
     backfill_new_column, drop_column as drop_column_from_state,
     rename_column as rename_column_in_state,
 };
-use state::CollectionState;
+use state::CollectionRuntime;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -51,7 +52,7 @@ pub struct Database {
 
 #[derive(Clone)]
 pub struct Collection {
-    inner: Arc<RwLock<CollectionState>>,
+    inner: Arc<RwLock<CollectionRuntime>>,
     _lock: Arc<CollectionLock>,
 }
 
@@ -103,11 +104,11 @@ impl Collection {
     }
 
     pub fn schema(&self) -> CollectionSchema {
-        self.read_state().manifest.schema.clone()
+        self.read_state().catalog.schema.clone()
     }
 
     pub fn options(&self) -> CollectionOptions {
-        self.read_state().manifest.options.clone()
+        self.read_state().catalog.options.clone()
     }
 
     pub fn stats(&self) -> CollectionStats {
@@ -125,9 +126,8 @@ impl Collection {
 
     pub fn create_index(&self, field_name: &FieldName, params: IndexParams) -> Result<(), Status> {
         self.mutate_and_checkpoint(|state| {
-            ensure_vector_index_field(&state.manifest.schema, field_name)?;
-            set_vector_index_params(&mut state.manifest.schema, params);
-            state.refresh_manifest();
+            ensure_vector_index_field(&state.catalog.schema, field_name)?;
+            set_vector_index_params(&mut state.catalog.schema, params);
 
             Ok(())
         })
@@ -139,12 +139,11 @@ impl Collection {
 
     pub fn add_column(&self, field: ScalarFieldSchema) -> Result<(), Status> {
         self.mutate_and_checkpoint(|state| {
-            ensure_column_can_be_added(&state.manifest.schema, &field)?;
+            ensure_column_can_be_added(&state.catalog.schema, &field)?;
             validate_field_default(&field)?;
 
-            state.manifest.schema.fields.push(field.clone());
+            state.catalog.schema.fields.push(field.clone());
             backfill_new_column(&mut state.segments, &field);
-            state.refresh_manifest();
 
             Ok(())
         })
@@ -152,9 +151,8 @@ impl Collection {
 
     pub fn alter_column(&self, old_name: &FieldName, new_name: &FieldName) -> Result<(), Status> {
         self.mutate_and_checkpoint(|state| {
-            rename_column_in_schema(&mut state.manifest.schema, old_name, new_name)?;
+            rename_column_in_schema(&mut state.catalog.schema, old_name, new_name)?;
             rename_column_in_state(&mut state.segments, old_name, new_name);
-            state.refresh_manifest();
 
             Ok(())
         })
@@ -162,9 +160,8 @@ impl Collection {
 
     pub fn drop_column(&self, name: &FieldName) -> Result<(), Status> {
         self.mutate_and_checkpoint(|state| {
-            drop_column_from_schema(&mut state.manifest.schema, name)?;
+            drop_column_from_schema(&mut state.catalog.schema, name)?;
             drop_column_from_state(&mut state.segments, name);
-            state.refresh_manifest();
 
             Ok(())
         })
@@ -174,11 +171,10 @@ impl Collection {
         self.mutate_and_checkpoint(|state| {
             optimize_segments(
                 &mut state.segments,
-                &mut state.manifest.next_segment_id,
-                state.manifest.options.segment_max_docs,
+                &mut state.catalog.next_segment_id,
+                state.catalog.options.segment_max_docs,
             );
             state.rebuild_indexes();
-            state.refresh_manifest();
 
             Ok(())
         })
@@ -253,7 +249,7 @@ impl Collection {
 
     fn mutate_and_checkpoint(
         &self,
-        mutate: impl FnOnce(&mut CollectionState) -> Result<(), Status>,
+        mutate: impl FnOnce(&mut CollectionRuntime) -> Result<(), Status>,
     ) -> Result<(), Status> {
         let mut state = self.write_state();
         let snapshot = state.clone();
@@ -272,16 +268,16 @@ impl Collection {
         apply_write_command(&mut state, command)
     }
 
-    fn read_state(&self) -> std::sync::RwLockReadGuard<'_, CollectionState> {
+    fn read_state(&self) -> std::sync::RwLockReadGuard<'_, CollectionRuntime> {
         self.inner.read().expect("collection lock poisoned")
     }
 
-    fn write_state(&self) -> std::sync::RwLockWriteGuard<'_, CollectionState> {
+    fn write_state(&self) -> std::sync::RwLockWriteGuard<'_, CollectionRuntime> {
         self.inner.write().expect("collection lock poisoned")
     }
 }
 
-fn fetch_doc(state: &CollectionState, id: &DocId) -> Option<Doc> {
+fn fetch_doc(state: &CollectionRuntime, id: &DocId) -> Option<Doc> {
     let record = state.find_live_record(id)?;
     let mut doc = record.doc.clone();
     doc.score = Some(0.0);
