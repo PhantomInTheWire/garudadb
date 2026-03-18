@@ -61,8 +61,13 @@ fn write_checkpoint_files(
         state.manifest.delete_snapshot_id,
         &state.deleted_doc_ids,
     )?;
-    reset_wal(&state.path, WRITING_SEGMENT_ID)?;
-    version_manager.write_manifest(&state.manifest)
+    version_manager.write_manifest(&state.manifest)?;
+
+    if reset_wal(&state.path, WRITING_SEGMENT_ID).is_err() {
+        return Ok(());
+    }
+
+    Ok(())
 }
 
 fn write_all_segments(state: &CollectionState) -> Result<(), Status> {

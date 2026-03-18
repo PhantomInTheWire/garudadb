@@ -87,6 +87,18 @@ pub fn manifest_paths(root: &Path) -> Result<Vec<(ManifestVersionId, PathBuf)>, 
                 format!("failed to read directory entry: {error}"),
             )
         })?;
+
+        let file_type = entry.file_type().map_err(|error| {
+            Status::err(
+                StatusCode::Internal,
+                format!("failed to read entry type: {error}"),
+            )
+        })?;
+
+        if !file_type.is_file() {
+            continue;
+        }
+
         let file_name = entry.file_name();
         let Some(file_name) = file_name.to_str() else {
             continue;
