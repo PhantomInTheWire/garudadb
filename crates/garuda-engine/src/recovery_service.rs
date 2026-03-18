@@ -1,5 +1,6 @@
 use crate::segment_manager::SegmentManager;
 use crate::state::CollectionState;
+use crate::write_service::replay_wal_ops;
 use garuda_meta::{DeleteStore, IdMap};
 use garuda_segment::{SegmentFile, read_segment, read_wal_ops, sync_segment_meta};
 use garuda_storage::{
@@ -57,7 +58,9 @@ pub(crate) fn load_collection_state(path: PathBuf) -> Result<CollectionState, St
         id_map,
         delete_store,
     };
-    replay_writing_segment_wal(&mut state)?;
+
+    let wal_ops = read_wal_ops(&state.path, WRITING_SEGMENT_ID)?;
+    replay_wal_ops(&mut state, wal_ops)?;
 
     Ok(state)
 }
@@ -76,12 +79,4 @@ fn load_segment(path: &Path, meta: &SegmentMeta) -> Result<SegmentFile, Status> 
     let mut segment = read_segment(path, meta)?;
     sync_segment_meta(&mut segment);
     Ok(segment)
-}
-
-fn replay_writing_segment_wal(state: &mut CollectionState) -> Result<(), Status> {
-    for op in read_wal_ops(&state.path, WRITING_SEGMENT_ID)? {
-        state.apply_wal_op(&op)?;
-    }
-
-    Ok(())
 }

@@ -1,11 +1,11 @@
-mod bootstrap;
+mod checkpoint_service;
 mod ddl;
 mod filter;
 mod filter_parser;
 mod lock;
 mod optimize;
-mod persistence;
 mod query;
+mod recovery_service;
 mod schema;
 mod segment_manager;
 mod state;
@@ -13,7 +13,7 @@ mod storage;
 mod validation;
 mod write_service;
 
-use bootstrap::{create_collection_state, load_collection_state};
+use checkpoint_service::checkpoint_state;
 use ddl::{
     backfill_new_column, drop_column_from_schema, drop_column_from_state,
     ensure_column_can_be_added, ensure_vector_index_field, flat_index_params,
@@ -23,10 +23,8 @@ use garuda_math::score_doc;
 use garuda_meta::evaluate_filter;
 use lock::CollectionLock;
 use optimize::optimize_segments;
-use persistence::checkpoint_state;
-use query::{
-    apply_query_projection, parse_query_filter, parse_required_filter, resolve_query_vector,
-};
+use query::{apply_query_projection, parse_query_filter, resolve_query_vector};
+use recovery_service::{create_collection_state, load_collection_state};
 use schema::{validate_create_options, validate_schema};
 use state::CollectionState;
 use std::collections::HashMap;
@@ -40,8 +38,7 @@ use write_service::{WriteCommand, apply_write_command};
 
 use garuda_types::{
     CollectionName, CollectionOptions, CollectionSchema, CollectionStats, Doc, DocId, FieldName,
-    IndexParams, OptimizeOptions, ScalarFieldSchema, Status, StatusCode, VectorQuery,
-    WriteResult,
+    IndexParams, OptimizeOptions, ScalarFieldSchema, Status, StatusCode, VectorQuery, WriteResult,
 };
 
 #[derive(Clone)]
@@ -373,44 +370,3 @@ fn score_and_sort_docs(
 
     scored_docs
 }
-<<<<<<< HEAD
-
-fn mark_persist_failure(results: &mut [WriteResult], status: &Status) {
-    for result in results {
-        if !result.status.is_ok() {
-            continue;
-        }
-
-        result.status = Status::err(status.code.clone(), status.message.clone());
-    }
-}
-
-fn apply_delete_batch(state: &mut CollectionState, ids: Vec<DocId>) -> Vec<WriteResult> {
-    let snapshot = state.clone();
-    let mut results = Vec::new();
-    let mut wal_ops = Vec::new();
-
-    for id in ids {
-        let result = state.delete_doc(&id);
-        if result.status.is_ok() {
-            wal_ops.push(WalOp::Delete(id.clone()));
-        }
-
-        results.push(result);
-    }
-
-    let persist_result = if wal_ops.is_empty() {
-        Ok(())
-    } else {
-        append_wal_ops(&state.path, WRITING_SEGMENT_ID, &wal_ops)
-    };
-
-    if let Err(status) = persist_result {
-        *state = snapshot;
-        mark_persist_failure(&mut results, &status);
-    }
-
-    results
-}
-=======
->>>>>>> 2c05821 (refactor: Extract write service from collection)

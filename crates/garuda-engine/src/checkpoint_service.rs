@@ -90,8 +90,8 @@ fn remove_stale_segment_dirs(state: &CollectionState) -> Result<(), Status> {
     }
 
     let entries = std::fs::read_dir(&state.path).map_err(|error| {
-        garuda_types::Status::err(
-            garuda_types::StatusCode::Internal,
+        Status::err(
+            StatusCode::Internal,
             format!(
                 "failed to read collection directory {}: {error}",
                 state.path.display()
@@ -101,8 +101,8 @@ fn remove_stale_segment_dirs(state: &CollectionState) -> Result<(), Status> {
 
     for entry in entries {
         let entry = entry.map_err(|error| {
-            garuda_types::Status::err(
-                garuda_types::StatusCode::Internal,
+            Status::err(
+                StatusCode::Internal,
                 format!("failed to read directory entry: {error}"),
             )
         })?;

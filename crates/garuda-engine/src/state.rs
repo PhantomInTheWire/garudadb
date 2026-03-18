@@ -1,8 +1,8 @@
 use crate::segment_manager::SegmentManager;
 use crate::validation::{apply_schema_defaults, validate_doc};
 use garuda_meta::{DeleteStore, IdMap};
-use garuda_segment::{RecordState, SegmentFile, StoredRecord, WalOp, sync_segment_meta};
-use garuda_types::{Doc, DocId, Manifest, Status, StatusCode, WriteResult};
+use garuda_segment::{RecordState, SegmentFile, StoredRecord, sync_segment_meta};
+use garuda_types::{Doc, DocId, Manifest, StatusCode, WriteResult};
 use std::path::PathBuf;
 
 #[derive(Clone, Copy)]
@@ -21,40 +21,6 @@ pub(crate) struct CollectionState {
 }
 
 impl CollectionState {
-    pub(crate) fn apply_wal_op(&mut self, op: &WalOp) -> Result<(), Status> {
-        if self.is_redundant_wal_op(op) {
-            return Ok(());
-        }
-
-        let result = match op {
-            WalOp::Insert(doc) => self.insert_doc(doc.clone(), WriteMode::Insert),
-            WalOp::Upsert(doc) => self.insert_doc(doc.clone(), WriteMode::Upsert),
-            WalOp::Update(doc) => self.update_doc(doc.clone()),
-            WalOp::Delete(doc_id) => self.delete_doc(doc_id),
-        };
-
-        if result.status.is_ok() {
-            return Ok(());
-        }
-
-        if matches!(op, WalOp::Update(_)) && result.status.code == StatusCode::NotFound {
-            return Ok(());
-        }
-
-        Err(Status::err(result.status.code, result.status.message))
-    }
-
-    fn is_redundant_wal_op(&self, op: &WalOp) -> bool {
-        match op {
-            WalOp::Insert(doc) => self.insert_already_applied(doc),
-            WalOp::Upsert(doc) => self.live_doc_matches(doc),
-            WalOp::Update(doc) => {
-                self.update_already_applied(doc) || self.find_live_record(&doc.id).is_none()
-            }
-            WalOp::Delete(doc_id) => self.find_live_record(doc_id).is_none(),
-        }
-    }
-
     pub(crate) fn insert_doc(&mut self, doc: Doc, mode: WriteMode) -> WriteResult {
         let mut doc = doc;
         apply_schema_defaults(&self.manifest.schema, &mut doc);
@@ -168,27 +134,6 @@ impl CollectionState {
         };
 
         record.state = RecordState::Deleted;
-    }
-
-    fn live_doc_matches(&self, doc: &Doc) -> bool {
-        let Some(record) = self.find_live_record(&doc.id) else {
-            return false;
-        };
-
-        record.doc == *doc
-    }
-
-    fn insert_already_applied(&self, doc: &Doc) -> bool {
-        self.find_live_record(&doc.id).is_some()
-    }
-
-    fn update_already_applied(&self, doc: &Doc) -> bool {
-        let Some(record) = self.find_live_record(&doc.id) else {
-            return false;
-        };
-
-        let merged_doc = merge_docs(&record.doc, doc);
-        merged_doc == record.doc
     }
 }
 
