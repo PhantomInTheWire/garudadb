@@ -13,17 +13,42 @@ fn query_by_document_id_should_behave_like_query_by_its_stored_vector() {
         .expect("create collection");
     seed_collection(&collection);
 
-    let by_id = collection.query(VectorQuery {
-        field_name: field_name("embedding"),
-        vector: None,
-        id: Some(doc_id("doc-1")),
-        top_k: 3,
-        filter: None,
-        include_vector: false,
-        output_fields: None,
-        ef_search: None,
-    });
+    let by_id = collection.query(VectorQuery::by_id(
+        field_name("embedding"),
+        doc_id("doc-1"),
+        3,
+    ));
     assert!(by_id.is_ok());
+}
+
+#[test]
+fn query_by_document_id_should_match_query_by_vector_results() {
+    let (_root, db) = database("query-by-id-parity");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+    seed_collection(&collection);
+
+    let by_vector = collection
+        .query(VectorQuery::by_vector(
+            field_name("embedding"),
+            dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
+            4,
+        ))
+        .expect("query by vector");
+
+    let by_id = collection
+        .query(VectorQuery::by_id(
+            field_name("embedding"),
+            doc_id("doc-1"),
+            4,
+        ))
+        .expect("query by id");
+
+    assert_eq!(
+        by_vector.iter().map(|doc| doc.id.clone()).collect::<Vec<_>>(),
+        by_id.iter().map(|doc| doc.id.clone()).collect::<Vec<_>>()
+    );
 }
 
 #[test]

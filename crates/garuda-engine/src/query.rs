@@ -1,6 +1,6 @@
 use crate::filter::{parse_filter, validate_filter};
 use crate::state::CollectionState;
-use garuda_types::{CollectionSchema, Doc, Status, StatusCode, VectorQuery};
+use garuda_types::{CollectionSchema, Doc, QueryVectorSource, Status, StatusCode, VectorQuery};
 use std::collections::BTreeMap;
 
 pub(crate) fn parse_query_filter(
@@ -48,30 +48,26 @@ pub(crate) fn resolve_query_vector(
     query: &VectorQuery,
     state: &CollectionState,
 ) -> Result<Vec<f32>, Status> {
-    if let Some(vector) = &query.vector {
-        if vector.len() != state.manifest.schema.vector.dimension {
-            return Err(Status::err(
-                StatusCode::InvalidArgument,
-                "query vector dimension does not match schema",
-            ));
+    match &query.source {
+        QueryVectorSource::Vector(vector) => {
+            if vector.len() != state.manifest.schema.vector.dimension {
+                return Err(Status::err(
+                    StatusCode::InvalidArgument,
+                    "query vector dimension does not match schema",
+                ));
+            }
+
+            Ok(vector.as_slice().to_vec())
         }
+        QueryVectorSource::DocumentId(id) => {
+            let Some(record) = state.find_live_record(id) else {
+                return Err(Status::err(
+                    StatusCode::NotFound,
+                    "query document id not found",
+                ));
+            };
 
-        return Ok(vector.as_slice().to_vec());
+            Ok(record.doc.vector.clone())
+        }
     }
-
-    let Some(id) = &query.id else {
-        return Err(Status::err(
-            StatusCode::InvalidArgument,
-            "query must provide either a vector or a document id",
-        ));
-    };
-
-    let Some(record) = state.find_live_record(id) else {
-        return Err(Status::err(
-            StatusCode::NotFound,
-            "query document id not found",
-        ));
-    };
-
-    Ok(record.doc.vector.clone())
 }

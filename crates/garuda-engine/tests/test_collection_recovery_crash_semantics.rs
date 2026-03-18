@@ -36,6 +36,42 @@ fn reopen_after_unflushed_writes_should_follow_a_clear_recovery_policy() {
 }
 
 #[test]
+fn reopen_after_unflushed_upsert_should_preserve_latest_visible_document() {
+    let (_root, db) = database("recovery-unflushed-upsert");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+
+    let inserted = collection.insert(vec![build_doc(
+        "doc-1",
+        1,
+        "alpha",
+        0.9,
+        [1.0, 0.0, 0.0, 0.0],
+    )]);
+    assert!(inserted[0].status.is_ok());
+
+    let upserted = collection.upsert(vec![build_doc(
+        "doc-1",
+        9,
+        "beta",
+        0.2,
+        [0.0, 1.0, 0.0, 0.0],
+    )]);
+    assert!(upserted[0].status.is_ok());
+    drop(collection);
+
+    let reopened = db
+        .open_collection(&collection_name("docs"))
+        .expect("reopen after wal-backed upsert");
+    let fetched = reopened.fetch(vec![doc_id("doc-1")]);
+    let doc = fetched.get(&doc_id("doc-1")).expect("doc present");
+
+    assert_eq!(doc.fields["rank"], ScalarValue::Int64(9));
+    assert_eq!(doc.fields["category"], ScalarValue::String("beta".to_string()));
+}
+
+#[test]
 fn reopen_after_delete_then_flush_should_not_resurrect_tombstoned_docs() {
     let (_root, db) = database("recovery-delete");
     let collection = db
