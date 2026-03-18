@@ -181,6 +181,7 @@ fn failed_persist_does_not_publish_new_manifest_on_reopen() {
     });
 
     assert!(result.is_err());
+    drop(collection);
 
     let reopened = db
         .open_collection(&common::collection_name("docs"))

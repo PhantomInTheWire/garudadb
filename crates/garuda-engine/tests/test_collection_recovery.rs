@@ -22,6 +22,8 @@ fn reopen_after_flush_preserves_manifest_and_query_results() {
             3,
         ))
         .expect("query before");
+    drop(collection);
+
     let reopened = db
         .open_collection(&collection_name("docs"))
         .expect("reopen");

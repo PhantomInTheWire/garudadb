@@ -16,6 +16,7 @@ fn reopen_uses_current_version_and_ignores_stale_temp_version_file() {
 
     let temp_version_path = root.join("docs").join("VERSION.json.tmp");
     fs::write(&temp_version_path, b"{\"corrupt\":true}").expect("write stale temp file");
+    drop(collection);
 
     let reopened = db
         .open_collection(&collection_name("docs"))
@@ -31,6 +32,7 @@ fn corrupt_current_version_file_blocks_reopen() {
         .create_collection(default_schema("docs"), default_options())
         .expect("create collection");
     collection.flush().expect("flush");
+    drop(collection);
 
     let version_path = root.join("docs").join("VERSION.json");
     fs::write(&version_path, b"{not-json").expect("corrupt version");
@@ -48,6 +50,7 @@ fn flush_keeps_version_file_present_without_temp_artifacts() {
 
     seed_collection(&collection);
     collection.flush().expect("flush");
+    drop(collection);
 
     let version_path = root.join("docs").join("VERSION.json");
     let temp_path = root.join("docs").join("VERSION.json.tmp");

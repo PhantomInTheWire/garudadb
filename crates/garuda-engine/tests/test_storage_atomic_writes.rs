@@ -12,6 +12,7 @@ fn atomic_write_keeps_only_final_file() {
         .expect("create collection");
 
     collection.flush().expect("flush");
+    drop(collection);
 
     let version_path = root.join("docs").join("VERSION.json");
     let temp_path = root.join("docs").join("VERSION.json.tmp");
