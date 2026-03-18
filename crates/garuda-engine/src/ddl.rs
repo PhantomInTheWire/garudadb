@@ -1,8 +1,7 @@
 use crate::state::CollectionState;
 use garuda_segment::{StoredRecord, sync_segment_meta};
 use garuda_types::{
-    FieldName, FlatIndexParams, IndexKind, IndexParams, ScalarFieldSchema, ScalarValue, Status,
-    StatusCode,
+    FieldName, FlatIndexParams, IndexParams, ScalarFieldSchema, ScalarValue, Status, StatusCode,
 };
 
 pub(crate) fn ensure_vector_index_field(
@@ -19,11 +18,12 @@ pub(crate) fn ensure_vector_index_field(
     ))
 }
 
-pub(crate) fn set_vector_index_kind(state: &mut CollectionState, kind: IndexKind) {
-    state.manifest.schema.vector.index = match kind {
-        IndexKind::Flat => IndexParams::Flat(FlatIndexParams),
-        IndexKind::Hnsw => IndexParams::Hnsw(garuda_types::HnswIndexParams::default()),
-    };
+pub(crate) fn set_vector_index_params(state: &mut CollectionState, params: IndexParams) {
+    state.manifest.schema.vector.index = params;
+}
+
+pub(crate) fn flat_index_params() -> IndexParams {
+    IndexParams::Flat(FlatIndexParams)
 }
 
 pub(crate) fn ensure_column_can_be_added(

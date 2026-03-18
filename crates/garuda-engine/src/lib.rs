@@ -14,8 +14,8 @@ mod validation;
 use bootstrap::{create_collection_state, load_collection_state};
 use ddl::{
     backfill_new_column, drop_column_from_schema, drop_column_from_state,
-    ensure_column_can_be_added, ensure_vector_index_field, rename_column_in_schema,
-    rename_column_in_state, set_vector_index_kind,
+    ensure_column_can_be_added, ensure_vector_index_field, flat_index_params,
+    rename_column_in_schema, rename_column_in_state, set_vector_index_params,
 };
 use garuda_math::score_doc;
 use garuda_meta::evaluate_filter;
@@ -39,7 +39,8 @@ use garuda_segment::{WalOp, append_wal_ops};
 use garuda_storage::WRITING_SEGMENT_ID;
 use garuda_types::{
     CollectionName, CollectionOptions, CollectionSchema, CollectionStats, Doc, DocId, FieldName,
-    IndexKind, ScalarFieldSchema, Status, StatusCode, VectorQuery, WriteResult,
+    IndexParams, OptimizeOptions, ScalarFieldSchema, Status, StatusCode, VectorQuery,
+    WriteResult,
 };
 
 #[derive(Clone)]
@@ -121,10 +122,10 @@ impl Collection {
         self.checkpoint()
     }
 
-    pub fn create_index(&self, field_name: &FieldName, kind: IndexKind) -> Result<(), Status> {
+    pub fn create_index(&self, field_name: &FieldName, params: IndexParams) -> Result<(), Status> {
         self.mutate_and_checkpoint(|state| {
             ensure_vector_index_field(state, field_name)?;
-            set_vector_index_kind(state, kind);
+            set_vector_index_params(state, params);
             state.refresh_manifest();
 
             Ok(())
@@ -132,7 +133,7 @@ impl Collection {
     }
 
     pub fn drop_index(&self, field_name: &FieldName) -> Result<(), Status> {
-        self.create_index(field_name, IndexKind::Flat)
+        self.create_index(field_name, flat_index_params())
     }
 
     pub fn add_column(&self, field: ScalarFieldSchema) -> Result<(), Status> {
@@ -168,7 +169,7 @@ impl Collection {
         })
     }
 
-    pub fn optimize(&self) -> Result<(), Status> {
+    pub fn optimize(&self, _options: OptimizeOptions) -> Result<(), Status> {
         self.mutate_and_checkpoint(|state| {
             optimize_segments(state);
             state.rebuild_indexes();

@@ -4,7 +4,7 @@ use common::{
     database, default_options, default_schema, dense_vector, doc_id, field_name, seed_collection,
     seed_more_collection_docs,
 };
-use garuda_types::VectorQuery;
+use garuda_types::{OptimizeOptions, VectorQuery};
 
 #[test]
 fn fetch_and_query_should_span_multiple_segments_transparently() {
@@ -37,7 +37,7 @@ fn optimize_should_be_idempotent_at_the_logical_api_level() {
     seed_collection(&collection);
     seed_more_collection_docs(&collection);
 
-    collection.optimize().expect("first optimize");
+    collection.optimize(OptimizeOptions).expect("first optimize");
     let after_first = collection
         .query(VectorQuery::by_vector(
             field_name("embedding"),
@@ -46,7 +46,7 @@ fn optimize_should_be_idempotent_at_the_logical_api_level() {
         ))
         .expect("query after first");
 
-    collection.optimize().expect("second optimize");
+    collection.optimize(OptimizeOptions).expect("second optimize");
     let after_second = collection
         .query(VectorQuery::by_vector(
             field_name("embedding"),

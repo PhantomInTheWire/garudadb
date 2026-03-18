@@ -245,6 +245,9 @@ impl IndexParams {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct OptimizeOptions;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScalarFieldSchema {
     pub name: FieldName,
@@ -371,10 +374,15 @@ pub enum FilterExpr {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum QueryVectorSource {
+    Vector(DenseVector),
+    DocumentId(DocId),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VectorQuery {
     pub field_name: FieldName,
-    pub vector: Option<DenseVector>,
-    pub id: Option<DocId>,
+    pub source: QueryVectorSource,
     pub top_k: usize,
     pub filter: Option<String>,
     pub include_vector: bool,
@@ -386,8 +394,19 @@ impl VectorQuery {
     pub fn by_vector(field_name: FieldName, vector: DenseVector, top_k: usize) -> Self {
         Self {
             field_name,
-            vector: Some(vector),
-            id: None,
+            source: QueryVectorSource::Vector(vector),
+            top_k,
+            filter: None,
+            include_vector: false,
+            output_fields: None,
+            ef_search: None,
+        }
+    }
+
+    pub fn by_id(field_name: FieldName, id: DocId, top_k: usize) -> Self {
+        Self {
+            field_name,
+            source: QueryVectorSource::DocumentId(id),
             top_k,
             filter: None,
             include_vector: false,
