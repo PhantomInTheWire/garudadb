@@ -3,17 +3,14 @@ mod ddl;
 mod delete_store;
 mod filter;
 mod filter_parser;
-mod id_map;
 mod lock;
 mod optimize;
+mod persistence;
 mod query;
 mod schema;
-mod segment;
 mod state;
 mod storage;
-mod storage_io;
 mod validation;
-mod version;
 
 use bootstrap::{create_collection_state, load_collection_state};
 use ddl::{
@@ -21,15 +18,13 @@ use ddl::{
     ensure_column_can_be_added, ensure_vector_index_field, rename_column_in_schema,
     rename_column_in_state, set_vector_index_kind,
 };
-use delete_store::write_delete_store;
 use filter::evaluate_filter;
 use garuda_math::score_doc;
-use id_map::write_id_map;
 use lock::CollectionLock;
 use optimize::optimize_segments;
+use persistence::checkpoint_state;
 use query::{apply_query_projection, parse_query_filter, resolve_query_vector};
 use schema::{validate_create_options, validate_schema};
-use segment::write_segment;
 use state::CollectionState;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -38,8 +33,9 @@ use storage::{
     collection_dir, ensure_database_root, ensure_existing_collection_dir, ensure_new_collection_dir,
 };
 use validation::validate_field_default;
-use version::VersionStore;
 
+use garuda_segment::{WalOp, append_wal_ops};
+use garuda_storage::WRITING_SEGMENT_ID;
 use garuda_types::{
     CollectionName, CollectionOptions, CollectionSchema, CollectionStats, Doc, DocId, FieldName,
     IndexKind, ScalarFieldSchema, Status, StatusCode, VectorQuery, WriteResult,
@@ -81,7 +77,7 @@ impl Database {
             inner: Arc::new(RwLock::new(create_collection_state(path, schema, options))),
             _lock: lock,
         };
-        collection.persist_all()?;
+        collection.checkpoint()?;
 
         Ok(collection)
     }
@@ -121,11 +117,11 @@ impl Collection {
     }
 
     pub fn flush(&self) -> Result<(), Status> {
-        self.persist_all()
+        self.checkpoint()
     }
 
     pub fn create_index(&self, field_name: &FieldName, kind: IndexKind) -> Result<(), Status> {
-        self.mutate_and_persist(|state| {
+        self.mutate_and_checkpoint(|state| {
             ensure_vector_index_field(state, field_name)?;
             set_vector_index_kind(state, kind);
             state.refresh_manifest();
@@ -139,7 +135,7 @@ impl Collection {
     }
 
     pub fn add_column(&self, field: ScalarFieldSchema) -> Result<(), Status> {
-        self.mutate_and_persist(|state| {
+        self.mutate_and_checkpoint(|state| {
             ensure_column_can_be_added(state, &field)?;
             validate_field_default(&field)?;
 
@@ -152,7 +148,7 @@ impl Collection {
     }
 
     pub fn alter_column(&self, old_name: &FieldName, new_name: &FieldName) -> Result<(), Status> {
-        self.mutate_and_persist(|state| {
+        self.mutate_and_checkpoint(|state| {
             rename_column_in_schema(state, old_name, new_name)?;
             rename_column_in_state(state, old_name, new_name);
             state.refresh_manifest();
@@ -162,7 +158,7 @@ impl Collection {
     }
 
     pub fn drop_column(&self, name: &FieldName) -> Result<(), Status> {
-        self.mutate_and_persist(|state| {
+        self.mutate_and_checkpoint(|state| {
             drop_column_from_schema(state, name)?;
             drop_column_from_state(state, name);
             state.refresh_manifest();
@@ -172,7 +168,7 @@ impl Collection {
     }
 
     pub fn optimize(&self) -> Result<(), Status> {
-        self.mutate_and_persist(|state| {
+        self.mutate_and_checkpoint(|state| {
             optimize_segments(state);
             state.rebuild_indexes();
             state.refresh_manifest();
@@ -182,33 +178,48 @@ impl Collection {
     }
 
     pub fn insert(&self, docs: Vec<Doc>) -> Vec<WriteResult> {
-        self.mutate_writes_and_persist(|state| {
-            run_doc_writes(state, docs, |state, doc| state.insert_doc(doc, false))
+        self.apply_doc_write_batch(docs, WalOp::Insert, |state, doc| {
+            state.insert_doc(doc, false)
         })
     }
 
     pub fn upsert(&self, docs: Vec<Doc>) -> Vec<WriteResult> {
-        self.mutate_writes_and_persist(|state| {
-            run_doc_writes(state, docs, |state, doc| state.insert_doc(doc, true))
+        self.apply_doc_write_batch(docs, WalOp::Upsert, |state, doc| {
+            state.insert_doc(doc, true)
         })
     }
 
     pub fn update(&self, docs: Vec<Doc>) -> Vec<WriteResult> {
-        self.mutate_writes_and_persist(|state| {
-            run_doc_writes(state, docs, |state, doc| state.update_doc(doc))
-        })
+        self.apply_doc_write_batch(docs, WalOp::Update, |state, doc| state.update_doc(doc))
     }
 
     pub fn delete(&self, ids: Vec<DocId>) -> Vec<WriteResult> {
-        self.mutate_writes_and_persist(|state| {
-            let mut results = Vec::new();
+        let mut state = self.write_state();
+        let snapshot = state.clone();
+        let mut results = Vec::new();
+        let mut wal_ops = Vec::new();
 
-            for id in ids {
-                results.push(state.delete_doc(&id));
+        for id in ids {
+            let result = state.delete_doc(&id);
+            if result.status.is_ok() {
+                wal_ops.push(WalOp::Delete(id.clone()));
             }
 
-            results
-        })
+            results.push(result);
+        }
+
+        let persist_result = if wal_ops.is_empty() {
+            Ok(())
+        } else {
+            append_wal_ops(&state.path, WRITING_SEGMENT_ID, &wal_ops)
+        };
+
+        if let Err(status) = persist_result {
+            *state = snapshot;
+            mark_persist_failure(&mut results, &status);
+        }
+
+        results
     }
 
     pub fn fetch(&self, ids: Vec<DocId>) -> HashMap<DocId, Doc> {
@@ -237,27 +248,19 @@ impl Collection {
         Ok(score_and_sort_docs(&state, docs, &query_vector, &query))
     }
 
-    fn persist_all(&self) -> Result<(), Status> {
-        let state = self.read_state();
+    fn checkpoint(&self) -> Result<(), Status> {
+        let mut state = self.write_state();
+        let snapshot = state.clone();
 
-        write_id_map(&state.path, &state.id_map)?;
-        write_delete_store(&state.path, &state.deleted_doc_ids)?;
-        write_segment(&state.path, &state.writing_segment)?;
-
-        for segment in &state.persisted_segments {
-            write_segment(&state.path, segment)?;
+        if let Err(status) = checkpoint_state(&mut state) {
+            *state = snapshot;
+            return Err(status);
         }
 
-        VersionStore::new(&state.path).write_manifest(&state.manifest)?;
         Ok(())
     }
 
-    fn restore_state(&self, snapshot: CollectionState) {
-        let mut state = self.write_state();
-        *state = snapshot;
-    }
-
-    fn mutate_and_persist(
+    fn mutate_and_checkpoint(
         &self,
         mutate: impl FnOnce(&mut CollectionState) -> Result<(), Status>,
     ) -> Result<(), Status> {
@@ -265,27 +268,43 @@ impl Collection {
         let snapshot = state.clone();
 
         mutate(&mut state)?;
-        drop(state);
-
-        if let Err(status) = self.persist_all() {
-            self.restore_state(snapshot);
+        if let Err(status) = checkpoint_state(&mut state) {
+            *state = snapshot;
             return Err(status);
         }
 
         Ok(())
     }
 
-    fn mutate_writes_and_persist(
+    fn apply_doc_write_batch(
         &self,
-        mutate: impl FnOnce(&mut CollectionState) -> Vec<WriteResult>,
+        docs: Vec<Doc>,
+        wal_op: impl Fn(Doc) -> WalOp,
+        write_one: impl Fn(&mut CollectionState, Doc) -> WriteResult,
     ) -> Vec<WriteResult> {
         let mut state = self.write_state();
         let snapshot = state.clone();
-        let mut results = mutate(&mut state);
-        drop(state);
+        let mut results = Vec::new();
+        let mut wal_ops = Vec::new();
 
-        if let Err(status) = self.persist_all() {
-            self.restore_state(snapshot);
+        for doc in docs {
+            let wal_doc = doc.clone();
+            let result = write_one(&mut state, doc);
+            if result.status.is_ok() {
+                wal_ops.push(wal_op(wal_doc));
+            }
+
+            results.push(result);
+        }
+
+        let persist_result = if wal_ops.is_empty() {
+            Ok(())
+        } else {
+            append_wal_ops(&state.path, WRITING_SEGMENT_ID, &wal_ops)
+        };
+
+        if let Err(status) = persist_result {
+            *state = snapshot;
             mark_persist_failure(&mut results, &status);
         }
 
@@ -299,20 +318,6 @@ impl Collection {
     fn write_state(&self) -> std::sync::RwLockWriteGuard<'_, CollectionState> {
         self.inner.write().expect("collection lock poisoned")
     }
-}
-
-fn run_doc_writes(
-    state: &mut CollectionState,
-    docs: Vec<Doc>,
-    write_one: impl Fn(&mut CollectionState, Doc) -> WriteResult,
-) -> Vec<WriteResult> {
-    let mut results = Vec::new();
-
-    for doc in docs {
-        results.push(write_one(state, doc));
-    }
-
-    results
 }
 
 fn fetch_doc(state: &CollectionState, id: &DocId) -> Option<Doc> {

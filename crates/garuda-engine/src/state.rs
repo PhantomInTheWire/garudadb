@@ -1,6 +1,9 @@
-use crate::segment::{segment_file_name, segment_meta, sync_segment_meta, SegmentFile, StoredRecord};
 use crate::validation::{apply_schema_defaults, validate_doc};
-use garuda_types::{Doc, DocId, Manifest, StatusCode, WriteResult};
+use garuda_segment::{
+    SegmentFile, StoredRecord, WalOp, segment_file_name, segment_meta, sync_segment_meta,
+};
+use garuda_storage::WRITING_SEGMENT_ID;
+use garuda_types::{Doc, DocId, Manifest, Status, StatusCode, WriteResult};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
@@ -15,6 +18,21 @@ pub(crate) struct CollectionState {
 }
 
 impl CollectionState {
+    pub(crate) fn apply_wal_op(&mut self, op: &WalOp) -> Result<(), Status> {
+        let result = match op {
+            WalOp::Insert(doc) => self.insert_doc(doc.clone(), false),
+            WalOp::Upsert(doc) => self.insert_doc(doc.clone(), true),
+            WalOp::Update(doc) => self.update_doc(doc.clone()),
+            WalOp::Delete(doc_id) => self.delete_doc(doc_id),
+        };
+
+        if result.status.is_ok() {
+            return Ok(());
+        }
+
+        Err(Status::err(result.status.code, result.status.message))
+    }
+
     pub(crate) fn insert_doc(&mut self, doc: Doc, replace_existing: bool) -> WriteResult {
         let mut doc = doc;
         apply_schema_defaults(&self.manifest.schema, &mut doc);
@@ -146,7 +164,7 @@ impl CollectionState {
 
     pub(crate) fn empty_writing_segment() -> SegmentFile {
         SegmentFile {
-            meta: segment_meta(0),
+            meta: segment_meta(WRITING_SEGMENT_ID),
             records: Vec::new(),
         }
     }

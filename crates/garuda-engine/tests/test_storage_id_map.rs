@@ -1,6 +1,9 @@
 mod common;
 
-use common::{build_doc, collection_name, database, default_options, default_schema, doc_id};
+use common::{
+    build_doc, collection_dir, collection_name, database, default_options, default_schema, doc_id,
+};
+use std::fs;
 
 #[test]
 fn reopen_uses_latest_visible_document_for_a_reused_doc_id() {
@@ -67,4 +70,33 @@ fn delete_then_reinsert_same_doc_id_survives_reopen() {
         doc.fields["category"],
         garuda_types::ScalarValue::String(String::from("gamma"))
     );
+}
+
+#[test]
+fn recovery_uses_manifest_referenced_idmap_snapshot_not_highest_filename() {
+    let (root, db) = database("storage-id-map-snapshot-selection");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+
+    let insert = collection.insert(vec![build_doc(
+        "doc-1",
+        1,
+        "alpha",
+        0.9,
+        [1.0, 0.0, 0.0, 0.0],
+    )]);
+    assert!(insert[0].status.is_ok());
+
+    collection.flush().expect("flush");
+    drop(collection);
+
+    let bogus_idmap = collection_dir(&root, "docs").join("idmap.999");
+    fs::write(&bogus_idmap, b"bogus snapshot").expect("write bogus idmap snapshot");
+
+    let reopened = db
+        .open_collection(&collection_name("docs"))
+        .expect("reopen collection");
+    let fetched = reopened.fetch(vec![doc_id("doc-1")]);
+    assert!(fetched.contains_key(&doc_id("doc-1")));
 }

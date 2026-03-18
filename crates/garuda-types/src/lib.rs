@@ -142,6 +142,53 @@ impl Borrow<str> for DocId {
 pub type InternalDocId = u64;
 pub type SegmentId = u64;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct ManifestVersionId(u64);
+
+impl ManifestVersionId {
+    pub fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub fn get(self) -> u64 {
+        self.0
+    }
+
+    pub fn next(self) -> Self {
+        Self(self.0 + 1)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct SnapshotId(u64);
+
+impl SnapshotId {
+    pub fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub fn get(self) -> u64 {
+        self.0
+    }
+
+    pub fn next(self) -> Self {
+        Self(self.0 + 1)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct StorageFormatVersion(u16);
+
+impl StorageFormatVersion {
+    pub fn new(value: u16) -> Self {
+        Self(value)
+    }
+
+    pub fn get(self) -> u16 {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DistanceMetric {
     Cosine,
@@ -429,6 +476,9 @@ pub struct Manifest {
     pub options: CollectionOptions,
     pub next_doc_id: InternalDocId,
     pub next_segment_id: SegmentId,
+    pub id_map_snapshot_id: SnapshotId,
+    pub delete_snapshot_id: SnapshotId,
+    pub manifest_version_id: ManifestVersionId,
     pub writing_segment: SegmentMeta,
     pub persisted_segments: Vec<SegmentMeta>,
 }

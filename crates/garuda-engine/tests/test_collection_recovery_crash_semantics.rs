@@ -18,11 +18,11 @@ fn reopen_after_unflushed_writes_should_follow_a_clear_recovery_policy() {
     assert!(inserted[0].status.is_ok());
     drop(collection);
 
-    let reopened = db.open_collection(&collection_name("docs"));
-    assert!(
-        reopened.is_ok(),
-        "reopen should define behavior even when prior writes were not explicitly flushed"
-    );
+    let reopened = db
+        .open_collection(&collection_name("docs"))
+        .expect("reopen after wal-backed write");
+    let fetched = reopened.fetch(vec![doc_id("doc-1")]);
+    assert!(fetched.contains_key(&doc_id("doc-1")));
 }
 
 #[test]
