@@ -1,6 +1,6 @@
 use crate::segment_manager::SegmentManager;
 use crate::validation::{apply_schema_defaults, validate_doc};
-use garuda_meta::{DeleteStore, IdMap};
+use garuda_meta::MetadataStore;
 use garuda_segment::{RecordState, SegmentFile, StoredRecord, sync_segment_meta};
 use garuda_types::{Doc, DocId, Manifest, StatusCode, WriteResult};
 use std::path::PathBuf;
@@ -16,8 +16,7 @@ pub(crate) struct CollectionState {
     pub(crate) path: PathBuf,
     pub(crate) manifest: Manifest,
     pub(crate) segments: SegmentManager,
-    pub(crate) id_map: IdMap,
-    pub(crate) delete_store: DeleteStore,
+    pub(crate) meta: MetadataStore,
 }
 
 impl CollectionState {
@@ -70,18 +69,13 @@ impl CollectionState {
     }
 
     pub(crate) fn rebuild_indexes(&mut self) {
-        self.id_map.clear();
-        self.delete_store.clear();
+        self.meta.clear();
 
         for segment in self.segments.persisted_segments_mut() {
-            index_segment(segment, &mut self.id_map, &mut self.delete_store);
+            index_segment(segment, &mut self.meta);
         }
 
-        index_segment(
-            self.segments.writing_segment_mut(),
-            &mut self.id_map,
-            &mut self.delete_store,
-        );
+        index_segment(self.segments.writing_segment_mut(), &mut self.meta);
     }
 
     pub(crate) fn refresh_manifest(&mut self) {
@@ -137,16 +131,16 @@ impl CollectionState {
     }
 }
 
-fn index_segment(segment: &mut SegmentFile, id_map: &mut IdMap, delete_store: &mut DeleteStore) {
+fn index_segment(segment: &mut SegmentFile, meta: &mut MetadataStore) {
     sync_segment_meta(segment);
 
     for record in &segment.records {
         if matches!(record.state, RecordState::Deleted) {
-            delete_store.insert(record.doc_id);
+            meta.mark_deleted(record.doc_id);
             continue;
         }
 
-        id_map.insert(record.doc.id.clone(), record.doc_id);
+        meta.index_live_doc(record.doc.id.clone(), record.doc_id);
     }
 }
 
