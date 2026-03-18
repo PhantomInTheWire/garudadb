@@ -1,6 +1,6 @@
 mod bootstrap;
-mod delete_store;
 mod ddl;
+mod delete_store;
 mod filter;
 mod filter_parser;
 mod id_map;
@@ -8,7 +8,6 @@ mod lock;
 mod optimize;
 mod query;
 mod schema;
-mod scoring;
 mod segment;
 mod state;
 mod storage;
@@ -17,27 +16,26 @@ mod validation;
 mod version;
 
 use bootstrap::{create_collection_state, load_collection_state};
-use delete_store::write_delete_store;
 use ddl::{
     backfill_new_column, drop_column_from_schema, drop_column_from_state,
     ensure_column_can_be_added, ensure_vector_index_field, rename_column_in_schema,
     rename_column_in_state, set_vector_index_kind,
 };
+use delete_store::write_delete_store;
 use filter::evaluate_filter;
+use garuda_math::score_doc;
 use id_map::write_id_map;
 use lock::CollectionLock;
 use optimize::optimize_segments;
 use query::{apply_query_projection, parse_query_filter, resolve_query_vector};
 use schema::{validate_create_options, validate_schema};
-use scoring::score_doc;
 use segment::write_segment;
 use state::CollectionState;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use storage::{
-    collection_dir, ensure_database_root, ensure_existing_collection_dir,
-    ensure_new_collection_dir,
+    collection_dir, ensure_database_root, ensure_existing_collection_dir, ensure_new_collection_dir,
 };
 use validation::validate_field_default;
 use version::VersionStore;
