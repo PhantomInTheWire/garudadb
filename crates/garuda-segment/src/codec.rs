@@ -1,6 +1,5 @@
 use crate::{RecordState, SegmentFile, StoredRecord};
 use garuda_types::{Doc, DocId, ScalarValue, SegmentMeta, Status, StatusCode};
-
 const SEGMENT_MAGIC: &[u8; 8] = b"GRDSEG01";
 const FORMAT_VERSION: u16 = 1;
 const FNV_OFFSET_BASIS: u32 = 2_166_136_261;
