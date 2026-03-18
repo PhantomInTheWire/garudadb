@@ -1,7 +1,6 @@
 use crate::state::CollectionState;
-use crate::storage::{
-    self, read_delete_store, read_id_map, read_manifest, read_segment, sync_segment_meta,
-};
+use crate::storage::{self, read_delete_store, read_id_map, read_segment, sync_segment_meta};
+use crate::version::VersionStore;
 use garuda_types::{CollectionOptions, CollectionSchema, Manifest, SegmentMeta, Status};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -32,7 +31,7 @@ pub(crate) fn create_collection_state(
 }
 
 pub(crate) fn load_collection_state(path: PathBuf) -> Result<CollectionState, Status> {
-    let manifest = read_manifest(&path)?;
+    let manifest = VersionStore::new(&path).read_manifest()?;
     let writing_segment = load_segment(&path, &manifest.writing_segment)?;
     let persisted_segments = load_persisted_segments(&path, &manifest)?;
     let id_map = read_id_map(&path).unwrap_or_default();

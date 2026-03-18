@@ -7,7 +7,9 @@ mod schema;
 mod scoring;
 mod state;
 mod storage;
+mod storage_io;
 mod validation;
+mod version;
 
 use bootstrap::{create_collection_state, load_collection_state};
 use ddl::{
@@ -25,10 +27,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use storage::{
     collection_dir, ensure_database_root, ensure_existing_collection_dir,
-    ensure_new_collection_dir, sync_segment_meta, write_delete_store, write_id_map, write_manifest,
-    write_segment,
+    ensure_new_collection_dir, sync_segment_meta, write_delete_store, write_id_map, write_segment,
 };
 use validation::validate_field_default;
+use version::VersionStore;
 
 use garuda_types::{
     CollectionName, CollectionOptions, CollectionSchema, CollectionStats, Doc, DocId, FieldName,
@@ -233,7 +235,7 @@ impl Collection {
             write_segment(&state.path, segment)?;
         }
 
-        write_manifest(&state.path, &state.manifest)?;
+        VersionStore::new(&state.path).write_manifest(&state.manifest)?;
         Ok(())
     }
 
