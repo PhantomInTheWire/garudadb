@@ -4,7 +4,7 @@ use common::{
     build_doc, collection_name, database, default_options, default_schema, dense_vector, doc_id,
     field_name, seed_collection,
 };
-use garuda_types::{Doc, IndexKind, ScalarType, ScalarValue};
+use garuda_types::{Doc, HnswIndexParams, IndexParams, ScalarType, ScalarValue};
 use std::fs;
 
 #[test]
@@ -48,8 +48,7 @@ fn rejects_duplicate_ids_wrong_dimensions_invalid_filters_and_wrong_index_target
 
     let query = collection.query(garuda_types::VectorQuery {
         field_name: field_name("embedding"),
-        vector: Some(dense_vector(vec![1.0, 0.0, 0.0, 0.0])),
-        id: None,
+        source: garuda_types::QueryVectorSource::Vector(dense_vector(vec![1.0, 0.0, 0.0, 0.0])),
         top_k: 10,
         filter: Some("category = ".to_string()),
         include_vector: false,
@@ -58,7 +57,10 @@ fn rejects_duplicate_ids_wrong_dimensions_invalid_filters_and_wrong_index_target
     });
     assert!(query.is_err());
 
-    let bad_index = collection.create_index(&field_name("rank"), IndexKind::Hnsw);
+    let bad_index = collection.create_index(
+        &field_name("rank"),
+        IndexParams::Hnsw(HnswIndexParams::default()),
+    );
     assert!(bad_index.is_err());
 
     let fetched = collection.fetch(vec![doc_id("doc-1")]);

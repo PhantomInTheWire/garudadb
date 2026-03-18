@@ -4,7 +4,7 @@ use common::{
     collection_name, database, default_options, default_schema, dense_vector, field_name,
     seed_collection, seed_more_collection_docs,
 };
-use garuda_types::{IndexKind, VectorQuery};
+use garuda_types::{HnswIndexParams, IndexKind, IndexParams, VectorQuery};
 
 #[test]
 fn creating_index_before_and_after_data_should_preserve_logical_results() {
@@ -14,7 +14,10 @@ fn creating_index_before_and_after_data_should_preserve_logical_results() {
         .expect("create collection");
 
     collection
-        .create_index(&field_name("embedding"), IndexKind::Hnsw)
+        .create_index(
+            &field_name("embedding"),
+            IndexParams::Hnsw(HnswIndexParams::default()),
+        )
         .expect("create empty index");
     seed_collection(&collection);
     seed_more_collection_docs(&collection);
@@ -51,7 +54,10 @@ fn index_choice_should_survive_reopen() {
         .create_collection(default_schema("docs"), default_options())
         .expect("create collection");
     collection
-        .create_index(&field_name("embedding"), IndexKind::Hnsw)
+        .create_index(
+            &field_name("embedding"),
+            IndexParams::Hnsw(HnswIndexParams::default()),
+        )
         .expect("create hnsw");
     collection.flush().expect("flush");
     drop(collection);
@@ -60,4 +66,29 @@ fn index_choice_should_survive_reopen() {
         .open_collection(&collection_name("docs"))
         .expect("reopen");
     assert_eq!(reopened.schema().vector.index.kind(), IndexKind::Hnsw);
+}
+
+#[test]
+fn hnsw_index_params_should_roundtrip_through_reopen() {
+    let (_root, db) = database("index-params-roundtrip");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+
+    let params = HnswIndexParams {
+        m: 32,
+        ef_construction: 128,
+        ef_search: 96,
+    };
+
+    collection
+        .create_index(&field_name("embedding"), IndexParams::Hnsw(params.clone()))
+        .expect("create hnsw with custom params");
+    collection.flush().expect("flush");
+    drop(collection);
+
+    let reopened = db
+        .open_collection(&collection_name("docs"))
+        .expect("reopen");
+    assert_eq!(reopened.schema().vector.index, IndexParams::Hnsw(params));
 }

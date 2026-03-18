@@ -1,7 +1,10 @@
 mod common;
 
 use common::{database, default_options, default_schema, doc_id, field_name, seed_collection};
-use garuda_types::{DenseVector, Doc, IndexKind, ScalarFieldSchema, ScalarType, ScalarValue};
+use garuda_types::{
+    DenseVector, Doc, HnswIndexParams, IndexKind, IndexParams, ScalarFieldSchema, ScalarType,
+    ScalarValue,
+};
 use std::collections::BTreeMap;
 
 #[test]
@@ -13,7 +16,10 @@ fn create_drop_index_and_column_ddl_roundtrip() {
     seed_collection(&collection);
 
     collection
-        .create_index(&field_name("embedding"), IndexKind::Hnsw)
+        .create_index(
+            &field_name("embedding"),
+            IndexParams::Hnsw(HnswIndexParams::default()),
+        )
         .expect("create hnsw index");
     assert_eq!(collection.schema().vector.index.kind(), IndexKind::Hnsw);
 
@@ -173,4 +179,39 @@ fn inserts_apply_schema_defaults_after_add_column() {
         fetched["doc-3"].fields["is_public"],
         ScalarValue::Bool(true)
     );
+}
+
+#[test]
+fn renamed_column_survives_reopen_and_query_projection_uses_new_name() {
+    let (_root, db) = database("ddl-rename-reopen");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+    seed_collection(&collection);
+
+    collection
+        .alter_column(&field_name("category"), &field_name("label"))
+        .expect("rename column");
+    collection.flush().expect("flush");
+    drop(collection);
+
+    let reopened = db
+        .open_collection(&common::collection_name("docs"))
+        .expect("reopen collection");
+
+    let fetched = reopened.fetch(vec![doc_id("doc-1")]);
+    assert_eq!(
+        fetched["doc-1"].fields["label"],
+        ScalarValue::String("alpha".to_string())
+    );
+    assert!(!fetched["doc-1"].fields.contains_key("category"));
+
+    let mut query = garuda_types::VectorQuery::by_vector(
+        field_name("embedding"),
+        common::dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
+        2,
+    );
+    query.output_fields = Some(vec!["label".to_string()]);
+    let results = reopened.query(query).expect("query");
+    assert!(results.iter().all(|doc| doc.fields.contains_key("label")));
 }
