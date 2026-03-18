@@ -2,6 +2,7 @@ mod bootstrap;
 mod ddl;
 mod filter;
 mod filter_parser;
+mod lock;
 mod query;
 mod schema;
 mod scoring;
@@ -18,6 +19,7 @@ use ddl::{
     rename_column_in_state, set_vector_index_kind,
 };
 use filter::evaluate_filter;
+use lock::CollectionLock;
 use query::{apply_query_projection, parse_query_filter, resolve_query_vector};
 use schema::{validate_create_options, validate_schema};
 use scoring::score_doc;
@@ -45,6 +47,7 @@ pub struct Database {
 #[derive(Clone)]
 pub struct Collection {
     inner: Arc<RwLock<CollectionState>>,
+    _lock: Arc<CollectionLock>,
 }
 
 impl Database {
@@ -66,9 +69,11 @@ impl Database {
 
         let path = collection_dir(&self.root, &schema.name);
         ensure_new_collection_dir(&path)?;
+        let lock = Arc::new(CollectionLock::acquire(&path)?);
 
         let collection = Collection {
             inner: Arc::new(RwLock::new(create_collection_state(path, schema, options))),
+            _lock: lock,
         };
         collection.persist_all()?;
 
@@ -78,9 +83,11 @@ impl Database {
     pub fn open_collection(&self, name: &CollectionName) -> Result<Collection, Status> {
         let path = collection_dir(&self.root, name);
         ensure_existing_collection_dir(&path)?;
+        let lock = Arc::new(CollectionLock::acquire(&path)?);
 
         Ok(Collection {
             inner: Arc::new(RwLock::new(load_collection_state(path)?)),
+            _lock: lock,
         })
     }
 }
