@@ -1,6 +1,7 @@
+use crate::delete_store::read_delete_store;
 use crate::id_map::read_id_map;
+use crate::segment::{read_segment, sync_segment_meta, SegmentFile};
 use crate::state::CollectionState;
-use crate::storage::{self, read_delete_store, read_segment, sync_segment_meta};
 use crate::version::VersionStore;
 use garuda_types::{CollectionOptions, CollectionSchema, Manifest, SegmentMeta, Status};
 use std::collections::{HashMap, HashSet};
@@ -54,7 +55,7 @@ pub(crate) fn load_collection_state(path: PathBuf) -> Result<CollectionState, St
 fn load_persisted_segments(
     path: &Path,
     manifest: &Manifest,
-) -> Result<Vec<storage::SegmentFile>, Status> {
+) -> Result<Vec<SegmentFile>, Status> {
     let mut segments = Vec::new();
 
     for meta in &manifest.persisted_segments {
@@ -64,7 +65,7 @@ fn load_persisted_segments(
     Ok(segments)
 }
 
-fn load_segment(path: &Path, meta: &SegmentMeta) -> Result<storage::SegmentFile, Status> {
+fn load_segment(path: &Path, meta: &SegmentMeta) -> Result<SegmentFile, Status> {
     let mut segment = read_segment(path, meta)?;
     sync_segment_meta(&mut segment);
     Ok(segment)

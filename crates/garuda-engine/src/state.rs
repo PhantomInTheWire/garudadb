@@ -1,4 +1,4 @@
-use crate::storage::{self, SegmentFile, StoredRecord, segment_meta, sync_segment_meta};
+use crate::segment::{segment_file_name, segment_meta, sync_segment_meta, SegmentFile, StoredRecord};
 use crate::validation::{apply_schema_defaults, validate_doc};
 use garuda_types::{Doc, DocId, Manifest, StatusCode, WriteResult};
 use std::collections::{HashMap, HashSet};
@@ -188,7 +188,7 @@ impl CollectionState {
 
         let mut persisted = self.writing_segment.clone();
         persisted.meta.id = new_id;
-        persisted.meta.path = storage::segment_file_name(new_id);
+        persisted.meta.path = segment_file_name(new_id);
         sync_segment_meta(&mut persisted);
         self.persisted_segments.push(persisted);
 
