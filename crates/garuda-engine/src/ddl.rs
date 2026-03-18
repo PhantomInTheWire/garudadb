@@ -1,5 +1,5 @@
-use crate::segment::{sync_segment_meta, StoredRecord};
 use crate::state::CollectionState;
+use garuda_segment::{StoredRecord, sync_segment_meta};
 use garuda_types::{
     FieldName, FlatIndexParams, IndexKind, IndexParams, ScalarFieldSchema, ScalarValue, Status,
     StatusCode,

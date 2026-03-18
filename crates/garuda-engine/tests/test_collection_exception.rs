@@ -167,11 +167,13 @@ fn failed_persist_does_not_publish_new_manifest_on_reopen() {
         .expect("create collection");
     seed_collection(&collection);
 
-    let segments_dir = collection.path().join("segments");
-    let metadata = fs::metadata(&segments_dir).expect("segments dir metadata");
+    let segment_dir = collection.path().join("1");
+    fs::create_dir_all(&segment_dir).expect("create segment dir");
+
+    let metadata = fs::metadata(&segment_dir).expect("segment dir metadata");
     let mut permissions = metadata.permissions();
     permissions.set_readonly(true);
-    fs::set_permissions(&segments_dir, permissions).expect("make segments dir readonly");
+    fs::set_permissions(&segment_dir, permissions).expect("make segment dir readonly");
 
     let result = collection.add_column(garuda_types::ScalarFieldSchema {
         name: field_name("is_public"),

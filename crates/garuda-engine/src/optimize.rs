@@ -1,5 +1,5 @@
-use crate::segment::{segment_file_name, sync_segment_meta, SegmentFile};
 use crate::state::CollectionState;
+use garuda_segment::{SegmentFile, segment_file_name, sync_segment_meta};
 
 pub fn optimize_segments(state: &mut CollectionState) {
     let all_live_records = state.all_live_records();

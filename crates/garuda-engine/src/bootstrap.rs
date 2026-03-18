@@ -1,11 +1,19 @@
-use crate::delete_store::read_delete_store;
-use crate::id_map::read_id_map;
-use crate::segment::{read_segment, sync_segment_meta, SegmentFile};
 use crate::state::CollectionState;
-use crate::version::VersionStore;
-use garuda_types::{CollectionOptions, CollectionSchema, Manifest, SegmentMeta, Status};
+use garuda_segment::{SegmentFile, read_segment, read_wal_ops, sync_segment_meta};
+use garuda_storage::{
+    VersionManager, WRITING_SEGMENT_ID, read_delete_snapshot, read_id_map_snapshot,
+};
+use garuda_types::{
+    CollectionOptions, CollectionSchema, Manifest, ManifestVersionId, SegmentMeta, SnapshotId,
+    Status,
+};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+
+const INITIAL_DOC_ID: u64 = 1;
+const INITIAL_SEGMENT_ID: u64 = 1;
+const INITIAL_SNAPSHOT_ID: u64 = 0;
+const INITIAL_MANIFEST_VERSION_ID: u64 = 0;
 
 pub(crate) fn create_collection_state(
     path: PathBuf,
@@ -16,8 +24,11 @@ pub(crate) fn create_collection_state(
     let manifest = Manifest {
         schema,
         options,
-        next_doc_id: 1,
-        next_segment_id: 1,
+        next_doc_id: INITIAL_DOC_ID,
+        next_segment_id: INITIAL_SEGMENT_ID,
+        id_map_snapshot_id: SnapshotId::new(INITIAL_SNAPSHOT_ID),
+        delete_snapshot_id: SnapshotId::new(INITIAL_SNAPSHOT_ID),
+        manifest_version_id: ManifestVersionId::new(INITIAL_MANIFEST_VERSION_ID),
         writing_segment: writing_segment.meta.clone(),
         persisted_segments: Vec::new(),
     };
@@ -33,11 +44,11 @@ pub(crate) fn create_collection_state(
 }
 
 pub(crate) fn load_collection_state(path: PathBuf) -> Result<CollectionState, Status> {
-    let manifest = VersionStore::new(&path).read_manifest()?;
+    let manifest = VersionManager::new(&path).read_latest_manifest()?;
     let writing_segment = load_segment(&path, &manifest.writing_segment)?;
     let persisted_segments = load_persisted_segments(&path, &manifest)?;
-    let id_map = read_id_map(&path).unwrap_or_default();
-    let deleted_doc_ids = read_delete_store(&path).unwrap_or_default();
+    let id_map = read_id_map_snapshot(&path, manifest.id_map_snapshot_id)?;
+    let deleted_doc_ids = read_delete_snapshot(&path, manifest.delete_snapshot_id)?;
 
     let mut state = CollectionState {
         path,
@@ -47,15 +58,12 @@ pub(crate) fn load_collection_state(path: PathBuf) -> Result<CollectionState, St
         id_map,
         deleted_doc_ids,
     };
-    state.rebuild_indexes();
+    replay_writing_segment_wal(&mut state)?;
 
     Ok(state)
 }
 
-fn load_persisted_segments(
-    path: &Path,
-    manifest: &Manifest,
-) -> Result<Vec<SegmentFile>, Status> {
+fn load_persisted_segments(path: &Path, manifest: &Manifest) -> Result<Vec<SegmentFile>, Status> {
     let mut segments = Vec::new();
 
     for meta in &manifest.persisted_segments {
@@ -69,4 +77,12 @@ fn load_segment(path: &Path, meta: &SegmentMeta) -> Result<SegmentFile, Status> 
     let mut segment = read_segment(path, meta)?;
     sync_segment_meta(&mut segment);
     Ok(segment)
+}
+
+fn replay_writing_segment_wal(state: &mut CollectionState) -> Result<(), Status> {
+    for op in read_wal_ops(&state.path, WRITING_SEGMENT_ID)? {
+        state.apply_wal_op(&op)?;
+    }
+
+    Ok(())
 }
