@@ -10,6 +10,7 @@ mod schema;
 mod state;
 mod storage;
 mod validation;
+mod write_service;
 
 use bootstrap::{create_collection_state, load_collection_state};
 use ddl::{
@@ -26,7 +27,7 @@ use query::{
     apply_query_projection, parse_query_filter, parse_required_filter, resolve_query_vector,
 };
 use schema::{validate_create_options, validate_schema};
-use state::{CollectionState, WriteMode};
+use state::CollectionState;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -34,9 +35,8 @@ use storage::{
     collection_dir, ensure_database_root, ensure_existing_collection_dir, ensure_new_collection_dir,
 };
 use validation::validate_field_default;
+use write_service::{WriteCommand, apply_write_command};
 
-use garuda_segment::{WalOp, append_wal_ops};
-use garuda_storage::WRITING_SEGMENT_ID;
 use garuda_types::{
     CollectionName, CollectionOptions, CollectionSchema, CollectionStats, Doc, DocId, FieldName,
     IndexParams, OptimizeOptions, ScalarFieldSchema, Status, StatusCode, VectorQuery,
@@ -180,44 +180,19 @@ impl Collection {
     }
 
     pub fn insert(&self, docs: Vec<Doc>) -> Vec<WriteResult> {
-        self.apply_doc_write_batch(docs, WalOp::Insert, |state, doc| {
-            state.insert_doc(doc, WriteMode::Insert)
-        })
+        self.apply_write_command(WriteCommand::Insert(docs))
     }
 
     pub fn upsert(&self, docs: Vec<Doc>) -> Vec<WriteResult> {
-        self.apply_doc_write_batch(docs, WalOp::Upsert, |state, doc| {
-            state.insert_doc(doc, WriteMode::Upsert)
-        })
+        self.apply_write_command(WriteCommand::Upsert(docs))
     }
 
     pub fn update(&self, docs: Vec<Doc>) -> Vec<WriteResult> {
-        self.apply_doc_write_batch(docs, WalOp::Update, |state, doc| state.update_doc(doc))
+        self.apply_write_command(WriteCommand::Update(docs))
     }
 
     pub fn delete(&self, ids: Vec<DocId>) -> Vec<WriteResult> {
-        let mut state = self.write_state();
-        apply_delete_batch(&mut state, ids)
-    }
-
-    pub fn delete_by_filter(&self, raw_filter: &str) -> Result<(), Status> {
-        let mut state = self.write_state();
-        let filter = parse_required_filter(raw_filter, &state.manifest.schema)?;
-
-        let ids = collect_matching_doc_ids(&state, &filter);
-        if ids.is_empty() {
-            return Ok(());
-        }
-
-        for result in apply_delete_batch(&mut state, ids) {
-            if result.status.is_ok() {
-                continue;
-            }
-
-            return Err(result.status);
-        }
-
-        Ok(())
+        self.apply_write_command(WriteCommand::Delete(ids))
     }
 
     pub fn delete_by_filter(&self, raw_filter: &str) -> Result<(), Status> {
@@ -295,39 +270,9 @@ impl Collection {
         Ok(())
     }
 
-    fn apply_doc_write_batch(
-        &self,
-        docs: Vec<Doc>,
-        wal_op: impl Fn(Doc) -> WalOp,
-        write_one: impl Fn(&mut CollectionState, Doc) -> WriteResult,
-    ) -> Vec<WriteResult> {
+    fn apply_write_command(&self, command: WriteCommand) -> Vec<WriteResult> {
         let mut state = self.write_state();
-        let snapshot = state.clone();
-        let mut results = Vec::new();
-        let mut wal_ops = Vec::new();
-
-        for doc in docs {
-            let wal_doc = doc.clone();
-            let result = write_one(&mut state, doc);
-            if result.status.is_ok() {
-                wal_ops.push(wal_op(wal_doc));
-            }
-
-            results.push(result);
-        }
-
-        let persist_result = if wal_ops.is_empty() {
-            Ok(())
-        } else {
-            append_wal_ops(&state.path, WRITING_SEGMENT_ID, &wal_ops)
-        };
-
-        if let Err(status) = persist_result {
-            *state = snapshot;
-            mark_persist_failure(&mut results, &status);
-        }
-
-        results
+        apply_write_command(&mut state, command)
     }
 
     fn read_state(&self) -> std::sync::RwLockReadGuard<'_, CollectionState> {
@@ -423,6 +368,7 @@ fn score_and_sort_docs(
 
     scored_docs
 }
+<<<<<<< HEAD
 
 fn mark_persist_failure(results: &mut [WriteResult], status: &Status) {
     for result in results {
@@ -461,3 +407,5 @@ fn apply_delete_batch(state: &mut CollectionState, ids: Vec<DocId>) -> Vec<Write
 
     results
 }
+=======
+>>>>>>> 2c05821 (refactor: Extract write service from collection)
