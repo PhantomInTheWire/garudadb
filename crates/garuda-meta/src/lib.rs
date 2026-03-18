@@ -72,6 +72,46 @@ impl From<HashSet<u64>> for DeleteStore {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MetadataStore {
+    id_map: IdMap,
+    delete_store: DeleteStore,
+}
+
+impl MetadataStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn from_parts(id_map: IdMap, delete_store: DeleteStore) -> Self {
+        Self {
+            id_map,
+            delete_store,
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.id_map.clear();
+        self.delete_store.clear();
+    }
+
+    pub fn index_live_doc(&mut self, doc_id: DocId, internal_doc_id: u64) {
+        self.id_map.insert(doc_id, internal_doc_id);
+    }
+
+    pub fn mark_deleted(&mut self, internal_doc_id: u64) {
+        self.delete_store.insert(internal_doc_id);
+    }
+
+    pub fn id_map_entries(&self) -> impl Iterator<Item = (&DocId, &u64)> {
+        self.id_map.iter()
+    }
+
+    pub fn deleted_doc_ids(&self) -> impl Iterator<Item = &u64> {
+        self.delete_store.iter()
+    }
+}
+
 pub fn evaluate_filter(expr: &FilterExpr, fields: &BTreeMap<String, ScalarValue>) -> bool {
     match expr {
         FilterExpr::Eq(field, value) => fields.get(field) == Some(value),

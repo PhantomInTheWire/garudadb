@@ -1,7 +1,7 @@
 use crate::segment_manager::SegmentManager;
 use crate::state::CollectionState;
 use crate::write_service::replay_wal_ops;
-use garuda_meta::{DeleteStore, IdMap};
+use garuda_meta::{DeleteStore, IdMap, MetadataStore};
 use garuda_segment::{SegmentFile, read_segment, read_wal_ops, sync_segment_meta};
 use garuda_storage::{
     VersionManager, WRITING_SEGMENT_ID, read_delete_snapshot, read_id_map_snapshot,
@@ -39,8 +39,7 @@ pub(crate) fn create_collection_state(
         path,
         manifest,
         segments: SegmentManager::new(Vec::new(), writing_segment),
-        id_map: IdMap::new(),
-        delete_store: DeleteStore::new(),
+        meta: MetadataStore::new(),
     }
 }
 
@@ -55,8 +54,7 @@ pub(crate) fn load_collection_state(path: PathBuf) -> Result<CollectionState, St
         path,
         manifest,
         segments: SegmentManager::new(persisted_segments, writing_segment),
-        id_map,
-        delete_store,
+        meta: MetadataStore::from_parts(id_map, delete_store),
     };
 
     let wal_ops = read_wal_ops(&state.path, WRITING_SEGMENT_ID)?;
