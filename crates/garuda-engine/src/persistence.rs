@@ -74,18 +74,18 @@ fn write_checkpoint_files(
 }
 
 fn write_all_segments(state: &CollectionState) -> Result<(), Status> {
-    for segment in &state.persisted_segments {
+    for segment in state.segments.persisted_segments() {
         write_segment(&state.path, segment)?;
     }
 
-    write_segment(&state.path, &state.writing_segment)
+    write_segment(&state.path, state.segments.writing_segment())
 }
 
 fn remove_stale_segment_dirs(state: &CollectionState) -> Result<(), Status> {
     let mut live_segment_ids = HashSet::new();
     live_segment_ids.insert(WRITING_SEGMENT_ID);
 
-    for segment in &state.persisted_segments {
+    for segment in state.segments.persisted_segments() {
         live_segment_ids.insert(segment.meta.id);
     }
 
@@ -136,7 +136,7 @@ fn remove_stale_segment_dirs(state: &CollectionState) -> Result<(), Status> {
 fn capture_checkpoint_files(state: &CollectionState) -> Result<CheckpointFiles, Status> {
     let mut files = Vec::new();
 
-    for segment in &state.persisted_segments {
+    for segment in state.segments.persisted_segments() {
         files.push(capture_file(&segment_data_path(
             &state.path,
             segment.meta.id,

@@ -7,6 +7,7 @@ mod optimize;
 mod persistence;
 mod query;
 mod schema;
+mod segment_manager;
 mod state;
 mod storage;
 mod validation;
@@ -114,7 +115,7 @@ impl Collection {
 
         CollectionStats {
             doc_count: state.live_doc_count(),
-            segment_count: state.persisted_segments.len() + 1,
+            segment_count: state.segments.segment_count(),
         }
     }
 
@@ -171,7 +172,11 @@ impl Collection {
 
     pub fn optimize(&self, _options: OptimizeOptions) -> Result<(), Status> {
         self.mutate_and_checkpoint(|state| {
-            optimize_segments(state);
+            optimize_segments(
+                &mut state.segments,
+                &mut state.manifest.next_segment_id,
+                state.manifest.options.segment_max_docs,
+            );
             state.rebuild_indexes();
             state.refresh_manifest();
 

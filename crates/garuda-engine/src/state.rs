@@ -1,10 +1,7 @@
+use crate::segment_manager::SegmentManager;
 use crate::validation::{apply_schema_defaults, validate_doc};
 use garuda_meta::{DeleteStore, IdMap};
-use garuda_segment::{
-    RecordState, SegmentFile, StoredRecord, WalOp, segment_file_name, segment_meta,
-    sync_segment_meta,
-};
-use garuda_storage::WRITING_SEGMENT_ID;
+use garuda_segment::{RecordState, SegmentFile, StoredRecord, WalOp, sync_segment_meta};
 use garuda_types::{Doc, DocId, Manifest, Status, StatusCode, WriteResult};
 use std::path::PathBuf;
 
@@ -18,8 +15,7 @@ pub(crate) enum WriteMode {
 pub(crate) struct CollectionState {
     pub(crate) path: PathBuf,
     pub(crate) manifest: Manifest,
-    pub(crate) persisted_segments: Vec<SegmentFile>,
-    pub(crate) writing_segment: SegmentFile,
+    pub(crate) segments: SegmentManager,
     pub(crate) id_map: IdMap,
     pub(crate) delete_store: DeleteStore,
 }
@@ -111,102 +107,54 @@ impl CollectionState {
         self.id_map.clear();
         self.delete_store.clear();
 
-        for segment in &mut self.persisted_segments {
+        for segment in self.segments.persisted_segments_mut() {
             index_segment(segment, &mut self.id_map, &mut self.delete_store);
         }
 
         index_segment(
-            &mut self.writing_segment,
+            self.segments.writing_segment_mut(),
             &mut self.id_map,
             &mut self.delete_store,
         );
     }
 
     pub(crate) fn refresh_manifest(&mut self) {
-        self.manifest.writing_segment = self.writing_segment.meta.clone();
-        self.manifest.persisted_segments = self
-            .persisted_segments
-            .iter()
-            .map(|segment| segment.meta.clone())
-            .collect();
+        self.segments.refresh_manifest(&mut self.manifest);
     }
 
     pub(crate) fn live_doc_count(&self) -> usize {
-        self.all_live_records().len()
+        self.segments.all_live_records().len()
     }
 
     pub(crate) fn all_live_docs(&self) -> Vec<Doc> {
-        self.all_live_records()
+        self.segments
+            .all_live_records()
             .into_iter()
             .map(|record| record.doc)
             .collect()
     }
 
     pub(crate) fn all_live_records(&self) -> Vec<StoredRecord> {
-        let mut records = Vec::new();
-
-        collect_live_records(&self.persisted_segments, &mut records);
-        collect_live_records_from_segment(&self.writing_segment, &mut records);
-
-        records.sort_by_key(|record| record.doc_id);
-        records
+        self.segments.all_live_records()
     }
 
     pub(crate) fn find_live_record(&self, id: &DocId) -> Option<&StoredRecord> {
-        for record in &self.writing_segment.records {
-            if record.doc.id == *id && matches!(record.state, RecordState::Live) {
-                return Some(record);
-            }
-        }
-
-        for segment in &self.persisted_segments {
-            for record in &segment.records {
-                if record.doc.id == *id && matches!(record.state, RecordState::Live) {
-                    return Some(record);
-                }
-            }
-        }
-
-        None
+        self.segments.find_live_record(id)
     }
 
     pub(crate) fn find_live_record_mut(&mut self, id: &DocId) -> Option<&mut StoredRecord> {
-        for record in &mut self.writing_segment.records {
-            if record.doc.id == *id && matches!(record.state, RecordState::Live) {
-                return Some(record);
-            }
-        }
-
-        for segment in &mut self.persisted_segments {
-            for record in &mut segment.records {
-                if record.doc.id == *id && matches!(record.state, RecordState::Live) {
-                    return Some(record);
-                }
-            }
-        }
-
-        None
+        self.segments.find_live_record_mut(id)
     }
-
-    pub(crate) fn empty_writing_segment() -> SegmentFile {
-        SegmentFile {
-            meta: segment_meta(WRITING_SEGMENT_ID),
-            records: Vec::new(),
-        }
-    }
-
     fn append_new_record(&mut self, doc: Doc) {
         let doc_id = self.manifest.next_doc_id;
         self.manifest.next_doc_id += 1;
 
-        self.writing_segment.records.push(StoredRecord {
+        self.segments.append_new_record(
             doc_id,
-            state: RecordState::Live,
             doc,
-        });
-
-        sync_segment_meta(&mut self.writing_segment);
-        self.rotate_writing_segment_if_needed();
+            &mut self.manifest.next_segment_id,
+            self.manifest.options.segment_max_docs,
+        );
     }
 
     fn finish_mutation(&mut self) {
@@ -220,23 +168,6 @@ impl CollectionState {
         };
 
         record.state = RecordState::Deleted;
-    }
-
-    fn rotate_writing_segment_if_needed(&mut self) {
-        if self.writing_segment.meta.doc_count < self.manifest.options.segment_max_docs {
-            return;
-        }
-
-        let new_id = self.manifest.next_segment_id;
-        self.manifest.next_segment_id += 1;
-
-        let mut persisted = self.writing_segment.clone();
-        persisted.meta.id = new_id;
-        persisted.meta.path = segment_file_name(new_id);
-        sync_segment_meta(&mut persisted);
-        self.persisted_segments.push(persisted);
-
-        self.writing_segment = Self::empty_writing_segment();
     }
 
     fn live_doc_matches(&self, doc: &Doc) -> bool {
@@ -258,22 +189,6 @@ impl CollectionState {
 
         let merged_doc = merge_docs(&record.doc, doc);
         merged_doc == record.doc
-    }
-}
-
-fn collect_live_records(segments: &[SegmentFile], out: &mut Vec<StoredRecord>) {
-    for segment in segments {
-        collect_live_records_from_segment(segment, out);
-    }
-}
-
-fn collect_live_records_from_segment(segment: &SegmentFile, out: &mut Vec<StoredRecord>) {
-    for record in &segment.records {
-        if matches!(record.state, RecordState::Deleted) {
-            continue;
-        }
-
-        out.push(record.clone());
     }
 }
 
