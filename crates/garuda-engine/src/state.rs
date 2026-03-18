@@ -1,0 +1,244 @@
+use crate::storage::{self, SegmentFile, StoredRecord, segment_meta, sync_segment_meta};
+use crate::validation::{apply_schema_defaults, validate_doc};
+use garuda_types::{Doc, DocId, Manifest, StatusCode, WriteResult};
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
+
+#[derive(Clone)]
+pub(crate) struct CollectionState {
+    pub(crate) path: PathBuf,
+    pub(crate) manifest: Manifest,
+    pub(crate) persisted_segments: Vec<SegmentFile>,
+    pub(crate) writing_segment: SegmentFile,
+    pub(crate) id_map: HashMap<DocId, u64>,
+    pub(crate) deleted_doc_ids: HashSet<u64>,
+}
+
+impl CollectionState {
+    pub(crate) fn insert_doc(&mut self, doc: Doc, replace_existing: bool) -> WriteResult {
+        let mut doc = doc;
+        apply_schema_defaults(&self.manifest.schema, &mut doc);
+
+        if let Err(status) = validate_doc(&self.manifest.schema, &doc) {
+            return WriteResult::err(doc.id, status.code, status.message);
+        }
+
+        if self.find_live_record(&doc.id).is_some() && !replace_existing {
+            return WriteResult::err(doc.id, StatusCode::AlreadyExists, "document already exists");
+        }
+
+        if replace_existing {
+            self.delete_existing_if_present(&doc.id);
+        }
+
+        self.append_new_record(doc.clone());
+        self.finish_mutation();
+        WriteResult::ok(doc.id)
+    }
+
+    pub(crate) fn update_doc(&mut self, doc: Doc) -> WriteResult {
+        let schema = self.manifest.schema.clone();
+
+        let Some(record) = self.find_live_record_mut(&doc.id) else {
+            return WriteResult::err(doc.id, StatusCode::NotFound, "document not found");
+        };
+
+        let merged_doc = merge_docs(&record.doc, &doc);
+        if let Err(status) = validate_doc(&schema, &merged_doc) {
+            return WriteResult::err(doc.id, status.code, status.message);
+        }
+
+        record.doc = merged_doc;
+        self.finish_mutation();
+        WriteResult::ok(doc.id)
+    }
+
+    pub(crate) fn delete_doc(&mut self, id: &DocId) -> WriteResult {
+        let Some(record) = self.find_live_record_mut(id) else {
+            return WriteResult::err(id.clone(), StatusCode::NotFound, "document not found");
+        };
+
+        record.deleted = true;
+        self.finish_mutation();
+        WriteResult::ok(id.clone())
+    }
+
+    pub(crate) fn rebuild_indexes(&mut self) {
+        self.id_map.clear();
+        self.deleted_doc_ids.clear();
+
+        for segment in &mut self.persisted_segments {
+            index_segment(segment, &mut self.id_map, &mut self.deleted_doc_ids);
+        }
+
+        index_segment(
+            &mut self.writing_segment,
+            &mut self.id_map,
+            &mut self.deleted_doc_ids,
+        );
+    }
+
+    pub(crate) fn refresh_manifest(&mut self) {
+        self.manifest.writing_segment = self.writing_segment.meta.clone();
+        self.manifest.persisted_segments = self
+            .persisted_segments
+            .iter()
+            .map(|segment| segment.meta.clone())
+            .collect();
+    }
+
+    pub(crate) fn live_doc_count(&self) -> usize {
+        self.all_live_records().len()
+    }
+
+    pub(crate) fn all_live_docs(&self) -> Vec<Doc> {
+        self.all_live_records()
+            .into_iter()
+            .map(|record| record.doc)
+            .collect()
+    }
+
+    pub(crate) fn all_live_records(&self) -> Vec<StoredRecord> {
+        let mut records = Vec::new();
+
+        collect_live_records(&self.persisted_segments, &mut records);
+        collect_live_records_from_segment(&self.writing_segment, &mut records);
+
+        records.sort_by_key(|record| record.doc_id);
+        records
+    }
+
+    pub(crate) fn find_live_record(&self, id: &DocId) -> Option<&StoredRecord> {
+        for record in &self.writing_segment.records {
+            if record.doc.id == *id && !record.deleted {
+                return Some(record);
+            }
+        }
+
+        for segment in &self.persisted_segments {
+            for record in &segment.records {
+                if record.doc.id == *id && !record.deleted {
+                    return Some(record);
+                }
+            }
+        }
+
+        None
+    }
+
+    pub(crate) fn find_live_record_mut(&mut self, id: &DocId) -> Option<&mut StoredRecord> {
+        for record in &mut self.writing_segment.records {
+            if record.doc.id == *id && !record.deleted {
+                return Some(record);
+            }
+        }
+
+        for segment in &mut self.persisted_segments {
+            for record in &mut segment.records {
+                if record.doc.id == *id && !record.deleted {
+                    return Some(record);
+                }
+            }
+        }
+
+        None
+    }
+
+    pub(crate) fn empty_writing_segment() -> SegmentFile {
+        SegmentFile {
+            meta: segment_meta(0),
+            records: Vec::new(),
+        }
+    }
+
+    fn append_new_record(&mut self, doc: Doc) {
+        let doc_id = self.manifest.next_doc_id;
+        self.manifest.next_doc_id += 1;
+
+        self.writing_segment.records.push(StoredRecord {
+            doc_id,
+            deleted: false,
+            doc,
+        });
+
+        sync_segment_meta(&mut self.writing_segment);
+        self.rotate_writing_segment_if_needed();
+    }
+
+    fn finish_mutation(&mut self) {
+        self.rebuild_indexes();
+        self.refresh_manifest();
+    }
+
+    fn delete_existing_if_present(&mut self, id: &DocId) {
+        let Some(record) = self.find_live_record_mut(id) else {
+            return;
+        };
+
+        record.deleted = true;
+    }
+
+    fn rotate_writing_segment_if_needed(&mut self) {
+        if self.writing_segment.meta.doc_count < self.manifest.options.segment_max_docs {
+            return;
+        }
+
+        let new_id = self.manifest.next_segment_id;
+        self.manifest.next_segment_id += 1;
+
+        let mut persisted = self.writing_segment.clone();
+        persisted.meta.id = new_id;
+        persisted.meta.path = storage::segment_file_name(new_id);
+        sync_segment_meta(&mut persisted);
+        self.persisted_segments.push(persisted);
+
+        self.writing_segment = Self::empty_writing_segment();
+    }
+}
+
+fn collect_live_records(segments: &[SegmentFile], out: &mut Vec<StoredRecord>) {
+    for segment in segments {
+        collect_live_records_from_segment(segment, out);
+    }
+}
+
+fn collect_live_records_from_segment(segment: &SegmentFile, out: &mut Vec<StoredRecord>) {
+    for record in &segment.records {
+        if record.deleted {
+            continue;
+        }
+
+        out.push(record.clone());
+    }
+}
+
+fn index_segment(
+    segment: &mut SegmentFile,
+    id_map: &mut HashMap<DocId, u64>,
+    deleted_doc_ids: &mut HashSet<u64>,
+) {
+    sync_segment_meta(segment);
+
+    for record in &segment.records {
+        if record.deleted {
+            deleted_doc_ids.insert(record.doc_id);
+            continue;
+        }
+
+        id_map.insert(record.doc.id.clone(), record.doc_id);
+    }
+}
+
+fn merge_docs(existing: &Doc, incoming: &Doc) -> Doc {
+    let mut merged = existing.clone();
+
+    for (key, value) in &incoming.fields {
+        merged.fields.insert(key.clone(), value.clone());
+    }
+
+    if !incoming.vector.is_empty() {
+        merged.vector = incoming.vector.clone();
+    }
+
+    merged
+}

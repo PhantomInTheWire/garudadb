@@ -2,8 +2,10 @@ mod common;
 
 use common::{
     build_doc, database, default_options, default_schema, dense_vector, doc_id, field_name,
+    seed_collection,
 };
-use garuda_types::{Doc, IndexKind, ScalarValue};
+use garuda_types::{Doc, IndexKind, ScalarType, ScalarValue};
+use std::fs;
 
 #[test]
 fn rejects_duplicate_ids_wrong_dimensions_invalid_filters_and_wrong_index_targets() {
@@ -107,4 +109,87 @@ fn rejects_null_for_non_nullable_fields() {
 
     let fetched = collection.fetch(vec![doc_id("doc-null-rank")]);
     assert!(fetched.is_empty());
+}
+
+#[test]
+fn rejects_invalid_default_values_during_collection_creation() {
+    let (_root, db) = database("exception-invalid-default-on-create");
+
+    let mut wrong_type_schema = default_schema("docs");
+    wrong_type_schema
+        .fields
+        .push(garuda_types::ScalarFieldSchema {
+            name: field_name("is_public"),
+            field_type: ScalarType::Bool,
+            nullable: false,
+            default_value: Some(ScalarValue::String(String::from("yes"))),
+        });
+
+    let wrong_type = db.create_collection(wrong_type_schema, default_options());
+    assert!(wrong_type.is_err());
+}
+
+#[test]
+fn add_column_rolls_back_state_when_persist_fails() {
+    let (_root, db) = database("exception-ddl-persist-rollback");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+
+    let collection_dir = collection.path();
+    let metadata = fs::metadata(&collection_dir).expect("collection dir metadata");
+    let mut permissions = metadata.permissions();
+    permissions.set_readonly(true);
+    fs::set_permissions(&collection_dir, permissions).expect("make collection dir readonly");
+
+    let result = collection.add_column(garuda_types::ScalarFieldSchema {
+        name: field_name("is_public"),
+        field_type: ScalarType::Bool,
+        nullable: false,
+        default_value: Some(ScalarValue::Bool(true)),
+    });
+
+    assert!(result.is_err());
+    assert!(
+        !collection
+            .schema()
+            .fields
+            .iter()
+            .any(|field| field.name == field_name("is_public"))
+    );
+}
+
+#[test]
+fn failed_persist_does_not_publish_new_manifest_on_reopen() {
+    let (_root, db) = database("exception-ddl-manifest-commit-order");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+    seed_collection(&collection);
+
+    let segments_dir = collection.path().join("segments");
+    let metadata = fs::metadata(&segments_dir).expect("segments dir metadata");
+    let mut permissions = metadata.permissions();
+    permissions.set_readonly(true);
+    fs::set_permissions(&segments_dir, permissions).expect("make segments dir readonly");
+
+    let result = collection.add_column(garuda_types::ScalarFieldSchema {
+        name: field_name("is_public"),
+        field_type: ScalarType::Bool,
+        nullable: false,
+        default_value: Some(ScalarValue::Bool(true)),
+    });
+
+    assert!(result.is_err());
+
+    let reopened = db
+        .open_collection(&common::collection_name("docs"))
+        .expect("reopen collection");
+    assert!(
+        !reopened
+            .schema()
+            .fields
+            .iter()
+            .any(|field| field.name == field_name("is_public"))
+    );
 }

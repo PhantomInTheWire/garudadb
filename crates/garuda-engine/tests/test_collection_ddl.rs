@@ -1,7 +1,8 @@
 mod common;
 
 use common::{database, default_options, default_schema, doc_id, field_name, seed_collection};
-use garuda_types::{IndexKind, ScalarFieldSchema, ScalarType, ScalarValue};
+use garuda_types::{DenseVector, Doc, IndexKind, ScalarFieldSchema, ScalarType, ScalarValue};
+use std::collections::BTreeMap;
 
 #[test]
 fn create_drop_index_and_column_ddl_roundtrip() {
@@ -21,6 +22,7 @@ fn create_drop_index_and_column_ddl_roundtrip() {
             name: field_name("flag"),
             field_type: ScalarType::Bool,
             nullable: true,
+            default_value: None,
         })
         .expect("add column");
     let fetched = collection.fetch(vec![doc_id("doc-1")]);
@@ -72,10 +74,103 @@ fn add_non_nullable_column_requires_a_backfill_strategy() {
         name: field_name("required_flag"),
         field_type: ScalarType::Bool,
         nullable: false,
+        default_value: None,
     });
 
     assert!(result.is_err());
 
     let fetched = collection.fetch(vec![doc_id("doc-1")]);
     assert!(!fetched["doc-1"].fields.contains_key("required_flag"));
+}
+
+#[test]
+fn add_column_with_default_backfills_existing_rows() {
+    let (_root, db) = database("ddl-add-default-column");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+    seed_collection(&collection);
+
+    collection
+        .add_column(ScalarFieldSchema {
+            name: field_name("is_public"),
+            field_type: ScalarType::Bool,
+            nullable: false,
+            default_value: Some(ScalarValue::Bool(true)),
+        })
+        .expect("add column with default");
+
+    let fetched = collection.fetch(vec![doc_id("doc-1"), doc_id("doc-2")]);
+    assert_eq!(
+        fetched["doc-1"].fields["is_public"],
+        ScalarValue::Bool(true)
+    );
+    assert_eq!(
+        fetched["doc-2"].fields["is_public"],
+        ScalarValue::Bool(true)
+    );
+}
+
+#[test]
+fn add_column_rejects_default_with_wrong_type() {
+    let (_root, db) = database("ddl-add-invalid-default");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+    seed_collection(&collection);
+
+    let result = collection.add_column(ScalarFieldSchema {
+        name: field_name("is_public"),
+        field_type: ScalarType::Bool,
+        nullable: false,
+        default_value: Some(ScalarValue::String(String::from("yes"))),
+    });
+
+    assert!(result.is_err());
+
+    let fetched = collection.fetch(vec![doc_id("doc-1")]);
+    assert!(!fetched["doc-1"].fields.contains_key("is_public"));
+}
+
+#[test]
+fn inserts_apply_schema_defaults_after_add_column() {
+    let (_root, db) = database("ddl-insert-applies-default");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+
+    collection
+        .add_column(ScalarFieldSchema {
+            name: field_name("is_public"),
+            field_type: ScalarType::Bool,
+            nullable: false,
+            default_value: Some(ScalarValue::Bool(true)),
+        })
+        .expect("add column with default");
+
+    let mut fields = BTreeMap::new();
+    fields.insert(
+        String::from("pk"),
+        ScalarValue::String(String::from("doc-3")),
+    );
+    fields.insert(String::from("rank"), ScalarValue::Int64(3));
+    fields.insert(
+        String::from("category"),
+        ScalarValue::String(String::from("gamma")),
+    );
+    fields.insert(String::from("score"), ScalarValue::Float64(0.7));
+
+    let result = collection.insert(vec![Doc::new(
+        doc_id("doc-3"),
+        fields,
+        DenseVector::parse(vec![0.0, 0.0, 1.0, 0.0]).expect("valid vector"),
+    )]);
+
+    assert!(result[0].status.is_ok());
+
+    let fetched = collection.fetch(vec![doc_id("doc-3")]);
+    assert_eq!(
+        fetched["doc-3"].fields["is_public"],
+        ScalarValue::Bool(true)
+    );
 }

@@ -203,6 +203,7 @@ pub struct ScalarFieldSchema {
     pub name: FieldName,
     pub field_type: ScalarType,
     pub nullable: bool,
+    pub default_value: Option<ScalarValue>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

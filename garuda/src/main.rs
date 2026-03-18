@@ -43,6 +43,7 @@ fn main() -> Result<(), String> {
                     name: FieldName::parse("pk").map_err(|status| status.message)?,
                     field_type: ScalarType::String,
                     nullable: false,
+                    default_value: None,
                 }],
                 vector: VectorFieldSchema {
                     name: FieldName::parse("embedding").map_err(|status| status.message)?,

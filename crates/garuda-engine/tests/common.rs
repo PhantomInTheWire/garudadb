@@ -31,21 +31,25 @@ pub fn default_schema(name: &str) -> CollectionSchema {
                 name: field_name("pk"),
                 field_type: ScalarType::String,
                 nullable: false,
+                default_value: None,
             },
             ScalarFieldSchema {
                 name: field_name("rank"),
                 field_type: ScalarType::Int64,
                 nullable: false,
+                default_value: None,
             },
             ScalarFieldSchema {
                 name: field_name("category"),
                 field_type: ScalarType::String,
                 nullable: false,
+                default_value: None,
             },
             ScalarFieldSchema {
                 name: field_name("score"),
                 field_type: ScalarType::Float64,
                 nullable: false,
+                default_value: None,
             },
         ],
         vector: VectorFieldSchema {
