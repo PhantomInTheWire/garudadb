@@ -196,3 +196,58 @@ fn failed_persist_does_not_publish_new_manifest_on_reopen() {
             .any(|field| field.name == field_name("is_public"))
     );
 }
+
+#[test]
+fn failed_checkpoint_restores_rewritten_segment_files() {
+    let (_root, db) = database("exception-checkpoint-segment-rollback");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+    seed_collection(&collection);
+
+    let collection_dir = collection.path();
+    for segment_id in ["0", "1", "2"] {
+        fs::create_dir_all(collection_dir.join(segment_id)).expect("create segment dir");
+    }
+
+    let mut root_permissions = fs::metadata(&collection_dir)
+        .expect("collection dir metadata")
+        .permissions();
+    root_permissions.set_readonly(true);
+    fs::set_permissions(&collection_dir, root_permissions).expect("make root readonly");
+
+    for segment_id in ["0", "1", "2"] {
+        let segment_dir = collection_dir.join(segment_id);
+        let mut segment_permissions = fs::metadata(&segment_dir)
+            .expect("segment dir metadata")
+            .permissions();
+        segment_permissions.set_readonly(false);
+        fs::set_permissions(&segment_dir, segment_permissions)
+            .expect("restore segment dir write access");
+    }
+
+    let result = collection.add_column(garuda_types::ScalarFieldSchema {
+        name: field_name("is_public"),
+        field_type: ScalarType::Bool,
+        nullable: false,
+        default_value: Some(ScalarValue::Bool(true)),
+    });
+
+    assert!(result.is_err());
+    drop(collection);
+
+    let reopened = db
+        .open_collection(&common::collection_name("docs"))
+        .expect("reopen collection");
+    let fetched = reopened.fetch(vec![doc_id("doc-1")]);
+    let doc = fetched.get(&doc_id("doc-1")).expect("doc present");
+
+    assert!(
+        !reopened
+            .schema()
+            .fields
+            .iter()
+            .any(|field| field.name == field_name("is_public"))
+    );
+    assert!(!doc.fields.contains_key("is_public"));
+}
