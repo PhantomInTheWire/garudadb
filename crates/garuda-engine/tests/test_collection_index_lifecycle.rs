@@ -54,6 +54,7 @@ fn index_choice_should_survive_reopen() {
         .create_index(&field_name("embedding"), IndexKind::Hnsw)
         .expect("create hnsw");
     collection.flush().expect("flush");
+    drop(collection);
 
     let reopened = db
         .open_collection(&collection_name("docs"))

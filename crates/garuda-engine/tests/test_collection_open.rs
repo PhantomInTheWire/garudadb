@@ -10,6 +10,7 @@ fn open_collection_after_writes_preserves_data() {
         .expect("create collection");
     seed_collection(&collection);
     collection.flush().expect("flush");
+    drop(collection);
 
     let reopened = db
         .open_collection(&collection_name("docs"))

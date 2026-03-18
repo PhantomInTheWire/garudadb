@@ -16,6 +16,7 @@ fn reopen_after_unflushed_writes_should_follow_a_clear_recovery_policy() {
         [1.0, 0.0, 0.0, 0.0],
     )]);
     assert!(inserted[0].status.is_ok());
+    drop(collection);
 
     let reopened = db.open_collection(&collection_name("docs"));
     assert!(
@@ -34,6 +35,7 @@ fn reopen_after_delete_then_flush_should_not_resurrect_tombstoned_docs() {
     let deleted = collection.delete(vec![doc_id("doc-2")]);
     assert!(deleted[0].status.is_ok());
     collection.flush().expect("flush");
+    drop(collection);
 
     let reopened = db
         .open_collection(&collection_name("docs"))
