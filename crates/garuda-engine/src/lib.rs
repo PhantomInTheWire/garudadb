@@ -219,6 +219,27 @@ impl Collection {
         Ok(())
     }
 
+    pub fn delete_by_filter(&self, raw_filter: &str) -> Result<(), Status> {
+        let state = self.read_state();
+        let filter = parse_query_filter(Some(raw_filter), &state.manifest.schema)?;
+        let Some(filter) = filter else {
+            return Ok(());
+        };
+
+        let ids = collect_matching_doc_ids(&state, &filter);
+        drop(state);
+
+        for result in self.delete(ids) {
+            if result.status.is_ok() {
+                continue;
+            }
+
+            return Err(result.status);
+        }
+
+        Ok(())
+    }
+
     pub fn fetch(&self, ids: Vec<DocId>) -> HashMap<DocId, Doc> {
         let state = self.read_state();
         let mut docs = HashMap::new();
