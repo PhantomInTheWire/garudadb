@@ -17,14 +17,14 @@ use ddl::{
     ensure_column_can_be_added, ensure_vector_index_field, rename_column_in_schema,
     rename_column_in_state, set_vector_index_kind,
 };
-use filter::evaluate_filter;
 use garuda_math::score_doc;
+use garuda_meta::evaluate_filter;
 use lock::CollectionLock;
 use optimize::optimize_segments;
 use persistence::checkpoint_state;
 use query::{apply_query_projection, parse_query_filter, resolve_query_vector};
 use schema::{validate_create_options, validate_schema};
-use state::CollectionState;
+use state::{CollectionState, WriteMode};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -178,13 +178,13 @@ impl Collection {
 
     pub fn insert(&self, docs: Vec<Doc>) -> Vec<WriteResult> {
         self.apply_doc_write_batch(docs, WalOp::Insert, |state, doc| {
-            state.insert_doc(doc, false)
+            state.insert_doc(doc, WriteMode::Insert)
         })
     }
 
     pub fn upsert(&self, docs: Vec<Doc>) -> Vec<WriteResult> {
         self.apply_doc_write_batch(docs, WalOp::Upsert, |state, doc| {
-            state.insert_doc(doc, true)
+            state.insert_doc(doc, WriteMode::Upsert)
         })
     }
 
@@ -219,6 +219,27 @@ impl Collection {
         }
 
         results
+    }
+
+    pub fn delete_by_filter(&self, raw_filter: &str) -> Result<(), Status> {
+        let state = self.read_state();
+        let filter = parse_query_filter(Some(raw_filter), &state.manifest.schema)?;
+        let Some(filter) = filter else {
+            return Ok(());
+        };
+
+        let ids = collect_matching_doc_ids(&state, &filter);
+        drop(state);
+
+        for result in self.delete(ids) {
+            if result.status.is_ok() || result.status.code == StatusCode::NotFound {
+                continue;
+            }
+
+            return Err(result.status);
+        }
+
+        Ok(())
     }
 
     pub fn fetch(&self, ids: Vec<DocId>) -> HashMap<DocId, Doc> {
@@ -356,6 +377,23 @@ fn collect_matching_docs(
     }
 
     Ok(docs)
+}
+
+fn collect_matching_doc_ids(
+    state: &CollectionState,
+    filter: &garuda_types::FilterExpr,
+) -> Vec<DocId> {
+    let mut ids = Vec::new();
+
+    for record in state.all_live_records() {
+        if !evaluate_filter(filter, &record.doc.fields) {
+            continue;
+        }
+
+        ids.push(record.doc.id);
+    }
+
+    ids
 }
 
 fn score_and_sort_docs(

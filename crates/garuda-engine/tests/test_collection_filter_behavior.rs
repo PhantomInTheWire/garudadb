@@ -4,6 +4,7 @@ use common::{
     database, default_options, default_schema, dense_vector, field_name, seed_collection,
     seed_more_collection_docs,
 };
+use garuda_types::DocId;
 use garuda_types::VectorQuery;
 
 #[test]
@@ -55,4 +56,31 @@ fn filters_on_unknown_fields_or_invalid_types_should_error() {
     );
     wrong_type.filter = Some("rank = 'not-a-number'".to_string());
     assert!(collection.query(wrong_type).is_err());
+}
+
+#[test]
+fn delete_by_filter_should_remove_only_matching_documents() {
+    let (_root, db) = database("filter-delete-by-filter");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+    seed_collection(&collection);
+    seed_more_collection_docs(&collection);
+
+    let deleted = collection.delete_by_filter("category = 'beta' AND rank >= 6");
+    assert!(deleted.is_ok(), "delete_by_filter should succeed");
+
+    let remaining = collection
+        .query(VectorQuery::by_vector(
+            field_name("embedding"),
+            dense_vector(vec![0.0, 1.0, 0.0, 0.0]),
+            10,
+        ))
+        .expect("query after delete by filter");
+
+    let remaining_ids: Vec<DocId> = remaining.into_iter().map(|doc| doc.id).collect();
+    assert!(!remaining_ids.contains(&common::doc_id("doc-6")));
+    assert!(!remaining_ids.contains(&common::doc_id("doc-7")));
+    assert!(remaining_ids.contains(&common::doc_id("doc-3")));
+    assert!(remaining_ids.contains(&common::doc_id("doc-4")));
 }

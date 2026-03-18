@@ -1,11 +1,18 @@
 use crate::validation::{apply_schema_defaults, validate_doc};
+use garuda_meta::{DeleteStore, IdMap};
 use garuda_segment::{
-    SegmentFile, StoredRecord, WalOp, segment_file_name, segment_meta, sync_segment_meta,
+    RecordState, SegmentFile, StoredRecord, WalOp, segment_file_name, segment_meta,
+    sync_segment_meta,
 };
 use garuda_storage::WRITING_SEGMENT_ID;
 use garuda_types::{Doc, DocId, Manifest, Status, StatusCode, WriteResult};
-use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+
+#[derive(Clone, Copy)]
+pub(crate) enum WriteMode {
+    Insert,
+    Upsert,
+}
 
 #[derive(Clone)]
 pub(crate) struct CollectionState {
@@ -13,8 +20,8 @@ pub(crate) struct CollectionState {
     pub(crate) manifest: Manifest,
     pub(crate) persisted_segments: Vec<SegmentFile>,
     pub(crate) writing_segment: SegmentFile,
-    pub(crate) id_map: HashMap<DocId, u64>,
-    pub(crate) deleted_doc_ids: HashSet<u64>,
+    pub(crate) id_map: IdMap,
+    pub(crate) delete_store: DeleteStore,
 }
 
 impl CollectionState {
@@ -24,13 +31,17 @@ impl CollectionState {
         }
 
         let result = match op {
-            WalOp::Insert(doc) => self.insert_doc(doc.clone(), false),
-            WalOp::Upsert(doc) => self.insert_doc(doc.clone(), true),
+            WalOp::Insert(doc) => self.insert_doc(doc.clone(), WriteMode::Insert),
+            WalOp::Upsert(doc) => self.insert_doc(doc.clone(), WriteMode::Upsert),
             WalOp::Update(doc) => self.update_doc(doc.clone()),
             WalOp::Delete(doc_id) => self.delete_doc(doc_id),
         };
 
         if result.status.is_ok() {
+            return Ok(());
+        }
+
+        if matches!(op, WalOp::Update(_)) && result.status.code == StatusCode::NotFound {
             return Ok(());
         }
 
@@ -41,12 +52,14 @@ impl CollectionState {
         match op {
             WalOp::Insert(doc) => self.insert_already_applied(doc),
             WalOp::Upsert(doc) => self.live_doc_matches(doc),
-            WalOp::Update(doc) => self.update_already_applied(doc),
+            WalOp::Update(doc) => {
+                self.update_already_applied(doc) || self.find_live_record(&doc.id).is_none()
+            }
             WalOp::Delete(doc_id) => self.find_live_record(doc_id).is_none(),
         }
     }
 
-    pub(crate) fn insert_doc(&mut self, doc: Doc, replace_existing: bool) -> WriteResult {
+    pub(crate) fn insert_doc(&mut self, doc: Doc, mode: WriteMode) -> WriteResult {
         let mut doc = doc;
         apply_schema_defaults(&self.manifest.schema, &mut doc);
 
@@ -54,11 +67,11 @@ impl CollectionState {
             return WriteResult::err(doc.id, status.code, status.message);
         }
 
-        if self.find_live_record(&doc.id).is_some() && !replace_existing {
+        if self.find_live_record(&doc.id).is_some() && matches!(mode, WriteMode::Insert) {
             return WriteResult::err(doc.id, StatusCode::AlreadyExists, "document already exists");
         }
 
-        if replace_existing {
+        if matches!(mode, WriteMode::Upsert) {
             self.delete_existing_if_present(&doc.id);
         }
 
@@ -89,23 +102,23 @@ impl CollectionState {
             return WriteResult::err(id.clone(), StatusCode::NotFound, "document not found");
         };
 
-        record.deleted = true;
+        record.state = RecordState::Deleted;
         self.finish_mutation();
         WriteResult::ok(id.clone())
     }
 
     pub(crate) fn rebuild_indexes(&mut self) {
         self.id_map.clear();
-        self.deleted_doc_ids.clear();
+        self.delete_store.clear();
 
         for segment in &mut self.persisted_segments {
-            index_segment(segment, &mut self.id_map, &mut self.deleted_doc_ids);
+            index_segment(segment, &mut self.id_map, &mut self.delete_store);
         }
 
         index_segment(
             &mut self.writing_segment,
             &mut self.id_map,
-            &mut self.deleted_doc_ids,
+            &mut self.delete_store,
         );
     }
 
@@ -141,14 +154,14 @@ impl CollectionState {
 
     pub(crate) fn find_live_record(&self, id: &DocId) -> Option<&StoredRecord> {
         for record in &self.writing_segment.records {
-            if record.doc.id == *id && !record.deleted {
+            if record.doc.id == *id && matches!(record.state, RecordState::Live) {
                 return Some(record);
             }
         }
 
         for segment in &self.persisted_segments {
             for record in &segment.records {
-                if record.doc.id == *id && !record.deleted {
+                if record.doc.id == *id && matches!(record.state, RecordState::Live) {
                     return Some(record);
                 }
             }
@@ -159,14 +172,14 @@ impl CollectionState {
 
     pub(crate) fn find_live_record_mut(&mut self, id: &DocId) -> Option<&mut StoredRecord> {
         for record in &mut self.writing_segment.records {
-            if record.doc.id == *id && !record.deleted {
+            if record.doc.id == *id && matches!(record.state, RecordState::Live) {
                 return Some(record);
             }
         }
 
         for segment in &mut self.persisted_segments {
             for record in &mut segment.records {
-                if record.doc.id == *id && !record.deleted {
+                if record.doc.id == *id && matches!(record.state, RecordState::Live) {
                     return Some(record);
                 }
             }
@@ -188,7 +201,7 @@ impl CollectionState {
 
         self.writing_segment.records.push(StoredRecord {
             doc_id,
-            deleted: false,
+            state: RecordState::Live,
             doc,
         });
 
@@ -206,7 +219,7 @@ impl CollectionState {
             return;
         };
 
-        record.deleted = true;
+        record.state = RecordState::Deleted;
     }
 
     fn rotate_writing_segment_if_needed(&mut self) {
@@ -256,7 +269,7 @@ fn collect_live_records(segments: &[SegmentFile], out: &mut Vec<StoredRecord>) {
 
 fn collect_live_records_from_segment(segment: &SegmentFile, out: &mut Vec<StoredRecord>) {
     for record in &segment.records {
-        if record.deleted {
+        if matches!(record.state, RecordState::Deleted) {
             continue;
         }
 
@@ -264,16 +277,12 @@ fn collect_live_records_from_segment(segment: &SegmentFile, out: &mut Vec<Stored
     }
 }
 
-fn index_segment(
-    segment: &mut SegmentFile,
-    id_map: &mut HashMap<DocId, u64>,
-    deleted_doc_ids: &mut HashSet<u64>,
-) {
+fn index_segment(segment: &mut SegmentFile, id_map: &mut IdMap, delete_store: &mut DeleteStore) {
     sync_segment_meta(segment);
 
     for record in &segment.records {
-        if record.deleted {
-            deleted_doc_ids.insert(record.doc_id);
+        if matches!(record.state, RecordState::Deleted) {
+            delete_store.insert(record.doc_id);
             continue;
         }
 

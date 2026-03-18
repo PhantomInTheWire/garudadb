@@ -19,16 +19,23 @@ pub fn collection_dir(root: &Path, name: &CollectionName) -> PathBuf {
 }
 
 pub fn ensure_new_collection_dir(path: &Path) -> Result<(), Status> {
-    if path.exists() {
-        return Err(Status::err(
-            StatusCode::AlreadyExists,
-            "collection directory already exists",
-        ));
-    }
+    std::fs::create_dir(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::AlreadyExists {
+            return Status::err(
+                StatusCode::AlreadyExists,
+                "collection directory already exists",
+            );
+        }
 
-    create_dir_all(path, "failed to create collection directory")?;
+        Status::err(
+            StatusCode::Internal,
+            format!("failed to create collection directory: {error}"),
+        )
+    })?;
+
     create_empty_file(&path.join(LOCK_FILE_NAME), "failed to create lock file")?;
     sync_directory(path)?;
+    sync_parent_directory(path)?;
 
     Ok(())
 }
@@ -137,4 +144,12 @@ pub fn remove_path_if_exists(path: &Path) -> Result<(), Status> {
     }
 
     Ok(())
+}
+
+fn sync_parent_directory(path: &Path) -> Result<(), Status> {
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+
+    sync_directory(parent)
 }

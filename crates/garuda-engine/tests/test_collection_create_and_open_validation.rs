@@ -5,7 +5,7 @@ use common::{
     schema_missing_primary_field, schema_with_dimension, schema_with_duplicate_field,
     schema_with_vector_name,
 };
-use garuda_types::CollectionName;
+use garuda_types::{CollectionName, StatusCode};
 
 #[test]
 fn rejects_invalid_schema_shapes_and_unknown_collections() {
@@ -50,6 +50,18 @@ fn rejects_invalid_collection_names_and_duplicate_collection_creation() {
     assert!(first.is_ok());
     let second = db.create_collection(default_schema("docs"), default_options());
     assert!(second.is_err());
+}
+
+#[test]
+fn rejects_creation_when_collection_directory_already_exists() {
+    let (root, db) = database("create-open-existing-dir");
+    std::fs::create_dir(root.join("docs")).expect("create existing collection dir");
+
+    let result = db.create_collection(default_schema("docs"), default_options());
+    match result {
+        Ok(_) => panic!("create_collection should fail for an existing directory"),
+        Err(status) => assert_eq!(status.code, StatusCode::AlreadyExists),
+    }
 }
 
 #[test]
