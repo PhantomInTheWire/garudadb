@@ -56,17 +56,17 @@ pub(crate) fn ensure_column_can_be_added(
 pub(crate) fn backfill_new_column(state: &mut CollectionState, field: &ScalarFieldSchema) {
     let value = field.default_value.clone().unwrap_or(ScalarValue::Null);
 
-    for segment in &mut state.persisted_segments {
+    for segment in state.segments.persisted_segments_mut() {
         insert_field_into_records(&mut segment.records, field.name.as_str(), &value);
         sync_segment_meta(segment);
     }
 
     insert_field_into_records(
-        &mut state.writing_segment.records,
+        &mut state.segments.writing_segment_mut().records,
         field.name.as_str(),
         &value,
     );
-    sync_segment_meta(&mut state.writing_segment);
+    sync_segment_meta(state.segments.writing_segment_mut());
 }
 
 pub(crate) fn rename_column_in_schema(
@@ -121,17 +121,17 @@ pub(crate) fn rename_column_in_state(
     old_name: &FieldName,
     new_name: &FieldName,
 ) {
-    for segment in &mut state.persisted_segments {
+    for segment in state.segments.persisted_segments_mut() {
         rename_field_in_records(&mut segment.records, old_name.as_str(), new_name.as_str());
         sync_segment_meta(segment);
     }
 
     rename_field_in_records(
-        &mut state.writing_segment.records,
+        &mut state.segments.writing_segment_mut().records,
         old_name.as_str(),
         new_name.as_str(),
     );
-    sync_segment_meta(&mut state.writing_segment);
+    sync_segment_meta(state.segments.writing_segment_mut());
 }
 
 pub(crate) fn drop_column_from_schema(
@@ -160,13 +160,13 @@ pub(crate) fn drop_column_from_schema(
 }
 
 pub(crate) fn drop_column_from_state(state: &mut CollectionState, name: &FieldName) {
-    for segment in &mut state.persisted_segments {
+    for segment in state.segments.persisted_segments_mut() {
         remove_field_from_records(&mut segment.records, name.as_str());
         sync_segment_meta(segment);
     }
 
-    remove_field_from_records(&mut state.writing_segment.records, name.as_str());
-    sync_segment_meta(&mut state.writing_segment);
+    remove_field_from_records(&mut state.segments.writing_segment_mut().records, name.as_str());
+    sync_segment_meta(state.segments.writing_segment_mut());
 }
 
 fn insert_field_into_records(records: &mut [StoredRecord], field_name: &str, value: &ScalarValue) {

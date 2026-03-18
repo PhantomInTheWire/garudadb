@@ -1,3 +1,4 @@
+use crate::segment_manager::SegmentManager;
 use crate::state::CollectionState;
 use garuda_meta::{DeleteStore, IdMap};
 use garuda_segment::{SegmentFile, read_segment, read_wal_ops, sync_segment_meta};
@@ -20,7 +21,7 @@ pub(crate) fn create_collection_state(
     schema: CollectionSchema,
     options: CollectionOptions,
 ) -> CollectionState {
-    let writing_segment = CollectionState::empty_writing_segment();
+    let writing_segment = SegmentManager::empty_writing_segment();
     let manifest = Manifest {
         schema,
         options,
@@ -36,8 +37,7 @@ pub(crate) fn create_collection_state(
     CollectionState {
         path,
         manifest,
-        persisted_segments: Vec::new(),
-        writing_segment,
+        segments: SegmentManager::new(Vec::new(), writing_segment),
         id_map: IdMap::new(),
         delete_store: DeleteStore::new(),
     }
@@ -53,8 +53,7 @@ pub(crate) fn load_collection_state(path: PathBuf) -> Result<CollectionState, St
     let mut state = CollectionState {
         path,
         manifest,
-        persisted_segments,
-        writing_segment,
+        segments: SegmentManager::new(persisted_segments, writing_segment),
         id_map,
         delete_store,
     };
