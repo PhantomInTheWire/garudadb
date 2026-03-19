@@ -86,7 +86,8 @@ fn write_all_segments(state: &CollectionRuntime) -> Result<(), Status> {
 }
 
 fn remove_stale_segment_dirs(state: &CollectionRuntime) -> Result<(), Status> {
-    let mut live_segment_ids = HashSet::with_capacity(state.segments.persisted_segments().len() + 1);
+    let mut live_segment_ids =
+        HashSet::with_capacity(state.segments.persisted_segments().len() + 1);
     live_segment_ids.insert(WRITING_SEGMENT_ID);
 
     for segment in state.segments.persisted_segments() {
@@ -140,9 +141,8 @@ fn remove_stale_segment_dirs(state: &CollectionRuntime) -> Result<(), Status> {
 fn capture_checkpoint_files(state: &CollectionRuntime) -> Result<CheckpointFiles, Status> {
     // Each rollback snapshot always captures the writing segment, id-map snapshot,
     // delete snapshot, writing WAL, and manifest, in addition to every persisted segment.
-    let mut files = Vec::with_capacity(
-        state.segments.persisted_segments().len() + FIXED_CHECKPOINT_FILE_COUNT,
-    );
+    let mut files =
+        Vec::with_capacity(state.segments.persisted_segments().len() + FIXED_CHECKPOINT_FILE_COUNT);
 
     for segment in state.segments.persisted_segments() {
         files.push(capture_file(&segment_data_path(

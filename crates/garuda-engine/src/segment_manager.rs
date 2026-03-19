@@ -51,7 +51,8 @@ impl SegmentManager {
             .iter()
             .map(|segment| segment.records.len())
             .sum::<usize>();
-        let mut records = Vec::with_capacity(persisted_capacity + self.writing_segment.records.len());
+        let mut records =
+            Vec::with_capacity(persisted_capacity + self.writing_segment.records.len());
 
         collect_live_records(self.persisted_segments(), &mut records);
         collect_live_records_from_segment(self.writing_segment(), &mut records);
@@ -115,8 +116,8 @@ impl SegmentManager {
 
     pub(crate) fn optimize(&mut self, next_segment_id: &mut u64, segment_max_docs: usize) {
         let all_live_records = self.all_live_records();
-        let rebuilt_capacity = (all_live_records.len() + segment_max_docs.saturating_sub(1))
-            / segment_max_docs.max(1);
+        let rebuilt_capacity =
+            (all_live_records.len() + segment_max_docs.saturating_sub(1)) / segment_max_docs.max(1);
         let mut rebuilt_segments = Vec::with_capacity(rebuilt_capacity);
         let mut current_segment = Self::empty_writing_segment();
 
@@ -152,7 +153,8 @@ impl SegmentManager {
         let new_id = *next_segment_id;
         *next_segment_id += 1;
 
-        let mut persisted = std::mem::replace(&mut self.writing_segment, Self::empty_writing_segment());
+        let mut persisted =
+            std::mem::replace(&mut self.writing_segment, Self::empty_writing_segment());
         persisted.meta.id = new_id;
         persisted.meta.path = segment_file_name(new_id);
         sync_segment_meta(&mut persisted);
