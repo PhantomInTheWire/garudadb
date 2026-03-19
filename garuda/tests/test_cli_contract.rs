@@ -43,7 +43,8 @@ fn create_and_stats_should_form_a_basic_user_journey() {
 
 #[test]
 fn insert_jsonl_query_and_fetch_should_form_a_basic_cli_data_journey() {
-    let tmp = temp_root("cli-data-journey");
+    let tmp = temp_path("cli-data-journey");
+    std::fs::create_dir_all(&tmp).expect("create cli temp root");
     let docs_path = tmp.join("docs.jsonl");
 
     std::fs::write(
@@ -100,7 +101,7 @@ fn insert_jsonl_query_and_fetch_should_form_a_basic_cli_data_journey() {
 
 #[test]
 fn create_index_command_should_exist_for_cli_contract() {
-    let tmp = temp_root("cli-create-index");
+    let tmp = temp_path("cli-create-index");
 
     let create = run_cli(&["--root", tmp.to_str().expect("utf8"), "create", "docs", "4"]);
     assert!(create.status.success(), "create should succeed");
