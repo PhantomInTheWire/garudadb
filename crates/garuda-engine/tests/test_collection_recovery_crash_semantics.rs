@@ -1,13 +1,10 @@
 mod common;
-#[path = "support/storage_helpers.rs"]
-mod storage_helpers;
 
 use common::{build_doc, collection_name, database, default_options, default_schema, doc_id};
 use garuda_segment::{WalOp, append_wal_ops};
 use garuda_storage::WRITING_SEGMENT_ID;
-use garuda_types::ScalarValue;
+use garuda_types::{CollectionOptions, ScalarValue};
 use std::fs;
-use storage_helpers::options_with_segment_max_docs;
 
 const FNV_OFFSET_BASIS: u32 = 2_166_136_261;
 const FNV_PRIME: u32 = 16_777_619;
@@ -310,4 +307,11 @@ fn wal_checksum(bytes: &[u8]) -> u32 {
     }
 
     hash
+}
+
+fn options_with_segment_max_docs(segment_max_docs: usize) -> CollectionOptions {
+    CollectionOptions {
+        segment_max_docs,
+        ..common::default_options()
+    }
 }

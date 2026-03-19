@@ -1,9 +1,7 @@
 mod common;
-#[path = "support/storage_helpers.rs"]
-mod storage_helpers;
 
 use common::{build_doc, database, default_options, default_schema};
-use storage_helpers::collection_dir;
+use garuda_types::CollectionName;
 
 #[test]
 fn rollover_creates_persisted_segment_directory_and_keeps_writing_segment_zero() {
@@ -56,4 +54,8 @@ fn reopen_uses_manifest_metadata_for_persisted_segments() {
         reopened.is_err(),
         "reopen should trust manifest-referenced segment paths instead of guessing directories"
     );
+}
+
+fn collection_dir(root: &std::path::Path, name: &str) -> std::path::PathBuf {
+    root.join(CollectionName::parse(name).expect("valid collection name").as_str())
 }

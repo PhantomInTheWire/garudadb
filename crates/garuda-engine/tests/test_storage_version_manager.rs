@@ -1,10 +1,8 @@
 mod common;
-#[path = "support/storage_helpers.rs"]
-mod storage_helpers;
 
 use common::{collection_name, database, default_schema, seed_collection};
 use std::fs;
-use storage_helpers::{collection_dir, manifest_version_paths, options_with_segment_max_docs};
+use garuda_types::{CollectionName, CollectionOptions};
 
 #[test]
 fn reopen_uses_latest_committed_manifest_version() {
@@ -89,4 +87,23 @@ fn flush_leaves_no_temp_manifest_artifacts() {
     assert!(!collection_dir.join("manifest.1.tmp").exists());
     assert!(!collection_dir.join("manifest.2.tmp").exists());
     assert!(!collection_dir.join("VERSION.json").exists());
+}
+
+fn options_with_segment_max_docs(segment_max_docs: usize) -> CollectionOptions {
+    CollectionOptions {
+        segment_max_docs,
+        ..common::default_options()
+    }
+}
+
+fn collection_dir(root: &std::path::Path, name: &str) -> std::path::PathBuf {
+    root.join(CollectionName::parse(name).expect("valid collection name").as_str())
+}
+
+fn manifest_version_paths(root: &std::path::Path, name: &str) -> Vec<std::path::PathBuf> {
+    garuda_storage::manifest_paths(&collection_dir(root, name))
+        .expect("read manifest paths")
+        .into_iter()
+        .map(|(_, path)| path)
+        .collect()
 }

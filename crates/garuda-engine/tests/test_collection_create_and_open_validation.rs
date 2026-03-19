@@ -1,13 +1,7 @@
 mod common;
-#[path = "support/schema_helpers.rs"]
-mod schema_helpers;
 
 use common::{collection_name, database, default_options, default_schema};
-use garuda_types::{CollectionName, StatusCode};
-use schema_helpers::{
-    read_only_options, schema_missing_primary_field, schema_with_dimension,
-    schema_with_duplicate_field, schema_with_vector_name,
-};
+use garuda_types::{CollectionName, CollectionOptions, CollectionSchema, StatusCode};
 
 #[test]
 fn rejects_invalid_schema_shapes_and_unknown_collections() {
@@ -80,4 +74,35 @@ fn read_only_collection_open_should_preserve_non_mutating_contract() {
 
     let readonly_create = db.create_collection(default_schema("readonly"), read_only_options());
     assert!(readonly_create.is_err());
+}
+
+fn schema_with_dimension(name: &str, dimension: usize) -> CollectionSchema {
+    let mut schema = default_schema(name);
+    schema.vector.dimension = dimension;
+    schema
+}
+
+fn schema_with_vector_name(name: &str, vector_name: &str) -> CollectionSchema {
+    let mut schema = default_schema(name);
+    schema.vector.name = common::field_name(vector_name);
+    schema
+}
+
+fn schema_with_duplicate_field(name: &str) -> CollectionSchema {
+    let mut schema = default_schema(name);
+    schema.fields.push(schema.fields[0].clone());
+    schema
+}
+
+fn schema_missing_primary_field(name: &str) -> CollectionSchema {
+    let mut schema = default_schema(name);
+    schema.primary_key = common::field_name("missing_pk");
+    schema
+}
+
+fn read_only_options() -> CollectionOptions {
+    CollectionOptions {
+        read_only: true,
+        ..default_options()
+    }
 }

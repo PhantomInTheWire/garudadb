@@ -1,9 +1,7 @@
 mod common;
-#[path = "support/storage_helpers.rs"]
-mod storage_helpers;
 
 use common::{build_doc, database, default_options, default_schema};
-use storage_helpers::{collection_dir, storage_snapshot_paths};
+use garuda_types::CollectionName;
 
 #[test]
 fn collection_uses_binary_engine_files_instead_of_json_artifacts() {
@@ -21,8 +19,8 @@ fn collection_uses_binary_engine_files_instead_of_json_artifacts() {
     drop(collection);
 
     let collection_dir = collection_dir(&root, "docs");
-    let idmap_paths = storage_snapshot_paths(&root, "docs", "idmap.");
-    let delete_paths = storage_snapshot_paths(&root, "docs", "del.");
+    let idmap_paths = storage_snapshot_paths(&collection_dir, "idmap.");
+    let delete_paths = storage_snapshot_paths(&collection_dir, "del.");
 
     assert_eq!(idmap_paths.len(), 1);
     assert_eq!(delete_paths.len(), 1);
@@ -44,4 +42,28 @@ fn collection_uses_binary_engine_files_instead_of_json_artifacts() {
     assert!(!collection_dir.join("DELETE_STORE.json").exists());
     assert!(!collection_dir.join("VERSION.json").exists());
     assert!(!collection_dir.join("segments").exists());
+}
+
+fn collection_dir(root: &std::path::Path, name: &str) -> std::path::PathBuf {
+    root.join(CollectionName::parse(name).expect("valid collection name").as_str())
+}
+
+fn storage_snapshot_paths(
+    collection_dir: &std::path::Path,
+    prefix: &str,
+) -> Vec<std::path::PathBuf> {
+    let mut paths = std::fs::read_dir(collection_dir)
+        .expect("read collection dir")
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| {
+            let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+                return false;
+            };
+
+            file_name.starts_with(prefix)
+        })
+        .collect::<Vec<_>>();
+
+    paths.sort();
+    paths
 }

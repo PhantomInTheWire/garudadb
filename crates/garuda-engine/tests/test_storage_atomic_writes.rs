@@ -1,9 +1,7 @@
 mod common;
-#[path = "support/storage_helpers.rs"]
-mod storage_helpers;
 
 use common::{collection_name, database, default_schema};
-use storage_helpers::{manifest_version_paths, options_with_segment_max_docs};
+use garuda_types::{CollectionName, CollectionOptions};
 
 #[test]
 fn atomic_write_keeps_only_final_file() {
@@ -31,4 +29,20 @@ fn atomic_write_keeps_only_final_file() {
         .open_collection(&collection_name("docs"))
         .expect("reopen collection");
     assert_eq!(reopened.schema(), schema);
+}
+
+fn options_with_segment_max_docs(segment_max_docs: usize) -> CollectionOptions {
+    CollectionOptions {
+        segment_max_docs,
+        ..common::default_options()
+    }
+}
+
+fn manifest_version_paths(root: &std::path::Path, name: &str) -> Vec<std::path::PathBuf> {
+    let collection_dir = root.join(CollectionName::parse(name).expect("valid collection name").as_str());
+    garuda_storage::manifest_paths(&collection_dir)
+        .expect("read manifest paths")
+        .into_iter()
+        .map(|(_, path)| path)
+        .collect()
 }
