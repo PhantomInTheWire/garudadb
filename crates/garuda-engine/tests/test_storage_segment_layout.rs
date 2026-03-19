@@ -1,6 +1,9 @@
 mod common;
+#[path = "support/storage_helpers.rs"]
+mod storage_helpers;
 
-use common::{build_doc, collection_dir, database, default_options, default_schema};
+use common::{build_doc, database, default_options, default_schema};
+use storage_helpers::collection_dir;
 
 #[test]
 fn rollover_creates_persisted_segment_directory_and_keeps_writing_segment_zero() {

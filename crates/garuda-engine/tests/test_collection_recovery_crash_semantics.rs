@@ -1,9 +1,11 @@
 mod common;
+#[path = "support/storage_helpers.rs"]
+mod storage_helpers;
 
 use common::{
     build_doc, collection_name, database, default_options, default_schema, doc_id,
-    options_with_segment_max_docs,
 };
+use storage_helpers::options_with_segment_max_docs;
 use garuda_segment::{WalOp, append_wal_ops};
 use garuda_storage::WRITING_SEGMENT_ID;
 use garuda_types::ScalarValue;

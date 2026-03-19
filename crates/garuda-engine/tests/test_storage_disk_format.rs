@@ -1,8 +1,9 @@
 mod common;
+#[path = "support/storage_helpers.rs"]
+mod storage_helpers;
 
-use common::{
-    build_doc, collection_dir, database, default_options, default_schema, storage_snapshot_paths,
-};
+use common::{build_doc, database, default_options, default_schema};
+use storage_helpers::{collection_dir, storage_snapshot_paths};
 
 #[test]
 fn collection_uses_binary_engine_files_instead_of_json_artifacts() {

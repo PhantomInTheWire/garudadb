@@ -1,10 +1,10 @@
 mod common;
+#[path = "support/storage_helpers.rs"]
+mod storage_helpers;
 
-use common::{
-    collection_dir, collection_name, database, default_schema, manifest_version_paths,
-    options_with_segment_max_docs, seed_collection,
-};
+use common::{collection_name, database, default_schema, seed_collection};
 use std::fs;
+use storage_helpers::{collection_dir, manifest_version_paths, options_with_segment_max_docs};
 
 #[test]
 fn reopen_uses_latest_committed_manifest_version() {

@@ -61,30 +61,6 @@ pub fn default_schema(name: &str) -> CollectionSchema {
     }
 }
 
-pub fn schema_with_dimension(name: &str, dimension: usize) -> CollectionSchema {
-    let mut schema = default_schema(name);
-    schema.vector.dimension = dimension;
-    schema
-}
-
-pub fn schema_with_vector_name(name: &str, vector_name: &str) -> CollectionSchema {
-    let mut schema = default_schema(name);
-    schema.vector.name = field_name(vector_name);
-    schema
-}
-
-pub fn schema_with_duplicate_field(name: &str) -> CollectionSchema {
-    let mut schema = default_schema(name);
-    schema.fields.push(schema.fields[0].clone());
-    schema
-}
-
-pub fn schema_missing_primary_field(name: &str) -> CollectionSchema {
-    let mut schema = default_schema(name);
-    schema.primary_key = field_name("missing_pk");
-    schema
-}
-
 pub fn default_options() -> CollectionOptions {
     CollectionOptions {
         read_only: false,
@@ -93,64 +69,10 @@ pub fn default_options() -> CollectionOptions {
     }
 }
 
-pub fn options_with_segment_max_docs(segment_max_docs: usize) -> CollectionOptions {
-    CollectionOptions {
-        segment_max_docs,
-        ..default_options()
-    }
-}
-
-pub fn read_only_options() -> CollectionOptions {
-    CollectionOptions {
-        read_only: true,
-        ..default_options()
-    }
-}
-
 pub fn database(prefix: &str) -> (PathBuf, Database) {
     let root = temp_root(prefix);
     let db = Database::open(&root).expect("open db root");
     (root, db)
-}
-
-pub fn collection_dir(root: &std::path::Path, name: &str) -> PathBuf {
-    root.join(name)
-}
-
-pub fn manifest_version_paths(root: &std::path::Path, name: &str) -> Vec<PathBuf> {
-    let collection_dir = collection_dir(root, name);
-    let mut paths = std::fs::read_dir(collection_dir)
-        .expect("read collection dir")
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| {
-            let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
-                return false;
-            };
-
-            file_name.starts_with("manifest.")
-        })
-        .collect::<Vec<_>>();
-
-    paths.sort();
-    paths
-}
-
-pub fn storage_snapshot_paths(root: &std::path::Path, name: &str, prefix: &str) -> Vec<PathBuf> {
-    let collection_dir = collection_dir(root, name);
-    let mut paths = std::fs::read_dir(collection_dir)
-        .expect("read collection dir")
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| {
-            let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
-                return false;
-            };
-
-            file_name.starts_with(prefix)
-        })
-        .collect::<Vec<_>>();
-
-    paths.sort();
-    paths
 }
 
 pub fn build_doc(id: &str, rank: i64, category: &str, score: f64, vector: [f32; 4]) -> Doc {

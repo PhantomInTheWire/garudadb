@@ -1,9 +1,9 @@
 mod common;
+#[path = "support/storage_helpers.rs"]
+mod storage_helpers;
 
-use common::{
-    collection_name, database, default_schema, manifest_version_paths,
-    options_with_segment_max_docs,
-};
+use common::{collection_name, database, default_schema};
+use storage_helpers::{manifest_version_paths, options_with_segment_max_docs};
 
 #[test]
 fn atomic_write_keeps_only_final_file() {

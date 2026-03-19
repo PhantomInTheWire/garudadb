@@ -1,9 +1,10 @@
 mod common;
+#[path = "support/storage_helpers.rs"]
+mod storage_helpers;
 
-use common::{
-    build_doc, collection_dir, collection_name, database, default_options, default_schema, doc_id,
-};
+use common::{build_doc, collection_name, database, default_options, default_schema, doc_id};
 use std::fs;
+use storage_helpers::collection_dir;
 
 #[test]
 fn reopen_uses_latest_visible_document_for_a_reused_doc_id() {
