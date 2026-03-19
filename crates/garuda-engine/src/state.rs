@@ -43,16 +43,21 @@ impl CollectionRuntime {
     }
 
     pub(crate) fn update_doc(&mut self, doc: Doc) -> WriteResult {
-        let schema = self.catalog.schema.clone();
+        let Some(existing_doc) = self
+            .find_live_record(&doc.id)
+            .map(|record| record.doc.clone())
+        else {
+            return WriteResult::err(doc.id, StatusCode::NotFound, "document not found");
+        };
+
+        let merged_doc = merge_docs(&existing_doc, &doc);
+        if let Err(status) = validate_doc(&self.catalog.schema, &merged_doc) {
+            return WriteResult::err(doc.id, status.code, status.message);
+        }
 
         let Some(record) = self.find_live_record_mut(&doc.id) else {
             return WriteResult::err(doc.id, StatusCode::NotFound, "document not found");
         };
-
-        let merged_doc = merge_docs(&record.doc, &doc);
-        if let Err(status) = validate_doc(&schema, &merged_doc) {
-            return WriteResult::err(doc.id, status.code, status.message);
-        }
 
         record.doc = merged_doc;
         self.finish_mutation();

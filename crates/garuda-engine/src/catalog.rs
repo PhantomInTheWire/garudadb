@@ -1,7 +1,5 @@
 use garuda_segment::SegmentFile;
-use garuda_types::{
-    CollectionOptions, CollectionSchema, Manifest, ManifestVersionId, SnapshotId,
-};
+use garuda_types::{CollectionOptions, CollectionSchema, Manifest, ManifestVersionId, SnapshotId};
 
 #[derive(Clone)]
 pub(crate) struct CollectionCatalog {

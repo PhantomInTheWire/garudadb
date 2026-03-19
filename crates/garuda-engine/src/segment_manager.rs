@@ -133,7 +133,11 @@ impl SegmentManager {
         self.writing_segment = Self::empty_writing_segment();
     }
 
-    fn rotate_writing_segment_if_needed(&mut self, next_segment_id: &mut u64, segment_max_docs: usize) {
+    fn rotate_writing_segment_if_needed(
+        &mut self,
+        next_segment_id: &mut u64,
+        segment_max_docs: usize,
+    ) {
         if self.writing_segment.meta.doc_count < segment_max_docs {
             return;
         }

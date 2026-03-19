@@ -4,7 +4,8 @@ use garuda_types::{
 
 pub fn validate_doc(schema: &CollectionSchema, doc: &Doc) -> Result<(), Status> {
     validate_required_vector(schema, &doc.vector)?;
-    validate_doc_fields(schema, doc)
+    validate_doc_fields(schema, doc)?;
+    validate_primary_key_value(schema, doc)
 }
 
 pub fn apply_schema_defaults(schema: &CollectionSchema, doc: &mut Doc) {
@@ -99,4 +100,27 @@ fn validate_doc_fields(schema: &CollectionSchema, doc: &Doc) -> Result<(), Statu
     }
 
     Ok(())
+}
+
+fn validate_primary_key_value(schema: &CollectionSchema, doc: &Doc) -> Result<(), Status> {
+    let value = doc
+        .fields
+        .get(schema.primary_key.as_str())
+        .expect("primary key field must exist before identity validation");
+
+    let ScalarValue::String(primary_key) = value else {
+        return Err(Status::err(
+            StatusCode::InvalidArgument,
+            "primary key field must be a string",
+        ));
+    };
+
+    if primary_key == doc.id.as_str() {
+        return Ok(());
+    }
+
+    Err(Status::err(
+        StatusCode::InvalidArgument,
+        "primary key field must match document id",
+    ))
 }

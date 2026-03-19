@@ -9,7 +9,11 @@ pub(crate) fn backfill_new_column(segments: &mut SegmentManager, field: &ScalarF
     });
 }
 
-pub(crate) fn rename_column(segments: &mut SegmentManager, old_name: &FieldName, new_name: &FieldName) {
+pub(crate) fn rename_column(
+    segments: &mut SegmentManager,
+    old_name: &FieldName,
+    new_name: &FieldName,
+) {
     apply_to_all_segments(segments, |segment| {
         rename_field_in_records(&mut segment.records, old_name.as_str(), new_name.as_str());
     });
@@ -21,10 +25,7 @@ pub(crate) fn drop_column(segments: &mut SegmentManager, name: &FieldName) {
     });
 }
 
-fn apply_to_all_segments(
-    segments: &mut SegmentManager,
-    mut apply: impl FnMut(&mut SegmentFile),
-) {
+fn apply_to_all_segments(segments: &mut SegmentManager, mut apply: impl FnMut(&mut SegmentFile)) {
     for segment in segments.persisted_segments_mut() {
         apply(segment);
         sync_segment_meta(segment);

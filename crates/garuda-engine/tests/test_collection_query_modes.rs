@@ -46,7 +46,10 @@ fn query_by_document_id_should_match_query_by_vector_results() {
         .expect("query by id");
 
     assert_eq!(
-        by_vector.iter().map(|doc| doc.id.clone()).collect::<Vec<_>>(),
+        by_vector
+            .iter()
+            .map(|doc| doc.id.clone())
+            .collect::<Vec<_>>(),
         by_id.iter().map(|doc| doc.id.clone()).collect::<Vec<_>>()
     );
 }

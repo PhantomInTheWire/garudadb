@@ -132,6 +132,73 @@ fn rejects_invalid_default_values_during_collection_creation() {
 }
 
 #[test]
+fn rejects_non_string_or_nullable_primary_keys_and_mismatched_primary_key_values() {
+    let (_root, db) = database("exception-primary-key-invariants");
+
+    let mut non_string_pk_schema = default_schema("docs-non-string-pk");
+    non_string_pk_schema.fields[0].field_type = ScalarType::Int64;
+    assert!(
+        db.create_collection(non_string_pk_schema, default_options())
+            .is_err()
+    );
+
+    let mut nullable_pk_schema = default_schema("docs-nullable-pk");
+    nullable_pk_schema.fields[0].nullable = true;
+    assert!(
+        db.create_collection(nullable_pk_schema, default_options())
+            .is_err()
+    );
+
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+
+    let mut wrong_insert = build_doc("doc-1", 1, "alpha", 0.9, [1.0, 0.0, 0.0, 0.0]);
+    wrong_insert.fields.insert(
+        String::from("pk"),
+        ScalarValue::String(String::from("other-doc")),
+    );
+
+    let insert_result = collection.insert(vec![wrong_insert]);
+    assert_eq!(
+        insert_result[0].status.code,
+        garuda_types::StatusCode::InvalidArgument
+    );
+
+    let ok_result = collection.insert(vec![build_doc(
+        "doc-1",
+        1,
+        "alpha",
+        0.9,
+        [1.0, 0.0, 0.0, 0.0],
+    )]);
+    assert!(ok_result[0].status.is_ok());
+
+    let mut wrong_update = Doc {
+        id: doc_id("doc-1"),
+        fields: std::collections::BTreeMap::new(),
+        vector: Vec::new(),
+        score: None,
+    };
+    wrong_update.fields.insert(
+        String::from("pk"),
+        ScalarValue::String(String::from("other-doc")),
+    );
+
+    let update_result = collection.update(vec![wrong_update]);
+    assert_eq!(
+        update_result[0].status.code,
+        garuda_types::StatusCode::InvalidArgument
+    );
+
+    let fetched = collection.fetch(vec![doc_id("doc-1")]);
+    assert_eq!(
+        fetched["doc-1"].fields["pk"],
+        ScalarValue::String(String::from("doc-1"))
+    );
+}
+
+#[test]
 fn add_column_rolls_back_state_when_persist_fails() {
     let (_root, db) = database("exception-ddl-persist-rollback");
     let collection = db

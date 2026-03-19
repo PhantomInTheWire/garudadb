@@ -3,7 +3,7 @@ use crate::state::CollectionRuntime;
 use garuda_math::score_doc;
 use garuda_meta::evaluate_filter;
 use garuda_planner::{QueryPlan, SegmentScanMode, build_query_plan};
-use garuda_types::{CollectionSchema, Doc, DocId, QueryVectorSource, Status, StatusCode, VectorQuery};
+use garuda_types::{CollectionSchema, Doc, QueryVectorSource, Status, StatusCode, VectorQuery};
 use std::collections::BTreeMap;
 
 pub(crate) fn parse_query_filter(
@@ -42,28 +42,6 @@ pub(crate) fn execute_query(
     let docs = collect_matching_docs(state, &plan);
 
     Ok(score_and_sort_docs(state, docs, &query_vector, &plan))
-}
-
-pub(crate) fn collect_matching_doc_ids(
-    state: &CollectionRuntime,
-    raw_filter: &str,
-) -> Result<Vec<DocId>, Status> {
-    let filter = parse_query_filter(Some(raw_filter), &state.catalog.schema)?;
-    let Some(filter) = filter else {
-        return Ok(Vec::new());
-    };
-
-    let mut ids = Vec::new();
-
-    for record in state.all_live_records() {
-        if !evaluate_filter(&filter, &record.doc.fields) {
-            continue;
-        }
-
-        ids.push(record.doc.id);
-    }
-
-    Ok(ids)
 }
 
 fn apply_query_projection(doc: &mut Doc, plan: &QueryPlan) {

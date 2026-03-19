@@ -36,7 +36,11 @@ pub(crate) fn ensure_column_can_be_added(
         ));
     }
 
-    if schema.fields.iter().any(|existing| existing.name == field.name) {
+    if schema
+        .fields
+        .iter()
+        .any(|existing| existing.name == field.name)
+    {
         return Err(Status::err(
             StatusCode::AlreadyExists,
             "field already exists",
@@ -72,7 +76,11 @@ pub(crate) fn rename_column(
         ));
     }
 
-    let Some(field) = schema.fields.iter_mut().find(|field| field.name == *old_name) else {
+    let Some(field) = schema
+        .fields
+        .iter_mut()
+        .find(|field| field.name == *old_name)
+    else {
         return Err(Status::err(StatusCode::NotFound, "field not found"));
     };
 

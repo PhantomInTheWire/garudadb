@@ -68,7 +68,10 @@ fn reopen_after_unflushed_upsert_should_preserve_latest_visible_document() {
     let doc = fetched.get(&doc_id("doc-1")).expect("doc present");
 
     assert_eq!(doc.fields["rank"], ScalarValue::Int64(9));
-    assert_eq!(doc.fields["category"], ScalarValue::String("beta".to_string()));
+    assert_eq!(
+        doc.fields["category"],
+        ScalarValue::String("beta".to_string())
+    );
 }
 
 #[test]

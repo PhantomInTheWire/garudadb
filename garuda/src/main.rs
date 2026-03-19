@@ -145,8 +145,7 @@ fn main() -> Result<(), String> {
             let query =
                 VectorQuery::by_vector(field_name(VECTOR_FIELD), parse_vector_arg(&vector)?, top_k);
             let docs = collection.query(query).map_err(|status| status.message)?;
-            let output =
-                serde_json::to_string_pretty(&docs).map_err(|error| error.to_string())?;
+            let output = serde_json::to_string_pretty(&docs).map_err(|error| error.to_string())?;
             println!("{output}");
             Ok(())
         }
@@ -154,15 +153,17 @@ fn main() -> Result<(), String> {
             let collection = db.open_collection(&name).map_err(|status| status.message)?;
             let docs =
                 collection.fetch(vec![garuda_types::DocId::parse(id).map_err(|s| s.message)?]);
-            let output =
-                serde_json::to_string_pretty(&docs).map_err(|error| error.to_string())?;
+            let output = serde_json::to_string_pretty(&docs).map_err(|error| error.to_string())?;
             println!("{output}");
             Ok(())
         }
         Commands::CreateIndex { name, field, kind } => {
             let collection = db.open_collection(&name).map_err(|status| status.message)?;
             collection
-                .create_index(&FieldName::parse(field).map_err(|status| status.message)?, index_params(parse_index_kind(&kind)?))
+                .create_index(
+                    &FieldName::parse(field).map_err(|status| status.message)?,
+                    index_params(parse_index_kind(&kind)?),
+                )
                 .map_err(|status| status.message)?;
             println!("ok");
             Ok(())
@@ -210,7 +211,12 @@ fn read_jsonl_docs(path: &PathBuf) -> Result<Vec<garuda_types::Doc>, String> {
 fn parse_vector_arg(raw: &str) -> Result<garuda_types::DenseVector, String> {
     let values = raw
         .split(',')
-        .map(|value| value.trim().parse::<f32>().map_err(|error| error.to_string()))
+        .map(|value| {
+            value
+                .trim()
+                .parse::<f32>()
+                .map_err(|error| error.to_string())
+        })
         .collect::<Result<Vec<_>, _>>()?;
 
     garuda_types::DenseVector::parse(values).map_err(|status| status.message)

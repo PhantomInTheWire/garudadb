@@ -1,6 +1,7 @@
 use crate::validation::validate_scalar_value;
 use garuda_types::{
-    CollectionOptions, CollectionSchema, FieldName, ScalarFieldSchema, Status, StatusCode,
+    CollectionOptions, CollectionSchema, FieldName, ScalarFieldSchema, ScalarType, Status,
+    StatusCode,
 };
 use std::collections::HashSet;
 
@@ -54,18 +55,32 @@ fn validate_vector_dimension(schema: &CollectionSchema) -> Result<(), Status> {
 }
 
 fn validate_primary_key(schema: &CollectionSchema) -> Result<(), Status> {
-    if schema
+    let Some(field) = schema
         .fields
         .iter()
-        .any(|field| field.name == schema.primary_key)
-    {
-        return Ok(());
+        .find(|field| field.name == schema.primary_key)
+    else {
+        return Err(Status::err(
+            StatusCode::InvalidArgument,
+            "primary key must reference an existing scalar field",
+        ));
+    };
+
+    if field.field_type != ScalarType::String {
+        return Err(Status::err(
+            StatusCode::InvalidArgument,
+            "primary key field must be a string",
+        ));
     }
 
-    Err(Status::err(
-        StatusCode::InvalidArgument,
-        "primary key must reference an existing scalar field",
-    ))
+    if field.nullable {
+        return Err(Status::err(
+            StatusCode::InvalidArgument,
+            "primary key field cannot be nullable",
+        ));
+    }
+
+    Ok(())
 }
 
 fn validate_unique_field_name(
