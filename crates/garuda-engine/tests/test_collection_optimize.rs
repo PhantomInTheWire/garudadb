@@ -94,7 +94,7 @@ fn optimize_default_options_should_preserve_current_behavior() {
 
     let before = collection.stats();
     collection
-        .optimize(OptimizeOptions::default())
+        .optimize(OptimizeOptions)
         .expect("optimize with default options");
     let after = collection.stats();
 
