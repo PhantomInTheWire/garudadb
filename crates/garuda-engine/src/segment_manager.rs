@@ -46,7 +46,12 @@ impl SegmentManager {
     }
 
     pub(crate) fn all_live_records(&self) -> Vec<StoredRecord> {
-        let mut records = Vec::new();
+        let persisted_capacity = self
+            .persisted_segments
+            .iter()
+            .map(|segment| segment.records.len())
+            .sum::<usize>();
+        let mut records = Vec::with_capacity(persisted_capacity + self.writing_segment.records.len());
 
         collect_live_records(self.persisted_segments(), &mut records);
         collect_live_records_from_segment(self.writing_segment(), &mut records);
