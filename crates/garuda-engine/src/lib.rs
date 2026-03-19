@@ -10,7 +10,6 @@ mod schema_ddl;
 mod segment_ddl;
 mod segment_manager;
 mod state;
-mod storage;
 mod validation;
 mod write_service;
 
@@ -31,7 +30,7 @@ use state::CollectionRuntime;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
-use storage::{
+use garuda_storage::{
     collection_dir, ensure_database_root, ensure_existing_collection_dir, ensure_new_collection_dir,
 };
 use validation::validate_field_default;

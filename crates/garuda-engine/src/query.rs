@@ -1,4 +1,5 @@
-use crate::filter::{parse_filter, validate_filter};
+use crate::filter::validate_filter;
+use crate::filter_parser::parse_filter;
 use crate::state::CollectionRuntime;
 use garuda_planner::{QueryPlan, SegmentScanMode, build_query_plan};
 use garuda_segment::exact_search;

@@ -1,9 +1,5 @@
 use garuda_types::{CollectionSchema, FilterExpr, ScalarType, ScalarValue, Status, StatusCode};
 
-pub fn parse_filter(input: &str) -> Result<FilterExpr, Status> {
-    crate::filter_parser::parse_filter(input)
-}
-
 pub fn validate_filter(expr: &FilterExpr, schema: &CollectionSchema) -> Result<(), Status> {
     match expr {
         FilterExpr::Eq(field, value)

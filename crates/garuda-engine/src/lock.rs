@@ -1,4 +1,4 @@
-use crate::storage::LOCK_FILE_NAME;
+use garuda_storage::LOCK_FILE_NAME;
 use garuda_types::{Status, StatusCode};
 use std::collections::HashSet;
 use std::fs::{File, OpenOptions};
