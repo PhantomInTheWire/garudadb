@@ -264,7 +264,7 @@ impl Collection {
 }
 
 fn fetch_doc(state: &CollectionRuntime, id: &DocId) -> Option<Doc> {
-    let record = state.find_live_record(id)?;
+    let record = state.record(id)?;
     let mut doc = record.doc.clone();
     doc.score = Some(0.0);
     Some(doc)

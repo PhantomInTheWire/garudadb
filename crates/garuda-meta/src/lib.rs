@@ -103,6 +103,14 @@ impl MetadataStore {
         self.delete_store.insert(internal_doc_id);
     }
 
+    pub fn internal_doc_id(&self, doc_id: &DocId) -> Option<u64> {
+        self.id_map.get(doc_id)
+    }
+
+    pub fn is_deleted(&self, internal_doc_id: u64) -> bool {
+        self.delete_store.contains(internal_doc_id)
+    }
+
     pub fn id_map_entries(&self) -> impl Iterator<Item = (&DocId, &u64)> {
         self.id_map.iter()
     }

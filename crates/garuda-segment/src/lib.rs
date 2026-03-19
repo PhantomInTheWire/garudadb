@@ -2,11 +2,13 @@ mod codec;
 mod wal;
 
 use codec::{decode_segment, encode_segment};
+use garuda_index_flat::{FlatIndex, FlatIndexEntry};
+use garuda_meta::evaluate_filter;
 use garuda_storage::{
     create_dir_all, read_file, remove_path_if_exists, segment_data_path, segment_dir,
     segment_wal_path, write_file_atomically,
 };
-use garuda_types::{Doc, DocId, SegmentMeta, Status};
+use garuda_types::{DistanceMetric, Doc, DocId, FilterExpr, SegmentMeta, Status};
 pub use wal::{WalOp, append_wal_ops, read_wal_ops, reset_wal};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,6 +28,12 @@ pub struct StoredRecord {
 pub struct SegmentFile {
     pub meta: SegmentMeta,
     pub records: Vec<StoredRecord>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SegmentSearchHit {
+    pub record: StoredRecord,
+    pub score: f32,
 }
 
 pub fn segment_file_name(segment_id: u64) -> String {
@@ -102,4 +110,58 @@ pub fn doc_exists(records: &[StoredRecord], id: &DocId) -> bool {
     records
         .iter()
         .any(|record| record.doc.id == *id && matches!(record.state, RecordState::Live))
+}
+
+pub fn exact_search(
+    segment: &SegmentFile,
+    metric: DistanceMetric,
+    query_vector: &[f32],
+    top_k: usize,
+    filter: Option<&FilterExpr>,
+) -> Result<Vec<SegmentSearchHit>, Status> {
+    let mut entries = Vec::new();
+    let mut records = std::collections::HashMap::new();
+
+    for record in &segment.records {
+        if matches!(record.state, RecordState::Deleted) {
+            continue;
+        }
+
+        if let Some(filter) = filter {
+            if !evaluate_filter(filter, &record.doc.fields) {
+                continue;
+            }
+        }
+
+        entries.push(FlatIndexEntry::new(
+            record.doc_id,
+            record.doc.vector.clone(),
+        ));
+        records.insert(record.doc_id, record.clone());
+    }
+
+    if entries.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let dimension = entries[0].vector.len();
+    let index = FlatIndex::build(dimension, entries)?;
+    let hits = index.search(metric, query_vector, top_k)?;
+    let mut search_hits = Vec::with_capacity(hits.len());
+
+    for hit in hits {
+        let Some(record) = records.remove(&hit.doc_id) else {
+            return Err(Status::err(
+                garuda_types::StatusCode::Internal,
+                "flat index hit missing backing record",
+            ));
+        };
+
+        search_hits.push(SegmentSearchHit {
+            record,
+            score: hit.score,
+        });
+    }
+
+    Ok(search_hits)
 }

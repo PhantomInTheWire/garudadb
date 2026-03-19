@@ -1,9 +1,7 @@
-use std::borrow::Cow;
 use crate::filter::{parse_filter, validate_filter};
 use crate::state::CollectionRuntime;
-use garuda_math::score_doc;
-use garuda_meta::evaluate_filter;
 use garuda_planner::{QueryPlan, SegmentScanMode, build_query_plan};
+use garuda_segment::exact_search;
 use garuda_types::{CollectionSchema, Doc, QueryVectorSource, Status, StatusCode, VectorQuery};
 
 pub(crate) fn parse_query_filter(
@@ -32,16 +30,22 @@ pub(crate) fn execute_query(
 ) -> Result<Vec<Doc>, Status> {
     let filter = parse_query_filter(query.filter.as_deref(), &state.catalog.schema)?;
     let plan = build_query_plan(query, filter);
-    ensure_query_uses_known_vector_field(state, &plan)?;
+
+    if plan.field_name != state.catalog.schema.vector.name {
+        return Err(Status::err(
+            StatusCode::InvalidArgument,
+            "unknown vector field",
+        ));
+    }
 
     if plan.top_k == 0 {
         return Ok(Vec::new());
     }
 
     let query_vector = resolve_query_vector(&plan, state)?;
-    let docs = collect_matching_docs(state, &plan)?;
+    let docs = collect_matching_docs(state, &plan, &query_vector)?;
 
-    Ok(score_and_sort_docs(state, docs, &query_vector, &plan))
+    Ok(finalize_docs(docs, &plan))
 }
 
 fn apply_query_projection(doc: &mut Doc, plan: &QueryPlan) {
@@ -57,10 +61,7 @@ fn apply_query_projection(doc: &mut Doc, plan: &QueryPlan) {
         .retain(|field_name, _| output_fields.iter().any(|field| field == field_name));
 }
 
-fn resolve_query_vector<'a>(
-    plan: &'a QueryPlan,
-    state: &'a CollectionRuntime,
-) -> Result<Cow<'a, [f32]>, Status> {
+fn resolve_query_vector(plan: &QueryPlan, state: &CollectionRuntime) -> Result<Vec<f32>, Status> {
     match &plan.source {
         QueryVectorSource::Vector(vector) => {
             if vector.len() != state.catalog.schema.vector.dimension {
@@ -70,76 +71,99 @@ fn resolve_query_vector<'a>(
                 ));
             }
 
-            Ok(Cow::Borrowed(vector.as_slice()))
+            Ok(vector.as_slice().to_vec())
         }
         QueryVectorSource::DocumentId(id) => {
-            let Some(record) = state.find_live_record(id) else {
+            let Some(record) = state.record(id) else {
                 return Err(Status::err(
                     StatusCode::NotFound,
                     "query document id not found",
                 ));
             };
 
-            Ok(Cow::Borrowed(record.doc.vector.as_slice()))
+            Ok(record.doc.vector.clone())
         }
     }
 }
 
-fn ensure_query_uses_known_vector_field(
+fn collect_matching_docs(
     state: &CollectionRuntime,
     plan: &QueryPlan,
-) -> Result<(), Status> {
-    if plan.field_name == state.catalog.schema.vector.name {
-        return Ok(());
+    query_vector: &[f32],
+) -> Result<Vec<Doc>, Status> {
+    let filter = required_filter(plan)?;
+    let metric = state.catalog.schema.vector.metric;
+    let mut docs = Vec::new();
+
+    for segment in state.segments.persisted_segments() {
+        collect_docs_from_segment(
+            &mut docs,
+            segment,
+            metric,
+            query_vector,
+            segment.meta.doc_count,
+            filter,
+        )?;
     }
 
-    Err(Status::err(
-        StatusCode::InvalidArgument,
-        "unknown vector field",
-    ))
-}
-
-fn collect_matching_docs(state: &CollectionRuntime, plan: &QueryPlan) -> Result<Vec<Doc>, Status> {
-    let mut docs = state.all_live_docs();
-
-    if matches!(plan.scan_mode, SegmentScanMode::FilteredScan) {
-        let Some(filter) = plan.filter.as_ref() else {
-            return Err(Status::err(
-                StatusCode::Internal,
-                "filtered scans must carry a filter",
-            ));
-        };
-        docs.retain(|doc| evaluate_filter(filter, &doc.fields));
-    }
+    collect_docs_from_segment(
+        &mut docs,
+        state.segments.writing_segment(),
+        metric,
+        query_vector,
+        state.segments.writing_segment().meta.doc_count,
+        filter,
+    )?;
 
     Ok(docs)
 }
 
-fn score_and_sort_docs(
-    state: &CollectionRuntime,
-    docs: Vec<Doc>,
+fn collect_docs_from_segment(
+    docs: &mut Vec<Doc>,
+    segment: &garuda_segment::SegmentFile,
+    metric: garuda_types::DistanceMetric,
     query_vector: &[f32],
-    plan: &QueryPlan,
-) -> Vec<Doc> {
-    let mut scored_docs = Vec::with_capacity(docs.len());
+    top_k: usize,
+    filter: Option<&garuda_types::FilterExpr>,
+) -> Result<(), Status> {
+    let hits = exact_search(segment, metric, query_vector, top_k, filter)?;
 
-    for mut doc in docs {
-        doc.score = Some(score_doc(
-            state.catalog.schema.vector.metric,
-            query_vector,
-            &doc.vector,
-        ));
-        apply_query_projection(&mut doc, plan);
-        scored_docs.push(doc);
+    for hit in hits {
+        let mut doc = hit.record.doc;
+        doc.score = Some(hit.score);
+        docs.push(doc);
     }
 
-    scored_docs.sort_by(|lhs, rhs| {
+    Ok(())
+}
+
+fn finalize_docs(mut docs: Vec<Doc>, plan: &QueryPlan) -> Vec<Doc> {
+    docs.sort_by(|lhs, rhs| {
         rhs.score
             .unwrap_or_default()
             .total_cmp(&lhs.score.unwrap_or_default())
             .then_with(|| lhs.id.cmp(&rhs.id))
     });
-    scored_docs.truncate(plan.top_k);
+    docs.truncate(plan.top_k);
 
-    scored_docs
+    for doc in &mut docs {
+        apply_query_projection(doc, plan);
+    }
+
+    docs
+}
+
+fn required_filter(plan: &QueryPlan) -> Result<Option<&garuda_types::FilterExpr>, Status> {
+    if matches!(plan.scan_mode, SegmentScanMode::FullScan) {
+        return Ok(None);
+    }
+
+    let Some(filter) = plan.filter.as_ref() else {
+        return Err(Status::err(
+            StatusCode::Internal,
+            "filtered scans must carry a filter",
+        ));
+    };
+
+    Ok(Some(filter))
 }

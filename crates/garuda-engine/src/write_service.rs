@@ -176,17 +176,15 @@ fn apply_replayed_wal_op(state: &mut CollectionRuntime, wal_op: WalOp) -> Result
 
 fn is_redundant_wal_op(state: &CollectionRuntime, wal_op: &WalOp) -> bool {
     match wal_op {
-        WalOp::Insert(doc) => state.find_live_record(&doc.id).is_some(),
+        WalOp::Insert(doc) => state.record(&doc.id).is_some(),
         WalOp::Upsert(doc) => live_doc_matches(state, doc),
-        WalOp::Update(doc) => {
-            update_already_applied(state, doc) || state.find_live_record(&doc.id).is_none()
-        }
-        WalOp::Delete(doc_id) => state.find_live_record(doc_id).is_none(),
+        WalOp::Update(doc) => update_already_applied(state, doc) || state.record(&doc.id).is_none(),
+        WalOp::Delete(doc_id) => state.record(doc_id).is_none(),
     }
 }
 
 fn live_doc_matches(state: &CollectionRuntime, doc: &Doc) -> bool {
-    let Some(record) = state.find_live_record(&doc.id) else {
+    let Some(record) = state.record(&doc.id) else {
         return false;
     };
 
@@ -194,7 +192,7 @@ fn live_doc_matches(state: &CollectionRuntime, doc: &Doc) -> bool {
 }
 
 fn update_already_applied(state: &CollectionRuntime, doc: &Doc) -> bool {
-    let Some(record) = state.find_live_record(&doc.id) else {
+    let Some(record) = state.record(&doc.id) else {
         return false;
     };
 

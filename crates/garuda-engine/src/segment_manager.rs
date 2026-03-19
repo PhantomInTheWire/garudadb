@@ -61,25 +61,7 @@ impl SegmentManager {
         records
     }
 
-    pub(crate) fn find_live_record(&self, id: &DocId) -> Option<&StoredRecord> {
-        for record in &self.writing_segment.records {
-            if record.doc.id == *id && matches!(record.state, RecordState::Live) {
-                return Some(record);
-            }
-        }
-
-        for segment in &self.persisted_segments {
-            for record in &segment.records {
-                if record.doc.id == *id && matches!(record.state, RecordState::Live) {
-                    return Some(record);
-                }
-            }
-        }
-
-        None
-    }
-
-    pub(crate) fn find_live_record_mut(&mut self, id: &DocId) -> Option<&mut StoredRecord> {
+    pub(crate) fn record_mut(&mut self, id: &DocId) -> Option<&mut StoredRecord> {
         for record in &mut self.writing_segment.records {
             if record.doc.id == *id && matches!(record.state, RecordState::Live) {
                 return Some(record);
@@ -91,6 +73,26 @@ impl SegmentManager {
                 if record.doc.id == *id && matches!(record.state, RecordState::Live) {
                     return Some(record);
                 }
+            }
+        }
+
+        None
+    }
+
+    pub(crate) fn record_by_internal_id(&self, doc_id: u64) -> Option<&StoredRecord> {
+        if let Some(record) =
+            record_in_segment_by_internal_id(&self.writing_segment, doc_id)
+        {
+            return Some(record);
+        }
+
+        for segment in &self.persisted_segments {
+            if !segment_contains_doc_id(segment, doc_id) {
+                continue;
+            }
+
+            if let Some(record) = record_in_segment_by_internal_id(segment, doc_id) {
+                return Some(record);
             }
         }
 
@@ -176,6 +178,24 @@ fn collect_live_records_from_segment(segment: &SegmentFile, out: &mut Vec<Stored
 
         out.push(record.clone());
     }
+}
+
+fn segment_contains_doc_id(segment: &SegmentFile, doc_id: u64) -> bool {
+    let Some(min_doc_id) = segment.meta.min_doc_id else {
+        return false;
+    };
+    let Some(max_doc_id) = segment.meta.max_doc_id else {
+        return false;
+    };
+
+    min_doc_id <= doc_id && doc_id <= max_doc_id
+}
+
+fn record_in_segment_by_internal_id(segment: &SegmentFile, doc_id: u64) -> Option<&StoredRecord> {
+    segment
+        .records
+        .iter()
+        .find(|record| record.doc_id == doc_id && matches!(record.state, RecordState::Live))
 }
 
 fn seal_segment(

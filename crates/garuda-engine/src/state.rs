@@ -29,7 +29,7 @@ impl CollectionRuntime {
             return WriteResult::err(doc.id, status.code, status.message);
         }
 
-        if self.find_live_record(&doc.id).is_some() && matches!(mode, WriteMode::Insert) {
+        if self.record(&doc.id).is_some() && matches!(mode, WriteMode::Insert) {
             return WriteResult::err(doc.id, StatusCode::AlreadyExists, "document already exists");
         }
 
@@ -45,7 +45,7 @@ impl CollectionRuntime {
 
     pub(crate) fn update_doc(&mut self, doc: Doc) -> WriteResult {
         let Some(existing_doc) = self
-            .find_live_record(&doc.id)
+            .record(&doc.id)
             .map(|record| record.doc.clone())
         else {
             return WriteResult::err(doc.id, StatusCode::NotFound, "document not found");
@@ -56,7 +56,7 @@ impl CollectionRuntime {
             return WriteResult::err(doc.id, status.code, status.message);
         }
 
-        let Some(record) = self.find_live_record_mut(&doc.id) else {
+        let Some(record) = self.record_mut(&doc.id) else {
             return WriteResult::err(doc.id, StatusCode::NotFound, "document not found");
         };
 
@@ -66,7 +66,7 @@ impl CollectionRuntime {
     }
 
     pub(crate) fn delete_doc(&mut self, id: DocId) -> WriteResult {
-        let Some(record) = self.find_live_record_mut(&id) else {
+        let Some(record) = self.record_mut(&id) else {
             return WriteResult::err(id, StatusCode::NotFound, "document not found");
         };
 
@@ -89,24 +89,21 @@ impl CollectionRuntime {
         self.segments.all_live_records().len()
     }
 
-    pub(crate) fn all_live_docs(&self) -> Vec<Doc> {
-        self.segments
-            .all_live_records()
-            .into_iter()
-            .map(|record| record.doc)
-            .collect()
-    }
-
     pub(crate) fn all_live_records(&self) -> Vec<StoredRecord> {
         self.segments.all_live_records()
     }
 
-    pub(crate) fn find_live_record(&self, id: &DocId) -> Option<&StoredRecord> {
-        self.segments.find_live_record(id)
+    pub(crate) fn record(&self, id: &DocId) -> Option<&StoredRecord> {
+        let internal_doc_id = self.meta.internal_doc_id(id)?;
+        if self.meta.is_deleted(internal_doc_id) {
+            return None;
+        }
+
+        self.segments.record_by_internal_id(internal_doc_id)
     }
 
-    pub(crate) fn find_live_record_mut(&mut self, id: &DocId) -> Option<&mut StoredRecord> {
-        self.segments.find_live_record_mut(id)
+    pub(crate) fn record_mut(&mut self, id: &DocId) -> Option<&mut StoredRecord> {
+        self.segments.record_mut(id)
     }
     fn append_new_record(&mut self, doc: Doc) {
         let doc_id = self.catalog.next_doc_id;
@@ -125,7 +122,7 @@ impl CollectionRuntime {
     }
 
     fn delete_existing_if_present(&mut self, id: &DocId) {
-        let Some(record) = self.find_live_record_mut(id) else {
+        let Some(record) = self.record_mut(id) else {
             return;
         };
 
