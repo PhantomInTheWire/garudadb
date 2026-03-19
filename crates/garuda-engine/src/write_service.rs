@@ -1,4 +1,6 @@
+use crate::query::parse_required_filter;
 use crate::state::{CollectionRuntime, WriteMode};
+use garuda_meta::evaluate_filter;
 use garuda_segment::{WalOp, append_wal_ops};
 use garuda_storage::WRITING_SEGMENT_ID;
 use garuda_types::{Doc, DocId, Status, StatusCode, WriteResult};
@@ -34,6 +36,28 @@ pub(crate) fn replay_wal_ops(
 ) -> Result<(), Status> {
     for wal_op in wal_ops {
         apply_replayed_wal_op(state, &wal_op)?;
+    }
+
+    Ok(())
+}
+
+pub(crate) fn apply_delete_by_filter(
+    state: &mut CollectionRuntime,
+    raw_filter: &str,
+) -> Result<(), Status> {
+    let filter = parse_required_filter(raw_filter, &state.catalog.schema)?;
+    let ids = collect_matching_doc_ids(state, &filter);
+    if ids.is_empty() {
+        return Ok(());
+    }
+
+    let results = apply_delete_batch(state, ids);
+    for result in results {
+        if result.status.is_ok() {
+            continue;
+        }
+
+        return Err(result.status);
     }
 
     Ok(())
@@ -79,6 +103,23 @@ fn apply_delete_batch(state: &mut CollectionRuntime, ids: Vec<DocId>) -> Vec<Wri
 
     finish_batch(state, snapshot, &mut results, wal_ops);
     results
+}
+
+fn collect_matching_doc_ids(
+    state: &CollectionRuntime,
+    filter: &garuda_types::FilterExpr,
+) -> Vec<DocId> {
+    let mut ids = Vec::new();
+
+    for record in state.all_live_records() {
+        if !evaluate_filter(filter, &record.doc.fields) {
+            continue;
+        }
+
+        ids.push(record.doc.id);
+    }
+
+    ids
 }
 
 fn finish_batch(

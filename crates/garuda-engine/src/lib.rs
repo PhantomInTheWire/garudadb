@@ -5,8 +5,8 @@ mod filter_parser;
 mod lock;
 mod query;
 mod recovery_service;
-mod schema_ddl;
 mod schema;
+mod schema_ddl;
 mod segment_ddl;
 mod segment_manager;
 mod state;
@@ -16,13 +16,12 @@ mod write_service;
 
 use checkpoint_service::checkpoint_state;
 use lock::CollectionLock;
-use query::{collect_matching_doc_ids, execute_query};
+use query::execute_query;
 use recovery_service::{create_collection_state, load_collection_state};
 use schema::{validate_create_options, validate_schema};
 use schema_ddl::{
-    drop_column as drop_column_from_schema, ensure_column_can_be_added,
-    ensure_vector_index_field, flat_index_params, rename_column as rename_column_in_schema,
-    set_vector_index_params,
+    drop_column as drop_column_from_schema, ensure_column_can_be_added, ensure_vector_index_field,
+    flat_index_params, rename_column as rename_column_in_schema, set_vector_index_params,
 };
 use segment_ddl::{
     backfill_new_column, drop_column as drop_column_from_state,
@@ -36,7 +35,7 @@ use storage::{
     collection_dir, ensure_database_root, ensure_existing_collection_dir, ensure_new_collection_dir,
 };
 use validation::validate_field_default;
-use write_service::{WriteCommand, apply_write_command};
+use write_service::{WriteCommand, apply_delete_by_filter, apply_write_command};
 
 use garuda_types::{
     CollectionName, CollectionOptions, CollectionSchema, CollectionStats, Doc, DocId, FieldName,
@@ -140,8 +139,8 @@ impl Collection {
             ensure_column_can_be_added(&state.catalog.schema, &field)?;
             validate_field_default(&field)?;
 
-            state.catalog.schema.fields.push(field.clone());
             backfill_new_column(&mut state.segments, &field);
+            state.catalog.schema.fields.push(field);
 
             Ok(())
         })
@@ -167,9 +166,10 @@ impl Collection {
 
     pub fn optimize(&self, _options: OptimizeOptions) -> Result<(), Status> {
         self.mutate_and_checkpoint(|state| {
-            state
-                .segments
-                .optimize(&mut state.catalog.next_segment_id, state.catalog.options.segment_max_docs);
+            state.segments.optimize(
+                &mut state.catalog.next_segment_id,
+                state.catalog.options.segment_max_docs,
+            );
             state.rebuild_indexes();
 
             Ok(())
@@ -193,22 +193,8 @@ impl Collection {
     }
 
     pub fn delete_by_filter(&self, raw_filter: &str) -> Result<(), Status> {
-        let state = self.read_state();
-        let ids = collect_matching_doc_ids(&state, raw_filter)?;
-        if ids.is_empty() {
-            return Ok(());
-        }
-        drop(state);
-
-        for result in self.delete(ids) {
-            if result.status.is_ok() {
-                continue;
-            }
-
-            return Err(result.status);
-        }
-
-        Ok(())
+        let mut state = self.write_state();
+        apply_delete_by_filter(&mut state, raw_filter)
     }
 
     pub fn fetch(&self, ids: Vec<DocId>) -> HashMap<DocId, Doc> {

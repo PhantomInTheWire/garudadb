@@ -37,7 +37,9 @@ fn optimize_should_be_idempotent_at_the_logical_api_level() {
     seed_collection(&collection);
     seed_more_collection_docs(&collection);
 
-    collection.optimize(OptimizeOptions).expect("first optimize");
+    collection
+        .optimize(OptimizeOptions)
+        .expect("first optimize");
     let after_first = collection
         .query(VectorQuery::by_vector(
             field_name("embedding"),
@@ -46,7 +48,9 @@ fn optimize_should_be_idempotent_at_the_logical_api_level() {
         ))
         .expect("query after first");
 
-    collection.optimize(OptimizeOptions).expect("second optimize");
+    collection
+        .optimize(OptimizeOptions)
+        .expect("second optimize");
     let after_second = collection
         .query(VectorQuery::by_vector(
             field_name("embedding"),

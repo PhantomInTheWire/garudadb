@@ -78,7 +78,10 @@ fn optimize_after_delete_then_reopen_keeps_live_set_intact() {
 
     let fetched = reopened.fetch(vec![doc_id("doc-1"), doc_id("doc-3"), doc_id("doc-4")]);
     assert_eq!(fetched.len(), 3);
-    assert_eq!(fetched["doc-1"].fields["category"], ScalarValue::String("alpha".to_string()));
+    assert_eq!(
+        fetched["doc-1"].fields["category"],
+        ScalarValue::String("alpha".to_string())
+    );
 }
 
 #[test]

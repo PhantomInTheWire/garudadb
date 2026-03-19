@@ -48,9 +48,10 @@ fn write_checkpoint_files(
     state: &CollectionRuntime,
     version_manager: &VersionManager,
 ) -> Result<(), Status> {
-    let manifest = state
-        .catalog
-        .to_manifest(state.segments.writing_segment(), state.segments.persisted_segments());
+    let manifest = state.catalog.to_manifest(
+        state.segments.writing_segment(),
+        state.segments.persisted_segments(),
+    );
     write_all_segments(state)?;
     write_id_map_snapshot(
         &state.path,
