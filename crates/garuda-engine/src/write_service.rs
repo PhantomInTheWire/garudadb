@@ -93,9 +93,9 @@ fn apply_delete_batch(state: &mut CollectionRuntime, ids: Vec<DocId>) -> Vec<Wri
     let mut wal_ops = Vec::with_capacity(ids.len());
 
     for id in ids {
-        let result = state.delete_doc(id.clone());
+        let result = state.delete_doc(id);
         if result.status.is_ok() {
-            wal_ops.push(WalOp::Delete(id));
+            wal_ops.push(WalOp::Delete(result.id.clone()));
         }
 
         results.push(result);
@@ -109,7 +109,7 @@ fn collect_matching_doc_ids(
     state: &CollectionRuntime,
     filter: &garuda_types::FilterExpr,
 ) -> Vec<DocId> {
-    let mut ids = Vec::new();
+    let mut ids = Vec::with_capacity(state.live_doc_count());
 
     for record in state.all_live_records() {
         if !evaluate_filter(filter, &record.doc.fields) {
