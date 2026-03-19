@@ -35,7 +35,7 @@ pub(crate) fn replay_wal_ops(
     wal_ops: Vec<WalOp>,
 ) -> Result<(), Status> {
     for wal_op in wal_ops {
-        apply_replayed_wal_op(state, &wal_op)?;
+        apply_replayed_wal_op(state, wal_op)?;
     }
 
     Ok(())
@@ -150,23 +150,24 @@ fn mark_persist_failure(results: &mut [WriteResult], status: &Status) {
     }
 }
 
-fn apply_replayed_wal_op(state: &mut CollectionRuntime, wal_op: &WalOp) -> Result<(), Status> {
-    if is_redundant_wal_op(state, wal_op) {
+fn apply_replayed_wal_op(state: &mut CollectionRuntime, wal_op: WalOp) -> Result<(), Status> {
+    if is_redundant_wal_op(state, &wal_op) {
         return Ok(());
     }
 
+    let update_not_found = matches!(wal_op, WalOp::Update(_));
     let result = match wal_op {
-        WalOp::Insert(doc) => state.insert_doc(doc.clone(), WriteMode::Insert),
-        WalOp::Upsert(doc) => state.insert_doc(doc.clone(), WriteMode::Upsert),
-        WalOp::Update(doc) => state.update_doc(doc.clone()),
-        WalOp::Delete(doc_id) => state.delete_doc(doc_id),
+        WalOp::Insert(doc) => state.insert_doc(doc, WriteMode::Insert),
+        WalOp::Upsert(doc) => state.insert_doc(doc, WriteMode::Upsert),
+        WalOp::Update(doc) => state.update_doc(doc),
+        WalOp::Delete(doc_id) => state.delete_doc(&doc_id),
     };
 
     if result.status.is_ok() {
         return Ok(());
     }
 
-    if matches!(wal_op, WalOp::Update(_)) && result.status.code == StatusCode::NotFound {
+    if update_not_found && result.status.code == StatusCode::NotFound {
         return Ok(());
     }
 

@@ -37,9 +37,10 @@ impl CollectionRuntime {
             self.delete_existing_if_present(&doc.id);
         }
 
-        self.append_new_record(doc.clone());
+        let inserted_doc_id = doc.id.clone();
+        self.append_new_record(doc);
         self.finish_mutation();
-        WriteResult::ok(doc.id)
+        WriteResult::ok(inserted_doc_id)
     }
 
     pub(crate) fn update_doc(&mut self, doc: Doc) -> WriteResult {
