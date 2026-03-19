@@ -1,10 +1,10 @@
+use std::borrow::Cow;
 use crate::filter::{parse_filter, validate_filter};
 use crate::state::CollectionRuntime;
 use garuda_math::score_doc;
 use garuda_meta::evaluate_filter;
 use garuda_planner::{QueryPlan, SegmentScanMode, build_query_plan};
 use garuda_types::{CollectionSchema, Doc, QueryVectorSource, Status, StatusCode, VectorQuery};
-use std::collections::BTreeMap;
 
 pub(crate) fn parse_query_filter(
     raw_filter: Option<&str>,
@@ -39,7 +39,7 @@ pub(crate) fn execute_query(
     }
 
     let query_vector = resolve_query_vector(&plan, state)?;
-    let docs = collect_matching_docs(state, &plan);
+    let docs = collect_matching_docs(state, &plan)?;
 
     Ok(score_and_sort_docs(state, docs, &query_vector, &plan))
 }
@@ -53,19 +53,18 @@ fn apply_query_projection(doc: &mut Doc, plan: &QueryPlan) {
         return;
     };
 
-    let mut filtered_fields = BTreeMap::new();
-    for field in output_fields {
-        let Some(value) = doc.fields.get(field) else {
-            continue;
-        };
-
-        filtered_fields.insert(field.clone(), value.clone());
-    }
-
-    doc.fields = filtered_fields;
+    let allowed_fields = output_fields
+        .iter()
+        .map(String::as_str)
+        .collect::<std::collections::BTreeSet<_>>();
+    doc.fields
+        .retain(|field_name, _| allowed_fields.contains(field_name.as_str()));
 }
 
-fn resolve_query_vector(plan: &QueryPlan, state: &CollectionRuntime) -> Result<Vec<f32>, Status> {
+fn resolve_query_vector<'a>(
+    plan: &'a QueryPlan,
+    state: &'a CollectionRuntime,
+) -> Result<Cow<'a, [f32]>, Status> {
     match &plan.source {
         QueryVectorSource::Vector(vector) => {
             if vector.len() != state.catalog.schema.vector.dimension {
@@ -75,7 +74,7 @@ fn resolve_query_vector(plan: &QueryPlan, state: &CollectionRuntime) -> Result<V
                 ));
             }
 
-            Ok(vector.as_slice().to_vec())
+            Ok(Cow::Borrowed(vector.as_slice()))
         }
         QueryVectorSource::DocumentId(id) => {
             let Some(record) = state.find_live_record(id) else {
@@ -85,7 +84,7 @@ fn resolve_query_vector(plan: &QueryPlan, state: &CollectionRuntime) -> Result<V
                 ));
             };
 
-            Ok(record.doc.vector.clone())
+            Ok(Cow::Borrowed(record.doc.vector.as_slice()))
         }
     }
 }
@@ -104,18 +103,20 @@ fn ensure_query_uses_known_vector_field(
     ))
 }
 
-fn collect_matching_docs(state: &CollectionRuntime, plan: &QueryPlan) -> Vec<Doc> {
+fn collect_matching_docs(state: &CollectionRuntime, plan: &QueryPlan) -> Result<Vec<Doc>, Status> {
     let mut docs = state.all_live_docs();
 
     if matches!(plan.scan_mode, SegmentScanMode::FilteredScan) {
-        let filter = plan
-            .filter
-            .as_ref()
-            .expect("filtered scans must carry a filter");
+        let Some(filter) = plan.filter.as_ref() else {
+            return Err(Status::err(
+                StatusCode::Internal,
+                "filtered scans must carry a filter",
+            ));
+        };
         docs.retain(|doc| evaluate_filter(filter, &doc.fields));
     }
 
-    docs
+    Ok(docs)
 }
 
 fn score_and_sort_docs(
