@@ -13,6 +13,7 @@ pub struct QueryPlan {
     pub filter: Option<FilterExpr>,
     pub scan_mode: SegmentScanMode,
     pub top_k: usize,
+    pub ef_search: Option<usize>,
     pub include_vector: bool,
     pub output_fields: Option<Vec<String>>,
 }
@@ -29,6 +30,7 @@ pub fn build_query_plan(query: VectorQuery, filter: Option<FilterExpr>) -> Query
         filter,
         scan_mode,
         top_k: query.top_k,
+        ef_search: query.ef_search,
         include_vector: query.include_vector,
         output_fields: query.output_fields,
     }
