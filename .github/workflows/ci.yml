@@ -14,9 +14,19 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  formatting:
-    name: Formatting
+  checks:
+    name: ${{ matrix.check.name }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check:
+          - name: Formatting
+            command: cargo fmt --all --check
+          - name: Clippy
+            command: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          - name: Test suite
+            command: cargo test --workspace --all-targets --all-features --locked
 
     steps:
       - name: Check out repository
@@ -26,49 +36,10 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.92.0
-          components: rustfmt
+          components: clippy, rustfmt
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
 
-      - name: Verify formatting
-        run: cargo fmt --all --check
-
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.92.0
-          components: clippy
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
-
-      - name: Run clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-
-  test:
-    name: Test suite
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.92.0
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
-
-      - name: Run tests
-        run: cargo test --workspace --all-targets --all-features
+      - name: Run ${{ matrix.check.name }}
+        run: ${{ matrix.check.command }}
