@@ -10,6 +10,8 @@ use garuda_types::{Status, StatusCode};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+const FIXED_CHECKPOINT_FILE_COUNT: usize = 5;
+
 pub(crate) fn checkpoint_state(state: &mut CollectionRuntime) -> Result<(), Status> {
     let version_manager = VersionManager::new(&state.path);
     let had_manifest = version_manager.exists();
@@ -84,7 +86,7 @@ fn write_all_segments(state: &CollectionRuntime) -> Result<(), Status> {
 }
 
 fn remove_stale_segment_dirs(state: &CollectionRuntime) -> Result<(), Status> {
-    let mut live_segment_ids = HashSet::new();
+    let mut live_segment_ids = HashSet::with_capacity(state.segments.persisted_segments().len() + 1);
     live_segment_ids.insert(WRITING_SEGMENT_ID);
 
     for segment in state.segments.persisted_segments() {
@@ -136,7 +138,11 @@ fn remove_stale_segment_dirs(state: &CollectionRuntime) -> Result<(), Status> {
 }
 
 fn capture_checkpoint_files(state: &CollectionRuntime) -> Result<CheckpointFiles, Status> {
-    let mut files = Vec::new();
+    // Each rollback snapshot always captures the writing segment, id-map snapshot,
+    // delete snapshot, writing WAL, and manifest, in addition to every persisted segment.
+    let mut files = Vec::with_capacity(
+        state.segments.persisted_segments().len() + FIXED_CHECKPOINT_FILE_COUNT,
+    );
 
     for segment in state.segments.persisted_segments() {
         files.push(capture_file(&segment_data_path(
