@@ -70,8 +70,8 @@ fn apply_doc_batch(
     write_one: impl Fn(&mut CollectionRuntime, Doc) -> WriteResult,
 ) -> Vec<WriteResult> {
     let snapshot = state.clone();
-    let mut results = Vec::new();
-    let mut wal_ops = Vec::new();
+    let mut results = Vec::with_capacity(docs.len());
+    let mut wal_ops = Vec::with_capacity(docs.len());
 
     for doc in docs {
         let wal_doc = doc.clone();
@@ -89,8 +89,8 @@ fn apply_doc_batch(
 
 fn apply_delete_batch(state: &mut CollectionRuntime, ids: Vec<DocId>) -> Vec<WriteResult> {
     let snapshot = state.clone();
-    let mut results = Vec::new();
-    let mut wal_ops = Vec::new();
+    let mut results = Vec::with_capacity(ids.len());
+    let mut wal_ops = Vec::with_capacity(ids.len());
 
     for id in ids {
         let result = state.delete_doc(&id);

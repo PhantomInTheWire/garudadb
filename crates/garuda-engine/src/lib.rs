@@ -251,11 +251,15 @@ impl Collection {
     }
 
     fn read_state(&self) -> std::sync::RwLockReadGuard<'_, CollectionRuntime> {
-        self.inner.read().expect("collection lock poisoned")
+        self.inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn write_state(&self) -> std::sync::RwLockWriteGuard<'_, CollectionRuntime> {
-        self.inner.write().expect("collection lock poisoned")
+        self.inner
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
