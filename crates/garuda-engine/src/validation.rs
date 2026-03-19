@@ -37,37 +37,7 @@ pub fn validate_field_default(field: &ScalarFieldSchema) -> Result<(), Status> {
     validate_scalar_value(field.field_type, field.nullable, default_value)
 }
 
-fn validate_required_vector(schema: &CollectionSchema, vector: &[f32]) -> Result<(), Status> {
-    if vector.len() != schema.vector.dimension {
-        return Err(Status::err(
-            StatusCode::InvalidArgument,
-            "vector dimension does not match schema",
-        ));
-    }
-
-    Ok(())
-}
-
-fn validate_doc_fields(schema: &CollectionSchema, doc: &Doc) -> Result<(), Status> {
-    for field in &schema.fields {
-        let Some(value) = doc.fields.get(field.name.as_str()) else {
-            if field.nullable {
-                continue;
-            }
-
-            return Err(Status::err(
-                StatusCode::InvalidArgument,
-                format!("missing required field: {}", field.name.as_str()),
-            ));
-        };
-
-        validate_scalar_value(field.field_type, field.nullable, value)?;
-    }
-
-    Ok(())
-}
-
-fn validate_scalar_value(
+pub(crate) fn validate_scalar_value(
     expected: ScalarType,
     nullable: bool,
     value: &ScalarValue,
@@ -99,4 +69,34 @@ fn validate_scalar_value(
         StatusCode::InvalidArgument,
         "scalar field type does not match schema",
     ))
+}
+
+fn validate_required_vector(schema: &CollectionSchema, vector: &[f32]) -> Result<(), Status> {
+    if vector.len() != schema.vector.dimension {
+        return Err(Status::err(
+            StatusCode::InvalidArgument,
+            "vector dimension does not match schema",
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_doc_fields(schema: &CollectionSchema, doc: &Doc) -> Result<(), Status> {
+    for field in &schema.fields {
+        let Some(value) = doc.fields.get(field.name.as_str()) else {
+            if field.nullable {
+                continue;
+            }
+
+            return Err(Status::err(
+                StatusCode::InvalidArgument,
+                format!("missing required field: {}", field.name.as_str()),
+            ));
+        };
+
+        validate_scalar_value(field.field_type, field.nullable, value)?;
+    }
+
+    Ok(())
 }

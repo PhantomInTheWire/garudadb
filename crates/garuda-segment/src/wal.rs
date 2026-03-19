@@ -1,4 +1,4 @@
-use crate::codec::{decode_doc_payload, encode_doc_payload};
+use crate::codec::{checksum, decode_doc_payload, encode_doc_payload};
 use garuda_storage::{read_file, segment_wal_path, write_file_atomically};
 use garuda_types::{Doc, DocId, Status, StatusCode};
 
@@ -184,15 +184,4 @@ fn validate_header(bytes: &[u8]) -> Result<(), Status> {
 fn read_string_payload(payload: &[u8]) -> Result<String, Status> {
     String::from_utf8(payload.to_vec())
         .map_err(|error| Status::err(StatusCode::Internal, format!("invalid utf-8: {error}")))
-}
-
-fn checksum(bytes: &[u8]) -> u32 {
-    let mut hash = 2_166_136_261u32;
-
-    for byte in bytes {
-        hash ^= u32::from(*byte);
-        hash = hash.wrapping_mul(16_777_619);
-    }
-
-    hash
 }

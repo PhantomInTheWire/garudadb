@@ -1,6 +1,6 @@
+use crate::validation::validate_scalar_value;
 use garuda_types::{
-    CollectionOptions, CollectionSchema, FieldName, ScalarFieldSchema, ScalarType, ScalarValue,
-    Status, StatusCode,
+    CollectionOptions, CollectionSchema, FieldName, ScalarFieldSchema, Status, StatusCode,
 };
 use std::collections::HashSet;
 
@@ -88,38 +88,4 @@ fn validate_declared_default(field: &ScalarFieldSchema) -> Result<(), Status> {
     };
 
     validate_scalar_value(field.field_type, field.nullable, default_value)
-}
-
-fn validate_scalar_value(
-    expected: ScalarType,
-    nullable: bool,
-    value: &ScalarValue,
-) -> Result<(), Status> {
-    if matches!(value, ScalarValue::Null) {
-        if nullable {
-            return Ok(());
-        }
-
-        return Err(Status::err(
-            StatusCode::InvalidArgument,
-            "non-nullable field cannot be null",
-        ));
-    }
-
-    let valid = matches!(
-        (expected, value),
-        (ScalarType::Bool, ScalarValue::Bool(_))
-            | (ScalarType::Int64, ScalarValue::Int64(_))
-            | (ScalarType::Float64, ScalarValue::Float64(_))
-            | (ScalarType::String, ScalarValue::String(_))
-    );
-
-    if valid {
-        return Ok(());
-    }
-
-    Err(Status::err(
-        StatusCode::InvalidArgument,
-        "scalar field type does not match schema",
-    ))
 }
