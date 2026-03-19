@@ -44,10 +44,7 @@ impl CollectionRuntime {
     }
 
     pub(crate) fn update_doc(&mut self, doc: Doc) -> WriteResult {
-        let Some(existing_doc) = self
-            .record(&doc.id)
-            .map(|record| record.doc.clone())
-        else {
+        let Some(existing_doc) = self.record(&doc.id).map(|record| record.doc.clone()) else {
             return WriteResult::err(doc.id, StatusCode::NotFound, "document not found");
         };
 

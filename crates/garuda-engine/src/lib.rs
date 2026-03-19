@@ -14,6 +14,9 @@ mod validation;
 mod write_service;
 
 use checkpoint_service::checkpoint_state;
+use garuda_storage::{
+    collection_dir, ensure_database_root, ensure_existing_collection_dir, ensure_new_collection_dir,
+};
 use lock::CollectionLock;
 use query::execute_query;
 use recovery_service::{create_collection_state, load_collection_state};
@@ -30,9 +33,6 @@ use state::CollectionRuntime;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
-use garuda_storage::{
-    collection_dir, ensure_database_root, ensure_existing_collection_dir, ensure_new_collection_dir,
-};
 use validation::validate_field_default;
 use write_service::{WriteCommand, apply_delete_by_filter, apply_write_command};
 

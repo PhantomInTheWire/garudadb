@@ -2,14 +2,12 @@ mod common;
 #[path = "support/schema_helpers.rs"]
 mod schema_helpers;
 
-use common::{
-    collection_name, database, default_options, default_schema,
-};
+use common::{collection_name, database, default_options, default_schema};
+use garuda_types::{CollectionName, StatusCode};
 use schema_helpers::{
     read_only_options, schema_missing_primary_field, schema_with_dimension,
     schema_with_duplicate_field, schema_with_vector_name,
 };
-use garuda_types::{CollectionName, StatusCode};
 
 #[test]
 fn rejects_invalid_schema_shapes_and_unknown_collections() {

@@ -80,9 +80,7 @@ impl SegmentManager {
     }
 
     pub(crate) fn record_by_internal_id(&self, doc_id: u64) -> Option<&StoredRecord> {
-        if let Some(record) =
-            record_in_segment_by_internal_id(&self.writing_segment, doc_id)
-        {
+        if let Some(record) = record_in_segment_by_internal_id(&self.writing_segment, doc_id) {
             return Some(record);
         }
 
