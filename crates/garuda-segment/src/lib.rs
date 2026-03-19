@@ -59,6 +59,20 @@ pub struct SegmentSearchHit {
     pub score: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SegmentFilter<'a> {
+    All,
+    Matching(&'a FilterExpr),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ExactSearchRequest<'a> {
+    pub metric: DistanceMetric,
+    pub query_vector: &'a DenseVector,
+    pub top_k: TopK,
+    pub filter: SegmentFilter<'a>,
+}
+
 pub fn segment_file_name(segment_id: SegmentId) -> String {
     segment_id.get().to_string()
 }
@@ -137,10 +151,7 @@ pub fn doc_exists(records: &[StoredRecord], id: &DocId) -> bool {
 
 pub fn exact_search(
     segment: &SegmentFile,
-    metric: DistanceMetric,
-    query_vector: &DenseVector,
-    top_k: TopK,
-    filter: Option<&FilterExpr>,
+    request: ExactSearchRequest<'_>,
 ) -> Result<Vec<SegmentSearchHit>, Status> {
     let mut entries = Vec::new();
     let mut records = std::collections::HashMap::new();
@@ -150,7 +161,7 @@ pub fn exact_search(
             continue;
         }
 
-        if let Some(filter) = filter {
+        if let SegmentFilter::Matching(filter) = request.filter {
             if !evaluate_filter(filter, &record.doc.fields) {
                 continue;
             }
@@ -169,7 +180,7 @@ pub fn exact_search(
 
     let dimension = VectorDimension::new(entries[0].vector.len())?;
     let index = FlatIndex::build(dimension, entries)?;
-    let hits = index.search(metric, query_vector, top_k)?;
+    let hits = index.search(request.metric, request.query_vector, request.top_k)?;
     let mut search_hits = Vec::with_capacity(hits.len());
 
     for hit in hits {

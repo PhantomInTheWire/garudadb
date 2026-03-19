@@ -1,8 +1,8 @@
 use crate::filter::validate_filter;
 use crate::filter_parser::parse_filter;
 use crate::state::CollectionRuntime;
-use garuda_planner::{QueryPlan, SegmentScanMode, build_query_plan};
-use garuda_segment::exact_search;
+use garuda_planner::{ExactFlatPlan, QueryPlan, SegmentFilterPlan, build_query_plan};
+use garuda_segment::{ExactSearchRequest, SegmentFilter, exact_search};
 use garuda_types::{
     CollectionSchema, DenseVector, Doc, QueryVectorSource, Status, StatusCode, TopK,
     VectorProjection, VectorQuery,
@@ -62,7 +62,7 @@ fn apply_query_projection(doc: &mut Doc, plan: &QueryPlan) {
 }
 
 fn resolve_query_vector(plan: &QueryPlan, state: &CollectionRuntime) -> Result<DenseVector, Status> {
-    match &plan.source {
+    match &plan.exact_flat().source {
         QueryVectorSource::Vector(vector) => {
             if vector.len() != state.catalog.schema.vector.dimension.get() {
                 return Err(Status::err(
@@ -91,8 +91,7 @@ fn collect_matching_docs(
     plan: &QueryPlan,
     query_vector: &DenseVector,
 ) -> Result<Vec<Doc>, Status> {
-    let filter = required_filter(plan)?;
-    let metric = state.catalog.schema.vector.metric;
+    let execution = plan.exact_flat();
     let mut docs = Vec::new();
 
     for segment in state.segments.persisted_segments() {
@@ -103,10 +102,7 @@ fn collect_matching_docs(
         collect_docs_from_segment(
             &mut docs,
             segment,
-            metric,
-            query_vector,
-            TopK::new(segment.meta.doc_count).expect("segment doc count must be positive"),
-            filter,
+            exact_search_request(state, execution, query_vector, segment)?,
         )?;
     }
 
@@ -117,11 +113,12 @@ fn collect_matching_docs(
     collect_docs_from_segment(
         &mut docs,
         state.segments.writing_segment(),
-        metric,
-        query_vector,
-        TopK::new(state.segments.writing_segment().meta.doc_count)
-            .expect("segment doc count must be positive"),
-        filter,
+        exact_search_request(
+            state,
+            execution,
+            query_vector,
+            state.segments.writing_segment(),
+        )?,
     )?;
 
     Ok(docs)
@@ -130,12 +127,9 @@ fn collect_matching_docs(
 fn collect_docs_from_segment(
     docs: &mut Vec<Doc>,
     segment: &garuda_segment::SegmentFile,
-    metric: garuda_types::DistanceMetric,
-    query_vector: &DenseVector,
-    top_k: TopK,
-    filter: Option<&garuda_types::FilterExpr>,
+    request: ExactSearchRequest<'_>,
 ) -> Result<(), Status> {
-    let hits = exact_search(segment, metric, query_vector, top_k, filter)?;
+    let hits = exact_search(segment, request)?;
 
     for hit in hits {
         let mut doc = hit.record.doc;
@@ -153,7 +147,7 @@ fn finalize_docs(mut docs: Vec<Doc>, plan: &QueryPlan) -> Vec<Doc> {
             .total_cmp(&lhs.score.unwrap_or_default())
             .then_with(|| lhs.id.cmp(&rhs.id))
     });
-    docs.truncate(plan.top_k.get());
+    docs.truncate(plan.exact_flat().top_k.get());
 
     for doc in &mut docs {
         apply_query_projection(doc, plan);
@@ -162,17 +156,32 @@ fn finalize_docs(mut docs: Vec<Doc>, plan: &QueryPlan) -> Vec<Doc> {
     docs
 }
 
-fn required_filter(plan: &QueryPlan) -> Result<Option<&garuda_types::FilterExpr>, Status> {
-    if matches!(plan.scan_mode, SegmentScanMode::FullScan) {
-        return Ok(None);
+fn exact_search_request<'a>(
+    state: &'a CollectionRuntime,
+    execution: &'a ExactFlatPlan,
+    query_vector: &'a DenseVector,
+    segment: &'a garuda_segment::SegmentFile,
+) -> Result<ExactSearchRequest<'a>, Status> {
+    Ok(ExactSearchRequest {
+        metric: state.catalog.schema.vector.metric,
+        query_vector,
+        top_k: segment_top_k(segment)?,
+        filter: segment_filter(&execution.filter),
+    })
+}
+
+fn segment_filter(filter: &SegmentFilterPlan) -> SegmentFilter<'_> {
+    match filter {
+        SegmentFilterPlan::All => SegmentFilter::All,
+        SegmentFilterPlan::Matching(filter) => SegmentFilter::Matching(filter),
     }
+}
 
-    let Some(filter) = plan.filter.as_ref() else {
-        return Err(Status::err(
+fn segment_top_k(segment: &garuda_segment::SegmentFile) -> Result<TopK, Status> {
+    TopK::new(segment.meta.doc_count).map_err(|_| {
+        Status::err(
             StatusCode::Internal,
-            "filtered scans must carry a filter",
-        ));
-    };
-
-    Ok(Some(filter))
+            "queryable segment must have at least one live document",
+        )
+    })
 }
