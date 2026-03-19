@@ -93,9 +93,9 @@ fn apply_delete_batch(state: &mut CollectionRuntime, ids: Vec<DocId>) -> Vec<Wri
     let mut wal_ops = Vec::with_capacity(ids.len());
 
     for id in ids {
-        let result = state.delete_doc(&id);
+        let result = state.delete_doc(id.clone());
         if result.status.is_ok() {
-            wal_ops.push(WalOp::Delete(id.clone()));
+            wal_ops.push(WalOp::Delete(id));
         }
 
         results.push(result);
@@ -160,7 +160,7 @@ fn apply_replayed_wal_op(state: &mut CollectionRuntime, wal_op: WalOp) -> Result
         WalOp::Insert(doc) => state.insert_doc(doc, WriteMode::Insert),
         WalOp::Upsert(doc) => state.insert_doc(doc, WriteMode::Upsert),
         WalOp::Update(doc) => state.update_doc(doc),
-        WalOp::Delete(doc_id) => state.delete_doc(&doc_id),
+        WalOp::Delete(doc_id) => state.delete_doc(doc_id),
     };
 
     if result.status.is_ok() {

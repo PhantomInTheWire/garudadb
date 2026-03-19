@@ -65,14 +65,14 @@ impl CollectionRuntime {
         WriteResult::ok(doc.id)
     }
 
-    pub(crate) fn delete_doc(&mut self, id: &DocId) -> WriteResult {
-        let Some(record) = self.find_live_record_mut(id) else {
-            return WriteResult::err(id.clone(), StatusCode::NotFound, "document not found");
+    pub(crate) fn delete_doc(&mut self, id: DocId) -> WriteResult {
+        let Some(record) = self.find_live_record_mut(&id) else {
+            return WriteResult::err(id, StatusCode::NotFound, "document not found");
         };
 
         record.state = RecordState::Deleted;
         self.finish_mutation();
-        WriteResult::ok(id.clone())
+        WriteResult::ok(id)
     }
 
     pub(crate) fn rebuild_indexes(&mut self) {
