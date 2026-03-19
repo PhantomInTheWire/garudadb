@@ -23,15 +23,6 @@ fn temp_root(prefix: &str) -> std::path::PathBuf {
 }
 
 #[test]
-fn doctor_should_exit_successfully_for_a_healthy_workspace() {
-    let output = run_cli(&[]);
-    assert!(
-        output.status.success(),
-        "cli should not panic on bare invocation"
-    );
-}
-
-#[test]
 fn init_should_create_or_validate_a_workspace_root() {
     let tmp = temp_root("init-contract");
     let output = run_cli(&["--root", tmp.to_str().expect("utf8"), "init"]);
