@@ -145,13 +145,11 @@ impl SegmentManager {
         let new_id = *next_segment_id;
         *next_segment_id += 1;
 
-        let mut persisted = self.writing_segment.clone();
+        let mut persisted = std::mem::replace(&mut self.writing_segment, Self::empty_writing_segment());
         persisted.meta.id = new_id;
         persisted.meta.path = segment_file_name(new_id);
         sync_segment_meta(&mut persisted);
         self.persisted_segments.push(persisted);
-
-        self.writing_segment = Self::empty_writing_segment();
     }
 }
 
