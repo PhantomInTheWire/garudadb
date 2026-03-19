@@ -75,4 +75,8 @@ impl FlatIndex {
 
         Ok(hits)
     }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
 }

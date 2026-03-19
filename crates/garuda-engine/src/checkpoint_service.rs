@@ -3,14 +3,12 @@ use garuda_segment::{reset_wal, write_segment};
 use garuda_storage::{
     SnapshotKind, VersionManager, WRITING_SEGMENT_ID, delete_snapshot_path, id_map_snapshot_path,
     manifest_path, read_file, remove_old_snapshots, remove_path_if_exists, segment_data_path,
-    segment_dir, segment_wal_path, write_delete_snapshot, write_file_atomically,
-    write_id_map_snapshot,
+    segment_dir, segment_flat_index_path, segment_wal_path, write_delete_snapshot,
+    write_file_atomically, write_id_map_snapshot,
 };
-use garuda_types::{Status, StatusCode};
+use garuda_types::{SegmentId, Status, StatusCode};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-
-const FIXED_CHECKPOINT_FILE_COUNT: usize = 5;
 
 pub(crate) fn checkpoint_state(state: &mut CollectionRuntime) -> Result<(), Status> {
     let version_manager = VersionManager::new(&state.path);
@@ -79,10 +77,14 @@ fn write_checkpoint_files(
 
 fn write_all_segments(state: &CollectionRuntime) -> Result<(), Status> {
     for segment in state.segments.persisted_segments() {
-        write_segment(&state.path, segment)?;
+        write_segment(&state.path, segment, &state.catalog.schema.vector)?;
     }
 
-    write_segment(&state.path, state.segments.writing_segment())
+    write_segment(
+        &state.path,
+        state.segments.writing_segment(),
+        &state.catalog.schema.vector,
+    )
 }
 
 fn remove_stale_segment_dirs(state: &CollectionRuntime) -> Result<(), Status> {
@@ -127,7 +129,7 @@ fn remove_stale_segment_dirs(state: &CollectionRuntime) -> Result<(), Status> {
         let Ok(segment_id) = file_name.parse::<u64>() else {
             continue;
         };
-        let segment_id = garuda_types::SegmentId::new_unchecked(segment_id);
+        let segment_id = SegmentId::new_unchecked(segment_id);
 
         if live_segment_ids.contains(&segment_id) {
             continue;
@@ -140,19 +142,24 @@ fn remove_stale_segment_dirs(state: &CollectionRuntime) -> Result<(), Status> {
 }
 
 fn capture_checkpoint_files(state: &CollectionRuntime) -> Result<CheckpointFiles, Status> {
-    // Each rollback snapshot always captures the writing segment, id-map snapshot,
-    // delete snapshot, writing WAL, and manifest, in addition to every persisted segment.
-    let mut files =
-        Vec::with_capacity(state.segments.persisted_segments().len() + FIXED_CHECKPOINT_FILE_COUNT);
+    let mut files = Vec::new();
 
     for segment in state.segments.persisted_segments() {
         files.push(capture_file(&segment_data_path(
             &state.path,
             segment.meta.id,
         ))?);
+        files.push(capture_file(&segment_flat_index_path(
+            &state.path,
+            segment.meta.id,
+        ))?);
     }
 
     files.push(capture_file(&segment_data_path(
+        &state.path,
+        WRITING_SEGMENT_ID,
+    ))?);
+    files.push(capture_file(&segment_flat_index_path(
         &state.path,
         WRITING_SEGMENT_ID,
     ))?);

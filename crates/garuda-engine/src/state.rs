@@ -2,8 +2,10 @@ use crate::catalog::CollectionCatalog;
 use crate::segment_manager::SegmentManager;
 use crate::validation::{apply_schema_defaults, validate_doc};
 use garuda_meta::MetadataStore;
-use garuda_segment::{RecordState, SegmentFile, StoredRecord, sync_segment_meta};
-use garuda_types::{Doc, DocId, StatusCode, WriteResult};
+use garuda_segment::{
+    RecordState, SegmentFile, StoredRecord, sync_segment_meta, sync_vector_search,
+};
+use garuda_types::{Doc, DocId, StatusCode, VectorFieldSchema, WriteResult};
 use std::path::PathBuf;
 
 #[derive(Clone, Copy)]
@@ -74,12 +76,17 @@ impl CollectionRuntime {
 
     pub(crate) fn rebuild_indexes(&mut self) {
         self.meta.clear();
+        let vector_field = self.catalog.schema.vector.clone();
 
         for segment in self.segments.persisted_segments_mut() {
-            index_segment(segment, &mut self.meta);
+            index_segment(segment, &mut self.meta, &vector_field);
         }
 
-        index_segment(self.segments.writing_segment_mut(), &mut self.meta);
+        index_segment(
+            self.segments.writing_segment_mut(),
+            &mut self.meta,
+            &vector_field,
+        );
     }
 
     pub(crate) fn live_doc_count(&self) -> usize {
@@ -127,8 +134,13 @@ impl CollectionRuntime {
     }
 }
 
-fn index_segment(segment: &mut SegmentFile, meta: &mut MetadataStore) {
+fn index_segment(
+    segment: &mut SegmentFile,
+    meta: &mut MetadataStore,
+    vector_field: &VectorFieldSchema,
+) {
     sync_segment_meta(segment);
+    sync_vector_search(segment, vector_field);
 
     for record in &segment.records {
         if matches!(record.state, RecordState::Deleted) {

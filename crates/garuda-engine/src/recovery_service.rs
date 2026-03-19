@@ -9,7 +9,7 @@ use garuda_storage::{
 };
 use garuda_types::{
     CollectionOptions, CollectionSchema, InternalDocId, Manifest, ManifestVersionId, SegmentId,
-    SegmentMeta, SnapshotId, Status,
+    SegmentMeta, SnapshotId, Status, VectorFieldSchema,
 };
 use std::path::{Path, PathBuf};
 
@@ -46,8 +46,9 @@ pub(crate) fn create_collection_state(
 
 pub(crate) fn load_collection_state(path: PathBuf) -> Result<CollectionRuntime, Status> {
     let manifest = VersionManager::new(&path).read_latest_manifest()?;
-    let writing_segment = load_segment(&path, &manifest.writing_segment)?;
-    let persisted_segments = load_persisted_segments(&path, &manifest)?;
+    let vector_field = manifest.schema.vector.clone();
+    let writing_segment = load_segment(&path, &manifest.writing_segment, &vector_field)?;
+    let persisted_segments = load_persisted_segments(&path, &manifest, &vector_field)?;
     let id_map = IdMap::from(read_id_map_snapshot(&path, manifest.id_map_snapshot_id)?);
     let delete_store = DeleteStore::from(read_delete_snapshot(&path, manifest.delete_snapshot_id)?);
 
@@ -64,18 +65,26 @@ pub(crate) fn load_collection_state(path: PathBuf) -> Result<CollectionRuntime, 
     Ok(state)
 }
 
-fn load_persisted_segments(path: &Path, manifest: &Manifest) -> Result<Vec<SegmentFile>, Status> {
+fn load_persisted_segments(
+    path: &Path,
+    manifest: &Manifest,
+    vector_field: &VectorFieldSchema,
+) -> Result<Vec<SegmentFile>, Status> {
     let mut segments = Vec::new();
 
     for meta in &manifest.persisted_segments {
-        segments.push(load_segment(path, meta)?);
+        segments.push(load_segment(path, meta, vector_field)?);
     }
 
     Ok(segments)
 }
 
-fn load_segment(path: &Path, meta: &SegmentMeta) -> Result<SegmentFile, Status> {
-    let mut segment = read_segment(path, meta)?;
+fn load_segment(
+    path: &Path,
+    meta: &SegmentMeta,
+    vector_field: &VectorFieldSchema,
+) -> Result<SegmentFile, Status> {
+    let mut segment = read_segment(path, meta, vector_field)?;
     sync_segment_meta(&mut segment);
     Ok(segment)
 }

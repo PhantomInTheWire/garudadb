@@ -35,7 +35,7 @@ fn rejects_invalid_schema_shapes_and_unknown_collections() {
             schema_with_deserialized_zero_dimension("deserialized-zero"),
             default_options()
         )
-            .is_err()
+        .is_err()
     );
 }
 

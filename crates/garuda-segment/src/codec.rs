@@ -1,8 +1,11 @@
 use crate::{RecordState, SegmentFile, StoredRecord};
+use garuda_index_flat::{FlatIndex, FlatIndexEntry};
 use garuda_types::{
-    DenseVector, Doc, DocId, InternalDocId, ScalarValue, SegmentId, SegmentMeta, Status, StatusCode,
+    DenseVector, DistanceMetric, Doc, DocId, IndexParams, InternalDocId, ScalarValue, SegmentId,
+    SegmentMeta, Status, StatusCode, VectorDimension, VectorFieldSchema,
 };
 const SEGMENT_MAGIC: &[u8; 8] = b"GRDSEG01";
+const FLAT_INDEX_MAGIC: &[u8; 8] = b"GRDFLT01";
 const FORMAT_VERSION: u16 = 1;
 const FNV_OFFSET_BASIS: u32 = 2_166_136_261;
 const FNV_PRIME: u32 = 16_777_619;
@@ -38,7 +41,7 @@ pub fn decode_segment(bytes: &[u8]) -> Result<SegmentFile, Status> {
 
     reader.finish()?;
 
-    Ok(SegmentFile { meta, records })
+    Ok(SegmentFile::new_persisted_with_records(meta, records))
 }
 
 pub fn encode_doc_payload(doc: &Doc) -> Result<Vec<u8>, Status> {
@@ -46,6 +49,77 @@ pub fn encode_doc_payload(doc: &Doc) -> Result<Vec<u8>, Status> {
     writer.write_u16(FORMAT_VERSION);
     write_doc(&mut writer, doc)?;
     Ok(writer.finish())
+}
+
+pub fn encode_flat_index(
+    entries: Vec<FlatIndexEntry>,
+    vector_field: &VectorFieldSchema,
+) -> Result<Vec<u8>, Status> {
+    let mut writer = BinaryWriter::new(FLAT_INDEX_MAGIC);
+    writer.write_u16(FORMAT_VERSION);
+    writer.write_u64(vector_field.dimension.get() as u64);
+    writer.write_u8(vector_field.metric.to_tag());
+    writer.write_len(entries.len())?;
+
+    for entry in entries {
+        writer.write_u64(entry.doc_id.get());
+        writer.write_len(entry.vector.len())?;
+
+        for value in entry.vector.as_slice() {
+            writer.write_f32(*value);
+        }
+    }
+
+    Ok(writer.finish())
+}
+
+pub fn decode_flat_index(
+    bytes: &[u8],
+    vector_field: &VectorFieldSchema,
+) -> Result<FlatIndex, Status> {
+    let mut reader = BinaryReader::new(bytes, FLAT_INDEX_MAGIC)?;
+    reader.expect_u16(FORMAT_VERSION)?;
+
+    let dimension = VectorDimension::new(reader.read_u64()? as usize)?;
+    if dimension != vector_field.dimension {
+        return Err(Status::err(
+            StatusCode::Internal,
+            "persisted flat index dimension does not match schema",
+        ));
+    }
+
+    let metric = DistanceMetric::from_tag(reader.read_u8()?)?;
+    if metric != vector_field.metric {
+        return Err(Status::err(
+            StatusCode::Internal,
+            "persisted flat index metric does not match schema",
+        ));
+    }
+
+    if !matches!(vector_field.index, IndexParams::Flat(_)) {
+        return Err(Status::err(
+            StatusCode::Internal,
+            "persisted flat index requested for a non-flat vector field",
+        ));
+    }
+
+    let entry_count = reader.read_len()?;
+    let mut entries = Vec::with_capacity(entry_count);
+
+    for _ in 0..entry_count {
+        let doc_id = InternalDocId::new(reader.read_u64()?)?;
+        let vector_len = reader.read_len()?;
+        let mut vector = Vec::with_capacity(vector_len);
+
+        for _ in 0..vector_len {
+            vector.push(reader.read_f32()?);
+        }
+
+        entries.push(FlatIndexEntry::new(doc_id, DenseVector::parse(vector)?));
+    }
+
+    reader.finish()?;
+    FlatIndex::build(dimension, entries)
 }
 
 pub fn decode_doc_payload(bytes: &[u8]) -> Result<Doc, Status> {
