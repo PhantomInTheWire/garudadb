@@ -33,9 +33,18 @@ pub fn ensure_new_collection_dir(path: &Path) -> Result<(), Status> {
         )
     })?;
 
-    create_empty_file(&path.join(LOCK_FILE_NAME), "failed to create lock file")?;
-    sync_directory(path)?;
-    sync_parent_directory(path)?;
+    if let Err(status) = create_empty_file(&path.join(LOCK_FILE_NAME), "failed to create lock file")
+    {
+        return Err(cleanup_new_collection_dir(path, status));
+    }
+
+    if let Err(status) = sync_directory(path) {
+        return Err(cleanup_new_collection_dir(path, status));
+    }
+
+    if let Err(status) = sync_parent_directory(path) {
+        return Err(cleanup_new_collection_dir(path, status));
+    }
 
     Ok(())
 }
@@ -152,4 +161,23 @@ fn sync_parent_directory(path: &Path) -> Result<(), Status> {
     };
 
     sync_directory(parent)
+}
+
+fn cleanup_new_collection_dir(path: &Path, status: Status) -> Status {
+    if let Err(error) = std::fs::remove_dir_all(path) {
+        return Status::err(
+            StatusCode::Internal,
+            format!(
+                "{}; cleanup failed for {}: {error}",
+                status.message,
+                path.display()
+            ),
+        );
+    }
+
+    if let Err(sync_status) = sync_parent_directory(path) {
+        return sync_status;
+    }
+
+    status
 }

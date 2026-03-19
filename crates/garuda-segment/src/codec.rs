@@ -1,9 +1,10 @@
-use garuda_types::{Doc, DocId, ScalarValue, SegmentMeta, Status, StatusCode};
-
 use crate::{RecordState, SegmentFile, StoredRecord};
+use garuda_types::{Doc, DocId, ScalarValue, SegmentMeta, Status, StatusCode};
 
 const SEGMENT_MAGIC: &[u8; 8] = b"GRDSEG01";
 const FORMAT_VERSION: u16 = 1;
+const FNV_OFFSET_BASIS: u32 = 2_166_136_261;
+const FNV_PRIME: u32 = 16_777_619;
 
 pub fn encode_segment(segment: &SegmentFile) -> Result<Vec<u8>, Status> {
     let mut writer = BinaryWriter::new(SEGMENT_MAGIC);
@@ -401,12 +402,12 @@ impl<'a> BinaryReader<'a> {
     }
 }
 
-fn checksum(bytes: &[u8]) -> u32 {
-    let mut hash = 2_166_136_261u32;
+pub(crate) fn checksum(bytes: &[u8]) -> u32 {
+    let mut hash = FNV_OFFSET_BASIS;
 
     for byte in bytes {
         hash ^= u32::from(*byte);
-        hash = hash.wrapping_mul(16_777_619);
+        hash = hash.wrapping_mul(FNV_PRIME);
     }
 
     hash

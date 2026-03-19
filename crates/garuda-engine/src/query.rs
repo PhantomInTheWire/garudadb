@@ -11,9 +11,16 @@ pub(crate) fn parse_query_filter(
         return Ok(None);
     };
 
+    Ok(Some(parse_required_filter(raw_filter, schema)?))
+}
+
+pub(crate) fn parse_required_filter(
+    raw_filter: &str,
+    schema: &CollectionSchema,
+) -> Result<garuda_types::FilterExpr, Status> {
     let expr = parse_filter(raw_filter)?;
     validate_filter(&expr, schema)?;
-    Ok(Some(expr))
+    Ok(expr)
 }
 
 pub(crate) fn apply_query_projection(doc: &mut Doc, query: &VectorQuery) {

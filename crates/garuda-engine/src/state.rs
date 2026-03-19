@@ -41,10 +41,6 @@ impl CollectionState {
             return Ok(());
         }
 
-        if matches!(op, WalOp::Update(_)) && result.status.code == StatusCode::NotFound {
-            return Ok(());
-        }
-
         Err(Status::err(result.status.code, result.status.message))
     }
 

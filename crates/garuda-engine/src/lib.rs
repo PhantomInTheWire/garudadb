@@ -22,7 +22,9 @@ use garuda_meta::evaluate_filter;
 use lock::CollectionLock;
 use optimize::optimize_segments;
 use persistence::checkpoint_state;
-use query::{apply_query_projection, parse_query_filter, resolve_query_vector};
+use query::{
+    apply_query_projection, parse_query_filter, parse_required_filter, resolve_query_vector,
+};
 use schema::{validate_create_options, validate_schema};
 use state::{CollectionState, WriteMode};
 use std::collections::HashMap;
@@ -199,10 +201,7 @@ impl Collection {
 
     pub fn delete_by_filter(&self, raw_filter: &str) -> Result<(), Status> {
         let mut state = self.write_state();
-        let filter = parse_query_filter(Some(raw_filter), &state.manifest.schema)?;
-        let Some(filter) = filter else {
-            return Ok(());
-        };
+        let filter = parse_required_filter(raw_filter, &state.manifest.schema)?;
 
         let ids = collect_matching_doc_ids(&state, &filter);
         if ids.is_empty() {

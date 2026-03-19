@@ -37,6 +37,7 @@ fn main() -> Result<(), String> {
 
     match command {
         Commands::Init => {
+            Database::open(&root).map_err(|status| status.message)?;
             println!("{}", root.display());
             Ok(())
         }
