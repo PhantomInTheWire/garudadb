@@ -109,7 +109,8 @@ fn main() -> Result<(), String> {
                 ],
                 vector: VectorFieldSchema {
                     name: field_name(VECTOR_FIELD),
-                    dimension: VectorDimension::new(dimension.get()).expect("cli dimension is non-zero"),
+                    dimension: VectorDimension::new(dimension.get())
+                        .expect("cli dimension is non-zero"),
                     metric: DistanceMetric::Cosine,
                     index: IndexParams::Flat(FlatIndexParams),
                 },

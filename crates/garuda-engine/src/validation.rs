@@ -73,7 +73,10 @@ pub(crate) fn validate_scalar_value(
     ))
 }
 
-fn validate_required_vector(schema: &CollectionSchema, vector: &garuda_types::DenseVector) -> Result<(), Status> {
+fn validate_required_vector(
+    schema: &CollectionSchema,
+    vector: &garuda_types::DenseVector,
+) -> Result<(), Status> {
     if vector.len() != schema.vector.dimension.get() {
         return Err(Status::err(
             StatusCode::InvalidArgument,

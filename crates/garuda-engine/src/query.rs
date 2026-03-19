@@ -61,7 +61,10 @@ fn apply_query_projection(doc: &mut Doc, plan: &QueryPlan) {
         .retain(|field_name, _| output_fields.iter().any(|field| field == field_name));
 }
 
-fn resolve_query_vector(plan: &QueryPlan, state: &CollectionRuntime) -> Result<DenseVector, Status> {
+fn resolve_query_vector(
+    plan: &QueryPlan,
+    state: &CollectionRuntime,
+) -> Result<DenseVector, Status> {
     match &plan.exact_flat().source {
         QueryVectorSource::Vector(vector) => {
             if vector.len() != state.catalog.schema.vector.dimension.get() {

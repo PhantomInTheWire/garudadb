@@ -19,10 +19,7 @@ impl SegmentManager {
     }
 
     pub(crate) fn empty_writing_segment() -> SegmentFile {
-        SegmentFile {
-            meta: segment_meta(WRITING_SEGMENT_ID),
-            records: Vec::new(),
-        }
+        SegmentFile::new_writing(segment_meta(WRITING_SEGMENT_ID))
     }
 
     pub(crate) fn persisted_segments(&self) -> &[SegmentFile] {
