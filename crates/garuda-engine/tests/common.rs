@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use garuda_engine::{Collection, Database};
 use garuda_types::{
     AccessMode, CollectionName, CollectionOptions, CollectionSchema, DenseVector, DistanceMetric,

@@ -267,6 +267,10 @@ fn failed_persist_does_not_publish_new_manifest_on_reopen() {
 }
 
 #[test]
+#[expect(
+    clippy::permissions_set_readonly_false,
+    reason = "test setup must restore writability on Unix temp directories"
+)]
 fn failed_checkpoint_restores_rewritten_segment_files() {
     let (_root, db) = database("exception-checkpoint-segment-rollback");
     let collection = db
