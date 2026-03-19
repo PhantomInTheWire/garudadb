@@ -24,7 +24,7 @@ fn deleted_documents_should_disappear_from_fetch_and_query() {
         .query(VectorQuery::by_vector(
             field_name("embedding"),
             dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
-            10,
+            common::top_k(10),
         ))
         .expect("query after delete");
     assert!(!results.iter().any(|doc| doc.id == doc_id("doc-2")));

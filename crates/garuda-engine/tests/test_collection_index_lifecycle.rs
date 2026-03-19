@@ -26,7 +26,7 @@ fn creating_index_before_and_after_data_should_preserve_logical_results() {
         .query(VectorQuery::by_vector(
             field_name("embedding"),
             dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
-            5,
+            common::top_k(5),
         ))
         .expect("indexed query");
 
@@ -37,7 +37,7 @@ fn creating_index_before_and_after_data_should_preserve_logical_results() {
         .query(VectorQuery::by_vector(
             field_name("embedding"),
             dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
-            5,
+            common::top_k(5),
         ))
         .expect("flat query");
 

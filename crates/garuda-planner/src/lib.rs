@@ -1,4 +1,4 @@
-use garuda_types::{FieldName, FilterExpr, QueryVectorSource, VectorQuery};
+use garuda_types::{FieldName, FilterExpr, QueryVectorSource, TopK, VectorProjection, VectorQuery};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SegmentScanMode {
@@ -12,9 +12,9 @@ pub struct QueryPlan {
     pub source: QueryVectorSource,
     pub filter: Option<FilterExpr>,
     pub scan_mode: SegmentScanMode,
-    pub top_k: usize,
+    pub top_k: TopK,
     pub ef_search: Option<usize>,
-    pub include_vector: bool,
+    pub vector_projection: VectorProjection,
     pub output_fields: Option<Vec<String>>,
 }
 
@@ -31,7 +31,7 @@ pub fn build_query_plan(query: VectorQuery, filter: Option<FilterExpr>) -> Query
         scan_mode,
         top_k: query.top_k,
         ef_search: query.ef_search,
-        include_vector: query.include_vector,
+        vector_projection: query.vector_projection,
         output_fields: query.output_fields,
     }
 }

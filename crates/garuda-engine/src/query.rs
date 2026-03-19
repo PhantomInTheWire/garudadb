@@ -3,7 +3,10 @@ use crate::filter_parser::parse_filter;
 use crate::state::CollectionRuntime;
 use garuda_planner::{QueryPlan, SegmentScanMode, build_query_plan};
 use garuda_segment::exact_search;
-use garuda_types::{CollectionSchema, Doc, QueryVectorSource, Status, StatusCode, VectorQuery};
+use garuda_types::{
+    CollectionSchema, DenseVector, Doc, QueryVectorSource, Status, StatusCode, TopK,
+    VectorProjection, VectorQuery,
+};
 
 pub(crate) fn parse_query_filter(
     raw_filter: Option<&str>,
@@ -39,10 +42,6 @@ pub(crate) fn execute_query(
         ));
     }
 
-    if plan.top_k == 0 {
-        return Ok(Vec::new());
-    }
-
     let query_vector = resolve_query_vector(&plan, state)?;
     let docs = collect_matching_docs(state, &plan, &query_vector)?;
 
@@ -50,8 +49,8 @@ pub(crate) fn execute_query(
 }
 
 fn apply_query_projection(doc: &mut Doc, plan: &QueryPlan) {
-    if !plan.include_vector {
-        doc.vector.clear();
+    if matches!(plan.vector_projection, VectorProjection::Exclude) {
+        doc.vector = DenseVector::default();
     }
 
     let Some(output_fields) = &plan.output_fields else {
@@ -62,17 +61,17 @@ fn apply_query_projection(doc: &mut Doc, plan: &QueryPlan) {
         .retain(|field_name, _| output_fields.iter().any(|field| field == field_name));
 }
 
-fn resolve_query_vector(plan: &QueryPlan, state: &CollectionRuntime) -> Result<Vec<f32>, Status> {
+fn resolve_query_vector(plan: &QueryPlan, state: &CollectionRuntime) -> Result<DenseVector, Status> {
     match &plan.source {
         QueryVectorSource::Vector(vector) => {
-            if vector.len() != state.catalog.schema.vector.dimension {
+            if vector.len() != state.catalog.schema.vector.dimension.get() {
                 return Err(Status::err(
                     StatusCode::InvalidArgument,
                     "query vector dimension does not match schema",
                 ));
             }
 
-            Ok(vector.as_slice().to_vec())
+            Ok(vector.clone())
         }
         QueryVectorSource::DocumentId(id) => {
             let Some(record) = state.record(id) else {
@@ -90,21 +89,29 @@ fn resolve_query_vector(plan: &QueryPlan, state: &CollectionRuntime) -> Result<V
 fn collect_matching_docs(
     state: &CollectionRuntime,
     plan: &QueryPlan,
-    query_vector: &[f32],
+    query_vector: &DenseVector,
 ) -> Result<Vec<Doc>, Status> {
     let filter = required_filter(plan)?;
     let metric = state.catalog.schema.vector.metric;
     let mut docs = Vec::new();
 
     for segment in state.segments.persisted_segments() {
+        if segment.meta.doc_count == 0 {
+            continue;
+        }
+
         collect_docs_from_segment(
             &mut docs,
             segment,
             metric,
             query_vector,
-            segment.meta.doc_count,
+            TopK::new(segment.meta.doc_count).expect("segment doc count must be positive"),
             filter,
         )?;
+    }
+
+    if state.segments.writing_segment().meta.doc_count == 0 {
+        return Ok(docs);
     }
 
     collect_docs_from_segment(
@@ -112,7 +119,8 @@ fn collect_matching_docs(
         state.segments.writing_segment(),
         metric,
         query_vector,
-        state.segments.writing_segment().meta.doc_count,
+        TopK::new(state.segments.writing_segment().meta.doc_count)
+            .expect("segment doc count must be positive"),
         filter,
     )?;
 
@@ -123,8 +131,8 @@ fn collect_docs_from_segment(
     docs: &mut Vec<Doc>,
     segment: &garuda_segment::SegmentFile,
     metric: garuda_types::DistanceMetric,
-    query_vector: &[f32],
-    top_k: usize,
+    query_vector: &DenseVector,
+    top_k: TopK,
     filter: Option<&garuda_types::FilterExpr>,
 ) -> Result<(), Status> {
     let hits = exact_search(segment, metric, query_vector, top_k, filter)?;
@@ -145,7 +153,7 @@ fn finalize_docs(mut docs: Vec<Doc>, plan: &QueryPlan) -> Vec<Doc> {
             .total_cmp(&lhs.score.unwrap_or_default())
             .then_with(|| lhs.id.cmp(&rhs.id))
     });
-    docs.truncate(plan.top_k);
+    docs.truncate(plan.top_k.get());
 
     for doc in &mut docs {
         apply_query_projection(doc, plan);

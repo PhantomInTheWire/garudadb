@@ -61,7 +61,7 @@ fn write_checkpoint_files(
         state
             .meta
             .id_map_entries()
-            .map(|(doc_id, internal_doc_id)| (doc_id.as_str().to_string(), *internal_doc_id)),
+            .map(|(doc_id, internal_doc_id)| (doc_id.clone(), *internal_doc_id)),
     )?;
     write_delete_snapshot(
         &state.path,
@@ -127,6 +127,7 @@ fn remove_stale_segment_dirs(state: &CollectionRuntime) -> Result<(), Status> {
         let Ok(segment_id) = file_name.parse::<u64>() else {
             continue;
         };
+        let segment_id = garuda_types::SegmentId::new_unchecked(segment_id);
 
         if live_segment_ids.contains(&segment_id) {
             continue;

@@ -8,7 +8,10 @@ use garuda_storage::{
     create_dir_all, read_file, remove_path_if_exists, segment_data_path, segment_dir,
     segment_wal_path, write_file_atomically,
 };
-use garuda_types::{DistanceMetric, Doc, DocId, FilterExpr, SegmentMeta, Status};
+use garuda_types::{
+    DenseVector, DistanceMetric, Doc, DocId, FilterExpr, InternalDocId, SegmentId, SegmentMeta,
+    Status, TopK, VectorDimension,
+};
 pub use wal::{WalOp, append_wal_ops, read_wal_ops, reset_wal};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,9 +20,29 @@ pub enum RecordState {
     Deleted,
 }
 
+impl RecordState {
+    pub fn to_tag(self) -> u8 {
+        match self {
+            Self::Live => 0,
+            Self::Deleted => 1,
+        }
+    }
+
+    pub fn from_tag(tag: u8) -> Result<Self, Status> {
+        match tag {
+            0 => Ok(Self::Live),
+            1 => Ok(Self::Deleted),
+            _ => Err(Status::err(
+                garuda_types::StatusCode::Internal,
+                "unrecognized record state tag",
+            )),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct StoredRecord {
-    pub doc_id: u64,
+    pub doc_id: InternalDocId,
     pub state: RecordState,
     pub doc: Doc,
 }
@@ -36,11 +59,11 @@ pub struct SegmentSearchHit {
     pub score: f32,
 }
 
-pub fn segment_file_name(segment_id: u64) -> String {
-    segment_id.to_string()
+pub fn segment_file_name(segment_id: SegmentId) -> String {
+    segment_id.get().to_string()
 }
 
-pub fn segment_meta(id: u64) -> SegmentMeta {
+pub fn segment_meta(id: SegmentId) -> SegmentMeta {
     SegmentMeta {
         id,
         path: segment_file_name(id),
@@ -71,7 +94,7 @@ pub fn sync_segment_meta(segment: &mut SegmentFile) {
     segment.meta.doc_count = live_doc_count;
 }
 
-pub fn ensure_segment_files(root: &std::path::Path, segment_id: u64) -> Result<(), Status> {
+pub fn ensure_segment_files(root: &std::path::Path, segment_id: SegmentId) -> Result<(), Status> {
     let segment_dir = segment_dir(root, segment_id);
     create_dir_all(&segment_dir, "failed to create segment directory")?;
 
@@ -102,7 +125,7 @@ pub fn read_segment(root: &std::path::Path, meta: &SegmentMeta) -> Result<Segmen
     Ok(segment)
 }
 
-pub fn remove_segment(root: &std::path::Path, segment_id: u64) -> Result<(), Status> {
+pub fn remove_segment(root: &std::path::Path, segment_id: SegmentId) -> Result<(), Status> {
     remove_path_if_exists(&segment_dir(root, segment_id))
 }
 
@@ -115,8 +138,8 @@ pub fn doc_exists(records: &[StoredRecord], id: &DocId) -> bool {
 pub fn exact_search(
     segment: &SegmentFile,
     metric: DistanceMetric,
-    query_vector: &[f32],
-    top_k: usize,
+    query_vector: &DenseVector,
+    top_k: TopK,
     filter: Option<&FilterExpr>,
 ) -> Result<Vec<SegmentSearchHit>, Status> {
     let mut entries = Vec::new();
@@ -144,7 +167,7 @@ pub fn exact_search(
         return Ok(Vec::new());
     }
 
-    let dimension = entries[0].vector.len();
+    let dimension = VectorDimension::new(entries[0].vector.len())?;
     let index = FlatIndex::build(dimension, entries)?;
     let hits = index.search(metric, query_vector, top_k)?;
     let mut search_hits = Vec::with_capacity(hits.len());

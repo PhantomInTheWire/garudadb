@@ -32,7 +32,7 @@ fn writes_deletes_and_schema_changes_should_persist_across_reopen() {
         .query(VectorQuery::by_vector(
             common::field_name("embedding"),
             common::dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
-            10,
+            common::top_k(10),
         ))
         .expect("query");
     assert!(!results.iter().any(|doc| doc.id == doc_id("doc-3")));

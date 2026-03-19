@@ -4,7 +4,7 @@ use common::{
     build_doc, collection_name, database, default_options, default_schema, dense_vector, doc_id,
     field_name, seed_collection,
 };
-use garuda_types::{Doc, HnswIndexParams, IndexParams, ScalarType, ScalarValue};
+use garuda_types::{Doc, HnswIndexParams, IndexParams, ScalarType, ScalarValue, TopK};
 use std::fs;
 
 #[test]
@@ -38,7 +38,7 @@ fn rejects_duplicate_ids_wrong_dimensions_invalid_filters_and_wrong_index_target
     let wrong_dimension = collection.insert(vec![Doc {
         id: doc_id("doc-bad"),
         fields: build_doc("doc-bad", 1, "alpha", 0.1, [1.0, 0.0, 0.0, 0.0]).fields,
-        vector: vec![1.0, 2.0],
+        vector: dense_vector(vec![1.0, 2.0]),
         score: None,
     }]);
     assert_eq!(
@@ -49,9 +49,9 @@ fn rejects_duplicate_ids_wrong_dimensions_invalid_filters_and_wrong_index_target
     let query = collection.query(garuda_types::VectorQuery {
         field_name: field_name("embedding"),
         source: garuda_types::QueryVectorSource::Vector(dense_vector(vec![1.0, 0.0, 0.0, 0.0])),
-        top_k: 10,
+        top_k: TopK::new(10).expect("valid top_k"),
         filter: Some("category = ".to_string()),
-        include_vector: false,
+        vector_projection: garuda_types::VectorProjection::Exclude,
         output_fields: None,
         ef_search: None,
     });
@@ -80,7 +80,7 @@ fn rejects_inserts_without_vectors() {
     let missing_vector = collection.insert(vec![Doc {
         id: doc_id("doc-no-vector"),
         fields: build_doc("doc-no-vector", 1, "alpha", 0.9, [1.0, 0.0, 0.0, 0.0]).fields,
-        vector: Vec::new(),
+        vector: garuda_types::DenseVector::default(),
         score: None,
     }]);
 
@@ -123,7 +123,7 @@ fn rejects_invalid_default_values_during_collection_creation() {
         .push(garuda_types::ScalarFieldSchema {
             name: field_name("is_public"),
             field_type: ScalarType::Bool,
-            nullable: false,
+            nullability: garuda_types::Nullability::Required,
             default_value: Some(ScalarValue::String(String::from("yes"))),
         });
 
@@ -143,7 +143,7 @@ fn rejects_non_string_or_nullable_primary_keys_and_mismatched_primary_key_values
     );
 
     let mut nullable_pk_schema = default_schema("docs-nullable-pk");
-    nullable_pk_schema.fields[0].nullable = true;
+    nullable_pk_schema.fields[0].nullability = garuda_types::Nullability::Nullable;
     assert!(
         db.create_collection(nullable_pk_schema, default_options())
             .is_err()
@@ -177,7 +177,7 @@ fn rejects_non_string_or_nullable_primary_keys_and_mismatched_primary_key_values
     let mut wrong_update = Doc {
         id: doc_id("doc-1"),
         fields: std::collections::BTreeMap::new(),
-        vector: Vec::new(),
+        vector: garuda_types::DenseVector::default(),
         score: None,
     };
     wrong_update.fields.insert(
@@ -214,7 +214,7 @@ fn add_column_rolls_back_state_when_persist_fails() {
     let result = collection.add_column(garuda_types::ScalarFieldSchema {
         name: field_name("is_public"),
         field_type: ScalarType::Bool,
-        nullable: false,
+        nullability: garuda_types::Nullability::Required,
         default_value: Some(ScalarValue::Bool(true)),
     });
 
@@ -247,7 +247,7 @@ fn failed_persist_does_not_publish_new_manifest_on_reopen() {
     let result = collection.add_column(garuda_types::ScalarFieldSchema {
         name: field_name("is_public"),
         field_type: ScalarType::Bool,
-        nullable: false,
+        nullability: garuda_types::Nullability::Required,
         default_value: Some(ScalarValue::Bool(true)),
     });
 
@@ -298,7 +298,7 @@ fn failed_checkpoint_restores_rewritten_segment_files() {
     let result = collection.add_column(garuda_types::ScalarFieldSchema {
         name: field_name("is_public"),
         field_type: ScalarType::Bool,
-        nullable: false,
+        nullability: garuda_types::Nullability::Required,
         default_value: Some(ScalarValue::Bool(true)),
     });
 

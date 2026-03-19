@@ -57,5 +57,9 @@ fn reopen_uses_manifest_metadata_for_persisted_segments() {
 }
 
 fn collection_dir(root: &std::path::Path, name: &str) -> std::path::PathBuf {
-    root.join(CollectionName::parse(name).expect("valid collection name").as_str())
+    root.join(
+        CollectionName::parse(name)
+            .expect("valid collection name")
+            .as_str(),
+    )
 }

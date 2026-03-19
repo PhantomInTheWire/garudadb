@@ -2,8 +2,8 @@ use clap::{Parser, Subcommand};
 use garuda_engine::Database;
 use garuda_types::{
     CollectionName, CollectionOptions, CollectionSchema, DistanceMetric, FieldName,
-    FlatIndexParams, HnswIndexParams, IndexKind, IndexParams, ScalarFieldSchema, ScalarType,
-    ScalarValue, VectorFieldSchema, VectorQuery,
+    FlatIndexParams, HnswIndexParams, IndexKind, IndexParams, Nullability, ScalarFieldSchema,
+    ScalarType, ScalarValue, TopK, VectorDimension, VectorFieldSchema, VectorQuery,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -85,31 +85,31 @@ fn main() -> Result<(), String> {
                     ScalarFieldSchema {
                         name: field_name(PRIMARY_KEY_FIELD),
                         field_type: ScalarType::String,
-                        nullable: false,
+                        nullability: Nullability::Required,
                         default_value: None,
                     },
                     ScalarFieldSchema {
                         name: field_name("rank"),
                         field_type: ScalarType::Int64,
-                        nullable: false,
+                        nullability: Nullability::Required,
                         default_value: None,
                     },
                     ScalarFieldSchema {
                         name: field_name("category"),
                         field_type: ScalarType::String,
-                        nullable: false,
+                        nullability: Nullability::Required,
                         default_value: None,
                     },
                     ScalarFieldSchema {
                         name: field_name("score"),
                         field_type: ScalarType::Float64,
-                        nullable: false,
+                        nullability: Nullability::Required,
                         default_value: None,
                     },
                 ],
                 vector: VectorFieldSchema {
                     name: field_name(VECTOR_FIELD),
-                    dimension: dimension.get(),
+                    dimension: VectorDimension::new(dimension.get()).expect("cli dimension is non-zero"),
                     metric: DistanceMetric::Cosine,
                     index: IndexParams::Flat(FlatIndexParams),
                 },
@@ -142,8 +142,11 @@ fn main() -> Result<(), String> {
             top_k,
         } => {
             let collection = db.open_collection(&name).map_err(|status| status.message)?;
-            let query =
-                VectorQuery::by_vector(field_name(VECTOR_FIELD), parse_vector_arg(&vector)?, top_k);
+            let query = VectorQuery::by_vector(
+                field_name(VECTOR_FIELD),
+                parse_vector_arg(&vector)?,
+                TopK::new(top_k).map_err(|status| status.message)?,
+            );
             let docs = collection.query(query).map_err(|status| status.message)?;
             let output = serde_json::to_string_pretty(&docs).map_err(|error| error.to_string())?;
             println!("{output}");

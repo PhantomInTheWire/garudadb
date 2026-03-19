@@ -39,7 +39,11 @@ fn options_with_segment_max_docs(segment_max_docs: usize) -> CollectionOptions {
 }
 
 fn manifest_version_paths(root: &std::path::Path, name: &str) -> Vec<std::path::PathBuf> {
-    let collection_dir = root.join(CollectionName::parse(name).expect("valid collection name").as_str());
+    let collection_dir = root.join(
+        CollectionName::parse(name)
+            .expect("valid collection name")
+            .as_str(),
+    );
     garuda_storage::manifest_paths(&collection_dir)
         .expect("read manifest paths")
         .into_iter()

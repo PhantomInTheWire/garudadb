@@ -1,14 +1,16 @@
 use garuda_math::score_doc;
-use garuda_types::{DistanceMetric, InternalDocId, Status, StatusCode};
+use garuda_types::{
+    DenseVector, DistanceMetric, InternalDocId, Status, StatusCode, TopK, VectorDimension,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct FlatIndexEntry {
     pub doc_id: InternalDocId,
-    pub vector: Vec<f32>,
+    pub vector: DenseVector,
 }
 
 impl FlatIndexEntry {
-    pub fn new(doc_id: InternalDocId, vector: Vec<f32>) -> Self {
+    pub fn new(doc_id: InternalDocId, vector: DenseVector) -> Self {
         Self { doc_id, vector }
     }
 }
@@ -21,14 +23,14 @@ pub struct FlatSearchHit {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct FlatIndex {
-    dimension: usize,
+    dimension: VectorDimension,
     entries: Vec<FlatIndexEntry>,
 }
 
 impl FlatIndex {
-    pub fn build(dimension: usize, entries: Vec<FlatIndexEntry>) -> Result<Self, Status> {
+    pub fn build(dimension: VectorDimension, entries: Vec<FlatIndexEntry>) -> Result<Self, Status> {
         for entry in &entries {
-            if entry.vector.len() == dimension {
+            if entry.vector.len() == dimension.get() {
                 continue;
             }
 
@@ -44,18 +46,14 @@ impl FlatIndex {
     pub fn search(
         &self,
         metric: DistanceMetric,
-        query_vector: &[f32],
-        top_k: usize,
+        query_vector: &DenseVector,
+        top_k: TopK,
     ) -> Result<Vec<FlatSearchHit>, Status> {
-        if query_vector.len() != self.dimension {
+        if query_vector.len() != self.dimension.get() {
             return Err(Status::err(
                 StatusCode::InvalidArgument,
                 "query vector dimension does not match flat index dimension",
             ));
-        }
-
-        if top_k == 0 {
-            return Ok(Vec::new());
         }
 
         let mut hits = Vec::with_capacity(self.entries.len());
@@ -63,7 +61,7 @@ impl FlatIndex {
         for entry in &self.entries {
             hits.push(FlatSearchHit {
                 doc_id: entry.doc_id,
-                score: score_doc(metric, query_vector, &entry.vector),
+                score: score_doc(metric, query_vector.as_slice(), entry.vector.as_slice()),
             });
         }
 
@@ -73,7 +71,7 @@ impl FlatIndex {
                 .total_cmp(&left.score)
                 .then_with(|| left.doc_id.cmp(&right.doc_id))
         });
-        hits.truncate(top_k);
+        hits.truncate(top_k.get());
 
         Ok(hits)
     }

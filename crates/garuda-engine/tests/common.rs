@@ -1,8 +1,8 @@
 use garuda_engine::{Collection, Database};
 use garuda_types::{
-    CollectionName, CollectionOptions, CollectionSchema, DenseVector, DistanceMetric, Doc, DocId,
-    FieldName, FlatIndexParams, IndexParams, ScalarFieldSchema, ScalarType, ScalarValue,
-    VectorFieldSchema,
+    AccessMode, CollectionName, CollectionOptions, CollectionSchema, DenseVector, DistanceMetric,
+    Doc, DocId, FieldName, FlatIndexParams, IndexParams, Nullability, ScalarFieldSchema,
+    ScalarType, ScalarValue, StorageAccess, TopK, VectorDimension, VectorFieldSchema,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -30,31 +30,31 @@ pub fn default_schema(name: &str) -> CollectionSchema {
             ScalarFieldSchema {
                 name: field_name("pk"),
                 field_type: ScalarType::String,
-                nullable: false,
+                nullability: Nullability::Required,
                 default_value: None,
             },
             ScalarFieldSchema {
                 name: field_name("rank"),
                 field_type: ScalarType::Int64,
-                nullable: false,
+                nullability: Nullability::Required,
                 default_value: None,
             },
             ScalarFieldSchema {
                 name: field_name("category"),
                 field_type: ScalarType::String,
-                nullable: false,
+                nullability: Nullability::Required,
                 default_value: None,
             },
             ScalarFieldSchema {
                 name: field_name("score"),
                 field_type: ScalarType::Float64,
-                nullable: false,
+                nullability: Nullability::Required,
                 default_value: None,
             },
         ],
         vector: VectorFieldSchema {
             name: field_name("embedding"),
-            dimension: 4,
+            dimension: VectorDimension::new(4).expect("valid dimension"),
             metric: DistanceMetric::Cosine,
             index: IndexParams::Flat(FlatIndexParams),
         },
@@ -63,8 +63,8 @@ pub fn default_schema(name: &str) -> CollectionSchema {
 
 pub fn default_options() -> CollectionOptions {
     CollectionOptions {
-        read_only: false,
-        enable_mmap: true,
+        access_mode: AccessMode::ReadWrite,
+        storage_access: StorageAccess::MmapPreferred,
         segment_max_docs: 2,
     }
 }
@@ -105,6 +105,10 @@ pub fn field_name(value: &str) -> FieldName {
 
 pub fn dense_vector(values: Vec<f32>) -> DenseVector {
     DenseVector::parse(values).expect("valid non-empty vector")
+}
+
+pub fn top_k(value: usize) -> TopK {
+    TopK::new(value).expect("valid top_k")
 }
 
 pub fn seed_collection(collection: &Collection) {

@@ -45,7 +45,11 @@ fn collection_uses_binary_engine_files_instead_of_json_artifacts() {
 }
 
 fn collection_dir(root: &std::path::Path, name: &str) -> std::path::PathBuf {
-    root.join(CollectionName::parse(name).expect("valid collection name").as_str())
+    root.join(
+        CollectionName::parse(name)
+            .expect("valid collection name")
+            .as_str(),
+    )
 }
 
 fn storage_snapshot_paths(

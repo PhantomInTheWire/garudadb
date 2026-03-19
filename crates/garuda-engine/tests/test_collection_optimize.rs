@@ -17,7 +17,7 @@ fn optimize_preserves_query_results() {
         .query(VectorQuery::by_vector(
             field_name("embedding"),
             dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
-            4,
+            common::top_k(4),
         ))
         .expect("query before");
     collection.optimize(OptimizeOptions).expect("optimize");
@@ -25,7 +25,7 @@ fn optimize_preserves_query_results() {
         .query(VectorQuery::by_vector(
             field_name("embedding"),
             dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
-            4,
+            common::top_k(4),
         ))
         .expect("query after");
 

@@ -104,7 +104,7 @@ impl CollectionRuntime {
     }
     fn append_new_record(&mut self, doc: Doc) {
         let doc_id = self.catalog.next_doc_id;
-        self.catalog.next_doc_id += 1;
+        self.catalog.next_doc_id = self.catalog.next_doc_id.next();
 
         self.segments.append_new_record(
             doc_id,

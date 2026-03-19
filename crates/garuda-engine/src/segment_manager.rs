@@ -2,7 +2,7 @@ use garuda_segment::{
     RecordState, SegmentFile, StoredRecord, segment_file_name, segment_meta, sync_segment_meta,
 };
 use garuda_storage::WRITING_SEGMENT_ID;
-use garuda_types::{Doc, DocId};
+use garuda_types::{Doc, DocId, InternalDocId, SegmentId};
 
 #[derive(Clone)]
 pub(crate) struct SegmentManager {
@@ -79,7 +79,7 @@ impl SegmentManager {
         None
     }
 
-    pub(crate) fn record_by_internal_id(&self, doc_id: u64) -> Option<&StoredRecord> {
+    pub(crate) fn record_by_internal_id(&self, doc_id: InternalDocId) -> Option<&StoredRecord> {
         if let Some(record) = record_in_segment_by_internal_id(&self.writing_segment, doc_id) {
             return Some(record);
         }
@@ -99,9 +99,9 @@ impl SegmentManager {
 
     pub(crate) fn append_new_record(
         &mut self,
-        doc_id: u64,
+        doc_id: InternalDocId,
         doc: Doc,
-        next_segment_id: &mut u64,
+        next_segment_id: &mut SegmentId,
         segment_max_docs: usize,
     ) {
         self.writing_segment.records.push(StoredRecord {
@@ -114,7 +114,7 @@ impl SegmentManager {
         self.rotate_writing_segment_if_needed(next_segment_id, segment_max_docs);
     }
 
-    pub(crate) fn optimize(&mut self, next_segment_id: &mut u64, segment_max_docs: usize) {
+    pub(crate) fn optimize(&mut self, next_segment_id: &mut SegmentId, segment_max_docs: usize) {
         let all_live_records = self.all_live_records();
         let rebuilt_capacity =
             (all_live_records.len() + segment_max_docs.saturating_sub(1)) / segment_max_docs.max(1);
@@ -143,7 +143,7 @@ impl SegmentManager {
 
     fn rotate_writing_segment_if_needed(
         &mut self,
-        next_segment_id: &mut u64,
+        next_segment_id: &mut SegmentId,
         segment_max_docs: usize,
     ) {
         if self.writing_segment.meta.doc_count < segment_max_docs {
@@ -151,7 +151,7 @@ impl SegmentManager {
         }
 
         let new_id = *next_segment_id;
-        *next_segment_id += 1;
+        *next_segment_id = next_segment_id.next();
 
         let mut persisted =
             std::mem::replace(&mut self.writing_segment, Self::empty_writing_segment());
@@ -178,7 +178,7 @@ fn collect_live_records_from_segment(segment: &SegmentFile, out: &mut Vec<Stored
     }
 }
 
-fn segment_contains_doc_id(segment: &SegmentFile, doc_id: u64) -> bool {
+fn segment_contains_doc_id(segment: &SegmentFile, doc_id: InternalDocId) -> bool {
     let Some(min_doc_id) = segment.meta.min_doc_id else {
         return false;
     };
@@ -189,7 +189,10 @@ fn segment_contains_doc_id(segment: &SegmentFile, doc_id: u64) -> bool {
     min_doc_id <= doc_id && doc_id <= max_doc_id
 }
 
-fn record_in_segment_by_internal_id(segment: &SegmentFile, doc_id: u64) -> Option<&StoredRecord> {
+fn record_in_segment_by_internal_id(
+    segment: &SegmentFile,
+    doc_id: InternalDocId,
+) -> Option<&StoredRecord> {
     segment
         .records
         .iter()
@@ -199,11 +202,11 @@ fn record_in_segment_by_internal_id(segment: &SegmentFile, doc_id: u64) -> Optio
 fn seal_segment(
     rebuilt_segments: &mut Vec<SegmentFile>,
     mut segment: SegmentFile,
-    next_segment_id: &mut u64,
+    next_segment_id: &mut SegmentId,
 ) {
     sync_segment_meta(&mut segment);
     segment.meta.id = *next_segment_id;
     segment.meta.path = segment_file_name(*next_segment_id);
-    *next_segment_id += 1;
+    *next_segment_id = next_segment_id.next();
     rebuilt_segments.push(segment);
 }

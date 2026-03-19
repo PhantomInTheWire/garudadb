@@ -33,7 +33,7 @@ fn concurrent_insert_and_query_do_not_panic() {
                 let _ = collection.query(VectorQuery::by_vector(
                     field_name("embedding"),
                     dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
-                    5,
+                    common::top_k(5),
                 ));
             }
         })

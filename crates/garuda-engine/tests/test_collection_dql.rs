@@ -17,7 +17,7 @@ fn vector_query_returns_ranked_hits() {
         .query(VectorQuery::by_vector(
             field_name("embedding"),
             dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
-            2,
+            common::top_k(2),
         ))
         .expect("query");
     assert_eq!(results.len(), 2);
@@ -37,7 +37,7 @@ fn filtered_query_supports_equality_range_and_boolean_operators() {
     let mut query = VectorQuery::by_vector(
         field_name("embedding"),
         dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
-        10,
+        common::top_k(10),
     );
     query.filter = Some("category = 'alpha' AND rank >= 2".to_string());
     query.output_fields = Some(vec!["rank".to_string(), "category".to_string()]);

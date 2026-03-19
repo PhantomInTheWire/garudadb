@@ -16,7 +16,7 @@ fn query_by_document_id_should_behave_like_query_by_its_stored_vector() {
     let by_id = collection.query(VectorQuery::by_id(
         field_name("embedding"),
         doc_id("doc-1"),
-        3,
+        common::top_k(3),
     ));
     assert!(by_id.is_ok());
 }
@@ -33,7 +33,7 @@ fn query_by_document_id_should_match_query_by_vector_results() {
         .query(VectorQuery::by_vector(
             field_name("embedding"),
             dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
-            4,
+            common::top_k(4),
         ))
         .expect("query by vector");
 
@@ -41,7 +41,7 @@ fn query_by_document_id_should_match_query_by_vector_results() {
         .query(VectorQuery::by_id(
             field_name("embedding"),
             doc_id("doc-1"),
-            4,
+            common::top_k(4),
         ))
         .expect("query by id");
 
@@ -65,9 +65,9 @@ fn include_vector_and_output_fields_should_control_result_shape() {
     let mut query = VectorQuery::by_vector(
         field_name("embedding"),
         dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
-        3,
+        common::top_k(3),
     );
-    query.include_vector = true;
+    query.vector_projection = garuda_types::VectorProjection::Include;
     query.output_fields = Some(vec!["category".to_string()]);
     let results = collection.query(query).expect("query");
     assert!(!results.is_empty());
@@ -88,14 +88,14 @@ fn same_query_should_be_stable_across_repeated_calls() {
         .query(VectorQuery::by_vector(
             field_name("embedding"),
             dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
-            4,
+            common::top_k(4),
         ))
         .expect("first query");
     let second = collection
         .query(VectorQuery::by_vector(
             field_name("embedding"),
             dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
-            4,
+            common::top_k(4),
         ))
         .expect("second query");
 

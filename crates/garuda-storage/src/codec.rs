@@ -1,7 +1,8 @@
 use garuda_types::{
-    CollectionName, CollectionOptions, CollectionSchema, DistanceMetric, FieldName,
-    FlatIndexParams, HnswIndexParams, IndexParams, Manifest, ManifestVersionId, ScalarFieldSchema,
-    ScalarType, ScalarValue, SegmentMeta, SnapshotId, Status, StatusCode,
+    AccessMode, CollectionName, CollectionOptions, CollectionSchema, DistanceMetric, DocId,
+    FieldName, FlatIndexParams, HnswIndexParams, IndexParams, InternalDocId, Manifest,
+    ManifestVersionId, Nullability, ScalarFieldSchema, ScalarType, ScalarValue, SegmentId,
+    SegmentMeta, SnapshotId, Status, StatusCode, StorageAccess, VectorDimension,
 };
 
 const MANIFEST_MAGIC: &[u8; 8] = b"GRDMAN01";
@@ -14,8 +15,8 @@ pub fn encode_manifest(manifest: &Manifest) -> Result<Vec<u8>, Status> {
     writer.write_u16(FORMAT_VERSION);
     write_collection_schema(&mut writer, &manifest.schema)?;
     write_collection_options(&mut writer, &manifest.options);
-    writer.write_u64(manifest.next_doc_id);
-    writer.write_u64(manifest.next_segment_id);
+    writer.write_u64(manifest.next_doc_id.get());
+    writer.write_u64(manifest.next_segment_id.get());
     writer.write_u64(manifest.id_map_snapshot_id.get());
     writer.write_u64(manifest.delete_snapshot_id.get());
     writer.write_u64(manifest.manifest_version_id.get());
@@ -35,8 +36,8 @@ pub fn decode_manifest(bytes: &[u8]) -> Result<Manifest, Status> {
 
     let schema = read_collection_schema(&mut reader)?;
     let options = read_collection_options(&mut reader)?;
-    let next_doc_id = reader.read_u64()?;
-    let next_segment_id = reader.read_u64()?;
+    let next_doc_id = InternalDocId::new(reader.read_u64()?)?;
+    let next_segment_id = SegmentId::new_unchecked(reader.read_u64()?);
     let id_map_snapshot_id = SnapshotId::new(reader.read_u64()?);
     let delete_snapshot_id = SnapshotId::new(reader.read_u64()?);
     let manifest_version_id = ManifestVersionId::new(reader.read_u64()?);
@@ -63,53 +64,56 @@ pub fn decode_manifest(bytes: &[u8]) -> Result<Manifest, Status> {
     })
 }
 
-pub fn encode_id_map(entries: &[(String, u64)]) -> Result<Vec<u8>, Status> {
+pub fn encode_id_map(entries: &[(DocId, InternalDocId)]) -> Result<Vec<u8>, Status> {
     let mut writer = BinaryWriter::new(ID_MAP_MAGIC);
     writer.write_u16(FORMAT_VERSION);
     writer.write_len(entries.len())?;
 
     for (doc_id, internal_doc_id) in entries {
-        writer.write_string(doc_id)?;
-        writer.write_u64(*internal_doc_id);
+        writer.write_string(doc_id.as_str())?;
+        writer.write_u64(internal_doc_id.get());
     }
 
     Ok(writer.finish())
 }
 
-pub fn decode_id_map(bytes: &[u8]) -> Result<Vec<(String, u64)>, Status> {
+pub fn decode_id_map(bytes: &[u8]) -> Result<Vec<(String, InternalDocId)>, Status> {
     let mut reader = BinaryReader::new(bytes, ID_MAP_MAGIC)?;
     reader.expect_u16(FORMAT_VERSION)?;
     let count = reader.read_len()?;
     let mut entries = Vec::with_capacity(count);
 
     for _ in 0..count {
-        entries.push((reader.read_string()?, reader.read_u64()?));
+        entries.push((
+            reader.read_string()?,
+            InternalDocId::new(reader.read_u64()?)?,
+        ));
     }
 
     reader.finish()?;
     Ok(entries)
 }
 
-pub fn encode_delete_snapshot(ids: &[u64]) -> Result<Vec<u8>, Status> {
+pub fn encode_delete_snapshot(ids: &[InternalDocId]) -> Result<Vec<u8>, Status> {
     let mut writer = BinaryWriter::new(DELETE_MAGIC);
     writer.write_u16(FORMAT_VERSION);
     writer.write_len(ids.len())?;
 
     for id in ids {
-        writer.write_u64(*id);
+        writer.write_u64(id.get());
     }
 
     Ok(writer.finish())
 }
 
-pub fn decode_delete_snapshot(bytes: &[u8]) -> Result<Vec<u64>, Status> {
+pub fn decode_delete_snapshot(bytes: &[u8]) -> Result<Vec<InternalDocId>, Status> {
     let mut reader = BinaryReader::new(bytes, DELETE_MAGIC)?;
     reader.expect_u16(FORMAT_VERSION)?;
     let count = reader.read_len()?;
     let mut ids = Vec::with_capacity(count);
 
     for _ in 0..count {
-        ids.push(reader.read_u64()?);
+        ids.push(InternalDocId::new(reader.read_u64()?)?);
     }
 
     reader.finish()?;
@@ -129,8 +133,8 @@ fn write_collection_schema(
     }
 
     writer.write_string(schema.vector.name.as_str())?;
-    writer.write_len(schema.vector.dimension)?;
-    writer.write_u8(metric_tag(schema.vector.metric));
+    writer.write_len(schema.vector.dimension.get())?;
+    writer.write_u8(schema.vector.metric.to_tag());
     write_index_params(writer, &schema.vector.index)?;
 
     Ok(())
@@ -147,8 +151,8 @@ fn read_collection_schema(reader: &mut BinaryReader<'_>) -> Result<CollectionSch
     }
 
     let vector_name = FieldName::parse(reader.read_string()?)?;
-    let dimension = reader.read_len()?;
-    let metric = read_metric(reader.read_u8()?)?;
+    let dimension = VectorDimension::new(reader.read_len()?)?;
+    let metric = DistanceMetric::from_tag(reader.read_u8()?)?;
     let index = read_index_params(reader)?;
 
     Ok(CollectionSchema {
@@ -165,19 +169,19 @@ fn read_collection_schema(reader: &mut BinaryReader<'_>) -> Result<CollectionSch
 }
 
 fn write_collection_options(writer: &mut BinaryWriter, options: &CollectionOptions) {
-    writer.write_bool(options.read_only);
-    writer.write_bool(options.enable_mmap);
+    writer.write_u8(options.access_mode.to_tag());
+    writer.write_u8(options.storage_access.to_tag());
     writer.write_u64(options.segment_max_docs as u64);
 }
 
 fn read_collection_options(reader: &mut BinaryReader<'_>) -> Result<CollectionOptions, Status> {
-    let read_only = reader.read_bool()?;
-    let enable_mmap = reader.read_bool()?;
+    let access_mode = AccessMode::from_tag(reader.read_u8()?)?;
+    let storage_access = StorageAccess::from_tag(reader.read_u8()?)?;
     let segment_max_docs = reader.read_u64()? as usize;
 
     Ok(CollectionOptions {
-        read_only,
-        enable_mmap,
+        access_mode,
+        storage_access,
         segment_max_docs,
     })
 }
@@ -187,22 +191,22 @@ fn write_scalar_field_schema(
     field: &ScalarFieldSchema,
 ) -> Result<(), Status> {
     writer.write_string(field.name.as_str())?;
-    writer.write_u8(scalar_type_tag(field.field_type));
-    writer.write_bool(field.nullable);
+    writer.write_u8(field.field_type.to_tag());
+    writer.write_u8(field.nullability.to_tag());
     write_optional_scalar_value(writer, field.default_value.as_ref())?;
     Ok(())
 }
 
 fn read_scalar_field_schema(reader: &mut BinaryReader<'_>) -> Result<ScalarFieldSchema, Status> {
     let name = FieldName::parse(reader.read_string()?)?;
-    let field_type = read_scalar_type(reader.read_u8()?)?;
-    let nullable = reader.read_bool()?;
+    let field_type = ScalarType::from_tag(reader.read_u8()?)?;
+    let nullability = Nullability::from_tag(reader.read_u8()?)?;
     let default_value = read_optional_scalar_value(reader)?;
 
     Ok(ScalarFieldSchema {
         name,
         field_type,
-        nullable,
+        nullability,
         default_value,
     })
 }
@@ -239,20 +243,20 @@ fn read_index_params(reader: &mut BinaryReader<'_>) -> Result<IndexParams, Statu
 }
 
 fn write_segment_meta(writer: &mut BinaryWriter, meta: &SegmentMeta) -> Result<(), Status> {
-    writer.write_u64(meta.id);
+    writer.write_u64(meta.id.get());
     writer.write_string(&meta.path)?;
-    writer.write_optional_u64(meta.min_doc_id);
-    writer.write_optional_u64(meta.max_doc_id);
+    writer.write_optional_internal_doc_id(meta.min_doc_id);
+    writer.write_optional_internal_doc_id(meta.max_doc_id);
     writer.write_u64(meta.doc_count as u64);
     Ok(())
 }
 
 fn read_segment_meta(reader: &mut BinaryReader<'_>) -> Result<SegmentMeta, Status> {
     Ok(SegmentMeta {
-        id: reader.read_u64()?,
+        id: SegmentId::new_unchecked(reader.read_u64()?),
         path: reader.read_string()?,
-        min_doc_id: reader.read_optional_u64()?,
-        max_doc_id: reader.read_optional_u64()?,
+        min_doc_id: reader.read_optional_internal_doc_id()?,
+        max_doc_id: reader.read_optional_internal_doc_id()?,
         doc_count: reader.read_u64()? as usize,
     })
 }
@@ -322,45 +326,6 @@ fn read_scalar_value(reader: &mut BinaryReader<'_>) -> Result<ScalarValue, Statu
     }
 }
 
-fn metric_tag(metric: DistanceMetric) -> u8 {
-    match metric {
-        DistanceMetric::Cosine => 0,
-        DistanceMetric::InnerProduct => 1,
-        DistanceMetric::L2 => 2,
-    }
-}
-
-fn read_metric(tag: u8) -> Result<DistanceMetric, Status> {
-    match tag {
-        0 => Ok(DistanceMetric::Cosine),
-        1 => Ok(DistanceMetric::InnerProduct),
-        2 => Ok(DistanceMetric::L2),
-        _ => Err(Status::err(StatusCode::Internal, "unrecognized metric tag")),
-    }
-}
-
-fn scalar_type_tag(scalar_type: ScalarType) -> u8 {
-    match scalar_type {
-        ScalarType::Bool => 0,
-        ScalarType::Int64 => 1,
-        ScalarType::Float64 => 2,
-        ScalarType::String => 3,
-    }
-}
-
-fn read_scalar_type(tag: u8) -> Result<ScalarType, Status> {
-    match tag {
-        0 => Ok(ScalarType::Bool),
-        1 => Ok(ScalarType::Int64),
-        2 => Ok(ScalarType::Float64),
-        3 => Ok(ScalarType::String),
-        _ => Err(Status::err(
-            StatusCode::Internal,
-            "unrecognized scalar type tag",
-        )),
-    }
-}
-
 struct BinaryWriter {
     bytes: Vec<u8>,
 }
@@ -424,6 +389,10 @@ impl BinaryWriter {
             }
             None => self.write_bool(false),
         }
+    }
+
+    fn write_optional_internal_doc_id(&mut self, value: Option<InternalDocId>) {
+        self.write_optional_u64(value.map(InternalDocId::get));
     }
 }
 
@@ -542,6 +511,14 @@ impl<'a> BinaryReader<'a> {
         }
 
         Ok(Some(self.read_u64()?))
+    }
+
+    fn read_optional_internal_doc_id(&mut self) -> Result<Option<InternalDocId>, Status> {
+        let Some(value) = self.read_optional_u64()? else {
+            return Ok(None);
+        };
+
+        Ok(Some(InternalDocId::new(value)?))
     }
 
     fn read_exact(&mut self, len: usize) -> Result<&'a [u8], Status> {

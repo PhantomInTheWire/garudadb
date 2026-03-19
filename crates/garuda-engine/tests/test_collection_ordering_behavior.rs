@@ -16,7 +16,7 @@ fn top_k_should_cap_results_without_returning_more_documents() {
         .query(VectorQuery::by_vector(
             field_name("embedding"),
             dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
-            3,
+            common::top_k(3),
         ))
         .expect("query");
     assert!(results.len() <= 3);
@@ -35,7 +35,7 @@ fn repeated_queries_should_not_duplicate_documents_in_one_result_set() {
         .query(VectorQuery::by_vector(
             field_name("embedding"),
             dense_vector(vec![0.0, 1.0, 0.0, 0.0]),
-            10,
+            common::top_k(10),
         ))
         .expect("query");
     let mut ids = results.iter().map(|doc| doc.id.clone()).collect::<Vec<_>>();
@@ -61,7 +61,7 @@ fn top_k_should_apply_public_doc_id_tie_break_after_segment_merge() {
         .query(VectorQuery::by_vector(
             field_name("embedding"),
             dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
-            1,
+            common::top_k(1),
         ))
         .expect("query");
 

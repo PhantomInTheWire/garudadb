@@ -3,7 +3,7 @@ use crate::io::{read_file, remove_file, write_file_atomically};
 use crate::layout::{
     DELETE_FILE_PREFIX, ID_MAP_FILE_PREFIX, delete_snapshot_path, id_map_snapshot_path,
 };
-use garuda_types::{DocId, SnapshotId, Status, StatusCode};
+use garuda_types::{DocId, InternalDocId, SnapshotId, Status, StatusCode};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -16,7 +16,7 @@ pub enum SnapshotKind {
 pub fn write_id_map_snapshot(
     root: &Path,
     snapshot_id: SnapshotId,
-    entries: impl IntoIterator<Item = (String, u64)>,
+    entries: impl IntoIterator<Item = (DocId, InternalDocId)>,
 ) -> Result<(), Status> {
     let mut ordered_entries = entries.into_iter().collect::<Vec<_>>();
     ordered_entries.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
@@ -28,7 +28,7 @@ pub fn write_id_map_snapshot(
 pub fn read_id_map_snapshot(
     root: &Path,
     snapshot_id: SnapshotId,
-) -> Result<HashMap<DocId, u64>, Status> {
+) -> Result<HashMap<DocId, InternalDocId>, Status> {
     let bytes = read_file(&id_map_snapshot_path(root, snapshot_id))?;
     let entries = decode_id_map(&bytes)?;
     let mut id_map = HashMap::new();
@@ -43,7 +43,7 @@ pub fn read_id_map_snapshot(
 pub fn write_delete_snapshot(
     root: &Path,
     snapshot_id: SnapshotId,
-    deleted_doc_ids: impl IntoIterator<Item = u64>,
+    deleted_doc_ids: impl IntoIterator<Item = InternalDocId>,
 ) -> Result<(), Status> {
     let mut ids = deleted_doc_ids.into_iter().collect::<Vec<_>>();
     ids.sort_unstable();
@@ -52,7 +52,10 @@ pub fn write_delete_snapshot(
     write_file_atomically(&delete_snapshot_path(root, snapshot_id), &bytes)
 }
 
-pub fn read_delete_snapshot(root: &Path, snapshot_id: SnapshotId) -> Result<HashSet<u64>, Status> {
+pub fn read_delete_snapshot(
+    root: &Path,
+    snapshot_id: SnapshotId,
+) -> Result<HashSet<InternalDocId>, Status> {
     let bytes = read_file(&delete_snapshot_path(root, snapshot_id))?;
     let ids = decode_delete_snapshot(&bytes)?;
     Ok(ids.into_iter().collect())

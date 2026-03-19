@@ -8,13 +8,13 @@ use garuda_storage::{
     VersionManager, WRITING_SEGMENT_ID, read_delete_snapshot, read_id_map_snapshot,
 };
 use garuda_types::{
-    CollectionOptions, CollectionSchema, Manifest, ManifestVersionId, SegmentMeta, SnapshotId,
-    Status,
+    CollectionOptions, CollectionSchema, InternalDocId, Manifest, ManifestVersionId, SegmentId,
+    SegmentMeta, SnapshotId, Status,
 };
 use std::path::{Path, PathBuf};
 
-const INITIAL_DOC_ID: u64 = 1;
-const INITIAL_SEGMENT_ID: u64 = 1;
+const INITIAL_DOC_ID: InternalDocId = InternalDocId::new_unchecked(1);
+const INITIAL_SEGMENT_ID: SegmentId = SegmentId::new_unchecked(1);
 const INITIAL_SNAPSHOT_ID: u64 = 0;
 const INITIAL_MANIFEST_VERSION_ID: u64 = 0;
 

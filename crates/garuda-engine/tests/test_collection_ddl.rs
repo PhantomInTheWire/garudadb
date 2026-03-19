@@ -27,7 +27,7 @@ fn create_drop_index_and_column_ddl_roundtrip() {
         .add_column(ScalarFieldSchema {
             name: field_name("flag"),
             field_type: ScalarType::Bool,
-            nullable: true,
+            nullability: garuda_types::Nullability::Nullable,
             default_value: None,
         })
         .expect("add column");
@@ -79,7 +79,7 @@ fn add_non_nullable_column_requires_a_backfill_strategy() {
     let result = collection.add_column(ScalarFieldSchema {
         name: field_name("required_flag"),
         field_type: ScalarType::Bool,
-        nullable: false,
+        nullability: garuda_types::Nullability::Required,
         default_value: None,
     });
 
@@ -101,7 +101,7 @@ fn add_column_with_default_backfills_existing_rows() {
         .add_column(ScalarFieldSchema {
             name: field_name("is_public"),
             field_type: ScalarType::Bool,
-            nullable: false,
+            nullability: garuda_types::Nullability::Required,
             default_value: Some(ScalarValue::Bool(true)),
         })
         .expect("add column with default");
@@ -128,7 +128,7 @@ fn add_column_rejects_default_with_wrong_type() {
     let result = collection.add_column(ScalarFieldSchema {
         name: field_name("is_public"),
         field_type: ScalarType::Bool,
-        nullable: false,
+        nullability: garuda_types::Nullability::Required,
         default_value: Some(ScalarValue::String(String::from("yes"))),
     });
 
@@ -149,7 +149,7 @@ fn inserts_apply_schema_defaults_after_add_column() {
         .add_column(ScalarFieldSchema {
             name: field_name("is_public"),
             field_type: ScalarType::Bool,
-            nullable: false,
+            nullability: garuda_types::Nullability::Required,
             default_value: Some(ScalarValue::Bool(true)),
         })
         .expect("add column with default");
@@ -209,7 +209,7 @@ fn renamed_column_survives_reopen_and_query_projection_uses_new_name() {
     let mut query = garuda_types::VectorQuery::by_vector(
         field_name("embedding"),
         common::dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
-        2,
+        common::top_k(2),
     );
     query.output_fields = Some(vec!["label".to_string()]);
     let results = reopened.query(query).expect("query");

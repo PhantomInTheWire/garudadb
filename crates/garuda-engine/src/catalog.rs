@@ -1,12 +1,15 @@
 use garuda_segment::SegmentFile;
-use garuda_types::{CollectionOptions, CollectionSchema, Manifest, ManifestVersionId, SnapshotId};
+use garuda_types::{
+    CollectionOptions, CollectionSchema, InternalDocId, Manifest, ManifestVersionId, SegmentId,
+    SnapshotId,
+};
 
 #[derive(Clone)]
 pub(crate) struct CollectionCatalog {
     pub(crate) schema: CollectionSchema,
     pub(crate) options: CollectionOptions,
-    pub(crate) next_doc_id: u64,
-    pub(crate) next_segment_id: u64,
+    pub(crate) next_doc_id: InternalDocId,
+    pub(crate) next_segment_id: SegmentId,
     pub(crate) id_map_snapshot_id: SnapshotId,
     pub(crate) delete_snapshot_id: SnapshotId,
     pub(crate) manifest_version_id: ManifestVersionId,

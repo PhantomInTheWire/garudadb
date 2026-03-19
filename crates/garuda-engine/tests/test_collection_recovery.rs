@@ -19,7 +19,7 @@ fn reopen_after_flush_preserves_manifest_and_query_results() {
         .query(VectorQuery::by_vector(
             field_name("embedding"),
             dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
-            3,
+            common::top_k(3),
         ))
         .expect("query before");
     drop(collection);
@@ -31,7 +31,7 @@ fn reopen_after_flush_preserves_manifest_and_query_results() {
         .query(VectorQuery::by_vector(
             field_name("embedding"),
             dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
-            3,
+            common::top_k(3),
         ))
         .expect("query after");
 

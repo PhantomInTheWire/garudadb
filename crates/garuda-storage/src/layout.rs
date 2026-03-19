@@ -1,5 +1,5 @@
 use crate::io::{create_dir_all, create_empty_file, remove_file, sync_directory};
-use garuda_types::{CollectionName, ManifestVersionId, SnapshotId, Status, StatusCode};
+use garuda_types::{CollectionName, ManifestVersionId, SegmentId, SnapshotId, Status, StatusCode};
 use std::path::{Path, PathBuf};
 
 pub const LOCK_FILE_NAME: &str = "LOCK";
@@ -8,7 +8,7 @@ pub const ID_MAP_FILE_PREFIX: &str = "idmap.";
 pub const DELETE_FILE_PREFIX: &str = "del.";
 pub const DATA_SEG_FILE_NAME: &str = "data.seg";
 pub const DATA_WAL_FILE_NAME: &str = "data.wal";
-pub const WRITING_SEGMENT_ID: u64 = 0;
+pub const WRITING_SEGMENT_ID: SegmentId = SegmentId::new_unchecked(0);
 
 pub fn ensure_database_root(path: &Path) -> Result<(), Status> {
     create_dir_all(path, "failed to create database root")
@@ -72,15 +72,15 @@ pub fn delete_snapshot_path(root: &Path, snapshot_id: SnapshotId) -> PathBuf {
     root.join(format!("{DELETE_FILE_PREFIX}{}", snapshot_id.get()))
 }
 
-pub fn segment_dir(root: &Path, segment_id: u64) -> PathBuf {
-    root.join(segment_id.to_string())
+pub fn segment_dir(root: &Path, segment_id: SegmentId) -> PathBuf {
+    root.join(segment_id.get().to_string())
 }
 
-pub fn segment_data_path(root: &Path, segment_id: u64) -> PathBuf {
+pub fn segment_data_path(root: &Path, segment_id: SegmentId) -> PathBuf {
     segment_dir(root, segment_id).join(DATA_SEG_FILE_NAME)
 }
 
-pub fn segment_wal_path(root: &Path, segment_id: u64) -> PathBuf {
+pub fn segment_wal_path(root: &Path, segment_id: SegmentId) -> PathBuf {
     segment_dir(root, segment_id).join(DATA_WAL_FILE_NAME)
 }
 

@@ -19,7 +19,7 @@ fn flat_query_results_should_survive_reopen_with_identical_ordering() {
         .query(VectorQuery::by_vector(
             field_name("embedding"),
             dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
-            5,
+            common::top_k(5),
         ))
         .expect("query before reopen");
     collection.flush().expect("flush");
@@ -32,7 +32,7 @@ fn flat_query_results_should_survive_reopen_with_identical_ordering() {
         .query(VectorQuery::by_vector(
             field_name("embedding"),
             dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
-            5,
+            common::top_k(5),
         ))
         .expect("query after reopen");
 
@@ -55,7 +55,7 @@ fn flat_query_should_merge_exact_results_across_multiple_segments() {
         .query(VectorQuery::by_vector(
             field_name("embedding"),
             dense_vector(vec![0.0, 1.0, 0.0, 0.0]),
-            3,
+            common::top_k(3),
         ))
         .expect("query");
 
@@ -78,14 +78,14 @@ fn flat_query_by_document_id_should_match_query_by_vector() {
         .query(VectorQuery::by_vector(
             field_name("embedding"),
             dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
-            4,
+            common::top_k(4),
         ))
         .expect("query by vector");
     let by_id = collection
         .query(VectorQuery::by_id(
             field_name("embedding"),
             doc_id("doc-1"),
-            4,
+            common::top_k(4),
         ))
         .expect("query by id");
 
@@ -111,7 +111,7 @@ fn optimize_should_preserve_exact_flat_query_results() {
         .query(VectorQuery::by_vector(
             field_name("embedding"),
             dense_vector(vec![0.0, 1.0, 0.0, 0.0]),
-            4,
+            common::top_k(4),
         ))
         .expect("query before optimize");
 
@@ -123,7 +123,7 @@ fn optimize_should_preserve_exact_flat_query_results() {
         .query(VectorQuery::by_vector(
             field_name("embedding"),
             dense_vector(vec![0.0, 1.0, 0.0, 0.0]),
-            4,
+            common::top_k(4),
         ))
         .expect("query after optimize");
 

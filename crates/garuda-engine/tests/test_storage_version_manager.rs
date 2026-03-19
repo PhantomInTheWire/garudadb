@@ -1,8 +1,8 @@
 mod common;
 
 use common::{collection_name, database, default_schema, seed_collection};
-use std::fs;
 use garuda_types::{CollectionName, CollectionOptions};
+use std::fs;
 
 #[test]
 fn reopen_uses_latest_committed_manifest_version() {
@@ -97,7 +97,11 @@ fn options_with_segment_max_docs(segment_max_docs: usize) -> CollectionOptions {
 }
 
 fn collection_dir(root: &std::path::Path, name: &str) -> std::path::PathBuf {
-    root.join(CollectionName::parse(name).expect("valid collection name").as_str())
+    root.join(
+        CollectionName::parse(name)
+            .expect("valid collection name")
+            .as_str(),
+    )
 }
 
 fn manifest_version_paths(root: &std::path::Path, name: &str) -> Vec<std::path::PathBuf> {

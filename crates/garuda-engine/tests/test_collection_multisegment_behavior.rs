@@ -22,7 +22,7 @@ fn fetch_and_query_should_span_multiple_segments_transparently() {
         .query(VectorQuery::by_vector(
             field_name("embedding"),
             dense_vector(vec![0.0, 1.0, 0.0, 0.0]),
-            8,
+            common::top_k(8),
         ))
         .expect("query");
     assert!(results.len() >= 3);
@@ -44,7 +44,7 @@ fn optimize_should_be_idempotent_at_the_logical_api_level() {
         .query(VectorQuery::by_vector(
             field_name("embedding"),
             dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
-            8,
+            common::top_k(8),
         ))
         .expect("query after first");
 
@@ -55,7 +55,7 @@ fn optimize_should_be_idempotent_at_the_logical_api_level() {
         .query(VectorQuery::by_vector(
             field_name("embedding"),
             dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
-            8,
+            common::top_k(8),
         ))
         .expect("query after second");
 

@@ -1,12 +1,12 @@
 use crate::validation::validate_scalar_value;
 use garuda_types::{
-    CollectionOptions, CollectionSchema, FieldName, ScalarFieldSchema, ScalarType, Status,
-    StatusCode,
+    AccessMode, CollectionOptions, CollectionSchema, FieldName, Nullability, ScalarFieldSchema,
+    ScalarType, Status, StatusCode,
 };
 use std::collections::HashSet;
 
 pub(crate) fn validate_create_options(options: &CollectionOptions) -> Result<(), Status> {
-    if options.read_only {
+    if matches!(options.access_mode, AccessMode::ReadOnly) {
         return Err(Status::err(
             StatusCode::InvalidArgument,
             "cannot create a collection in read-only mode",
@@ -44,7 +44,7 @@ pub(crate) fn validate_schema(schema: &CollectionSchema) -> Result<(), Status> {
 }
 
 fn validate_vector_dimension(schema: &CollectionSchema) -> Result<(), Status> {
-    if schema.vector.dimension > 0 {
+    if schema.vector.dimension.get() > 0 {
         return Ok(());
     }
 
@@ -73,7 +73,7 @@ fn validate_primary_key(schema: &CollectionSchema) -> Result<(), Status> {
         ));
     }
 
-    if field.nullable {
+    if matches!(field.nullability, Nullability::Nullable) {
         return Err(Status::err(
             StatusCode::InvalidArgument,
             "primary key field cannot be nullable",
@@ -102,5 +102,5 @@ fn validate_declared_default(field: &ScalarFieldSchema) -> Result<(), Status> {
         return Ok(());
     };
 
-    validate_scalar_value(field.field_type, field.nullable, default_value)
+    validate_scalar_value(field.field_type, field.nullability, default_value)
 }

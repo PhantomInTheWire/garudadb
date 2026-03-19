@@ -1,5 +1,7 @@
 use crate::{RecordState, SegmentFile, StoredRecord};
-use garuda_types::{Doc, DocId, ScalarValue, SegmentMeta, Status, StatusCode};
+use garuda_types::{
+    DenseVector, Doc, DocId, InternalDocId, ScalarValue, SegmentId, SegmentMeta, Status, StatusCode,
+};
 const SEGMENT_MAGIC: &[u8; 8] = b"GRDSEG01";
 const FORMAT_VERSION: u16 = 1;
 const FNV_OFFSET_BASIS: u32 = 2_166_136_261;
@@ -12,8 +14,8 @@ pub fn encode_segment(segment: &SegmentFile) -> Result<Vec<u8>, Status> {
     writer.write_len(segment.records.len())?;
 
     for record in &segment.records {
-        writer.write_u64(record.doc_id);
-        writer.write_u8(record_state_tag(record.state));
+        writer.write_u64(record.doc_id.get());
+        writer.write_u8(record.state.to_tag());
         write_doc(&mut writer, &record.doc)?;
     }
 
@@ -28,8 +30,8 @@ pub fn decode_segment(bytes: &[u8]) -> Result<SegmentFile, Status> {
     let mut records = Vec::with_capacity(record_count);
 
     for _ in 0..record_count {
-        let doc_id = reader.read_u64()?;
-        let state = read_record_state(reader.read_u8()?)?;
+        let doc_id = InternalDocId::new(reader.read_u64()?)?;
+        let state = RecordState::from_tag(reader.read_u8()?)?;
         let doc = read_doc(&mut reader)?;
         records.push(StoredRecord { doc_id, state, doc });
     }
@@ -55,20 +57,20 @@ pub fn decode_doc_payload(bytes: &[u8]) -> Result<Doc, Status> {
 }
 
 fn write_segment_meta(writer: &mut BinaryWriter, meta: &SegmentMeta) -> Result<(), Status> {
-    writer.write_u64(meta.id);
+    writer.write_u64(meta.id.get());
     writer.write_string(&meta.path)?;
-    writer.write_optional_u64(meta.min_doc_id);
-    writer.write_optional_u64(meta.max_doc_id);
+    writer.write_optional_internal_doc_id(meta.min_doc_id);
+    writer.write_optional_internal_doc_id(meta.max_doc_id);
     writer.write_u64(meta.doc_count as u64);
     Ok(())
 }
 
 fn read_segment_meta(reader: &mut BinaryReader<'_>) -> Result<SegmentMeta, Status> {
     Ok(SegmentMeta {
-        id: reader.read_u64()?,
+        id: SegmentId::new_unchecked(reader.read_u64()?),
         path: reader.read_string()?,
-        min_doc_id: reader.read_optional_u64()?,
-        max_doc_id: reader.read_optional_u64()?,
+        min_doc_id: reader.read_optional_internal_doc_id()?,
+        max_doc_id: reader.read_optional_internal_doc_id()?,
         doc_count: reader.read_u64()? as usize,
     })
 }
@@ -83,7 +85,7 @@ fn write_doc(writer: &mut BinaryWriter, doc: &Doc) -> Result<(), Status> {
     }
 
     writer.write_len(doc.vector.len())?;
-    for value in &doc.vector {
+    for value in doc.vector.as_slice() {
         writer.write_f32(*value);
     }
 
@@ -112,7 +114,7 @@ fn read_doc(reader: &mut BinaryReader<'_>) -> Result<Doc, Status> {
     Ok(Doc {
         id,
         fields,
-        vector,
+        vector: DenseVector::parse(vector)?,
         score,
     })
 }
@@ -151,24 +153,6 @@ fn read_scalar_value(reader: &mut BinaryReader<'_>) -> Result<ScalarValue, Statu
         _ => Err(Status::err(
             StatusCode::Internal,
             "unrecognized scalar value tag",
-        )),
-    }
-}
-
-fn record_state_tag(state: RecordState) -> u8 {
-    match state {
-        RecordState::Live => 0,
-        RecordState::Deleted => 1,
-    }
-}
-
-fn read_record_state(tag: u8) -> Result<RecordState, Status> {
-    match tag {
-        0 => Ok(RecordState::Live),
-        1 => Ok(RecordState::Deleted),
-        _ => Err(Status::err(
-            StatusCode::Internal,
-            "unrecognized record state tag",
         )),
     }
 }
@@ -239,6 +223,10 @@ impl BinaryWriter {
             }
             None => self.write_bool(false),
         }
+    }
+
+    fn write_optional_internal_doc_id(&mut self, value: Option<InternalDocId>) {
+        self.write_optional_u64(value.map(InternalDocId::get));
     }
 
     fn write_optional_f32(&mut self, value: Option<f32>) {
@@ -372,6 +360,14 @@ impl<'a> BinaryReader<'a> {
         }
 
         Ok(Some(self.read_u64()?))
+    }
+
+    fn read_optional_internal_doc_id(&mut self) -> Result<Option<InternalDocId>, Status> {
+        let Some(value) = self.read_optional_u64()? else {
+            return Ok(None);
+        };
+
+        Ok(Some(InternalDocId::new(value)?))
     }
 
     fn read_optional_f32(&mut self) -> Result<Option<f32>, Status> {

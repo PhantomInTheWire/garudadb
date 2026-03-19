@@ -11,10 +11,7 @@ fn rejects_invalid_schema_shapes_and_unknown_collections() {
         db.open_collection(&collection_name("does-not-exist"))
             .is_err()
     );
-    assert!(
-        db.create_collection(schema_with_dimension("zero-dim", 0), default_options())
-            .is_err()
-    );
+    assert!(garuda_types::VectorDimension::new(0).is_err());
     assert!(
         db.create_collection(schema_with_duplicate_field("dup-field"), default_options())
             .is_err()
@@ -32,6 +29,13 @@ fn rejects_invalid_schema_shapes_and_unknown_collections() {
             default_options()
         )
         .is_err()
+    );
+    assert!(
+        db.create_collection(
+            schema_with_deserialized_zero_dimension("deserialized-zero"),
+            default_options()
+        )
+            .is_err()
     );
 }
 
@@ -76,16 +80,16 @@ fn read_only_collection_open_should_preserve_non_mutating_contract() {
     assert!(readonly_create.is_err());
 }
 
-fn schema_with_dimension(name: &str, dimension: usize) -> CollectionSchema {
-    let mut schema = default_schema(name);
-    schema.vector.dimension = dimension;
-    schema
-}
-
 fn schema_with_vector_name(name: &str, vector_name: &str) -> CollectionSchema {
     let mut schema = default_schema(name);
     schema.vector.name = common::field_name(vector_name);
     schema
+}
+
+fn schema_with_deserialized_zero_dimension(name: &str) -> CollectionSchema {
+    let mut value = serde_json::to_value(default_schema(name)).expect("serialize schema");
+    value["vector"]["dimension"] = serde_json::json!(0);
+    serde_json::from_value(value).expect("deserialize schema with unchecked dimension")
 }
 
 fn schema_with_duplicate_field(name: &str) -> CollectionSchema {
@@ -102,7 +106,7 @@ fn schema_missing_primary_field(name: &str) -> CollectionSchema {
 
 fn read_only_options() -> CollectionOptions {
     CollectionOptions {
-        read_only: true,
+        access_mode: garuda_types::AccessMode::ReadOnly,
         ..default_options()
     }
 }

@@ -1,5 +1,6 @@
 use garuda_types::{
-    CollectionSchema, Doc, ScalarFieldSchema, ScalarType, ScalarValue, Status, StatusCode,
+    CollectionSchema, Doc, Nullability, ScalarFieldSchema, ScalarType, ScalarValue, Status,
+    StatusCode,
 };
 
 pub fn validate_doc(schema: &CollectionSchema, doc: &Doc) -> Result<(), Status> {
@@ -25,7 +26,7 @@ pub fn apply_schema_defaults(schema: &CollectionSchema, doc: &mut Doc) {
 
 pub fn validate_field_default(field: &ScalarFieldSchema) -> Result<(), Status> {
     let Some(default_value) = &field.default_value else {
-        if field.nullable {
+        if matches!(field.nullability, Nullability::Nullable) {
             return Ok(());
         }
 
@@ -35,16 +36,16 @@ pub fn validate_field_default(field: &ScalarFieldSchema) -> Result<(), Status> {
         ));
     };
 
-    validate_scalar_value(field.field_type, field.nullable, default_value)
+    validate_scalar_value(field.field_type, field.nullability, default_value)
 }
 
 pub(crate) fn validate_scalar_value(
     expected: ScalarType,
-    nullable: bool,
+    nullability: Nullability,
     value: &ScalarValue,
 ) -> Result<(), Status> {
     if matches!(value, ScalarValue::Null) {
-        if nullable {
+        if matches!(nullability, Nullability::Nullable) {
             return Ok(());
         }
 
@@ -72,8 +73,8 @@ pub(crate) fn validate_scalar_value(
     ))
 }
 
-fn validate_required_vector(schema: &CollectionSchema, vector: &[f32]) -> Result<(), Status> {
-    if vector.len() != schema.vector.dimension {
+fn validate_required_vector(schema: &CollectionSchema, vector: &garuda_types::DenseVector) -> Result<(), Status> {
+    if vector.len() != schema.vector.dimension.get() {
         return Err(Status::err(
             StatusCode::InvalidArgument,
             "vector dimension does not match schema",
@@ -86,7 +87,7 @@ fn validate_required_vector(schema: &CollectionSchema, vector: &[f32]) -> Result
 fn validate_doc_fields(schema: &CollectionSchema, doc: &Doc) -> Result<(), Status> {
     for field in &schema.fields {
         let Some(value) = doc.fields.get(field.name.as_str()) else {
-            if field.nullable {
+            if matches!(field.nullability, Nullability::Nullable) {
                 continue;
             }
 
@@ -96,7 +97,7 @@ fn validate_doc_fields(schema: &CollectionSchema, doc: &Doc) -> Result<(), Statu
             ));
         };
 
-        validate_scalar_value(field.field_type, field.nullable, value)?;
+        validate_scalar_value(field.field_type, field.nullability, value)?;
     }
 
     Ok(())

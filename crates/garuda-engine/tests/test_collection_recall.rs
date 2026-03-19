@@ -17,7 +17,7 @@ fn hnsw_matches_flat_ground_truth_for_small_fixture() {
         .query(VectorQuery::by_vector(
             field_name("embedding"),
             dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
-            3,
+            common::top_k(3),
         ))
         .expect("flat query");
     collection
@@ -30,7 +30,7 @@ fn hnsw_matches_flat_ground_truth_for_small_fixture() {
         .query(VectorQuery::by_vector(
             field_name("embedding"),
             dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
-            3,
+            common::top_k(3),
         ))
         .expect("hnsw query");
 

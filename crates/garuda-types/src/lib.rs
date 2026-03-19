@@ -139,8 +139,90 @@ impl Borrow<str> for DocId {
     }
 }
 
-pub type InternalDocId = u64;
-pub type SegmentId = u64;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct InternalDocId(u64);
+
+impl InternalDocId {
+    pub const fn new_unchecked(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub fn new(value: u64) -> Result<Self, Status> {
+        if value == 0 {
+            return Err(Status::err(
+                StatusCode::InvalidArgument,
+                "internal doc id must be greater than zero",
+            ));
+        }
+
+        Ok(Self(value))
+    }
+
+    pub fn get(self) -> u64 {
+        self.0
+    }
+
+    pub fn next(self) -> Self {
+        Self(self.0 + 1)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct SegmentId(u64);
+
+impl SegmentId {
+    pub const fn new_unchecked(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub fn get(self) -> u64 {
+        self.0
+    }
+
+    pub fn next(self) -> Self {
+        Self(self.0 + 1)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct VectorDimension(usize);
+
+impl VectorDimension {
+    pub fn new(value: usize) -> Result<Self, Status> {
+        if value == 0 {
+            return Err(Status::err(
+                StatusCode::InvalidArgument,
+                "vector dimension must be greater than zero",
+            ));
+        }
+
+        Ok(Self(value))
+    }
+
+    pub fn get(self) -> usize {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct TopK(usize);
+
+impl TopK {
+    pub fn new(value: usize) -> Result<Self, Status> {
+        if value == 0 {
+            return Err(Status::err(
+                StatusCode::InvalidArgument,
+                "top_k must be greater than zero",
+            ));
+        }
+
+        Ok(Self(value))
+    }
+
+    pub fn get(self) -> usize {
+        self.0
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ManifestVersionId(u64);
@@ -196,12 +278,55 @@ pub enum DistanceMetric {
     L2,
 }
 
+impl DistanceMetric {
+    pub fn to_tag(self) -> u8 {
+        match self {
+            Self::Cosine => 0,
+            Self::InnerProduct => 1,
+            Self::L2 => 2,
+        }
+    }
+
+    pub fn from_tag(tag: u8) -> Result<Self, Status> {
+        match tag {
+            0 => Ok(Self::Cosine),
+            1 => Ok(Self::InnerProduct),
+            2 => Ok(Self::L2),
+            _ => Err(Status::err(StatusCode::Internal, "unrecognized metric tag")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ScalarType {
     Bool,
     Int64,
     Float64,
     String,
+}
+
+impl ScalarType {
+    pub fn to_tag(self) -> u8 {
+        match self {
+            Self::Bool => 0,
+            Self::Int64 => 1,
+            Self::Float64 => 2,
+            Self::String => 3,
+        }
+    }
+
+    pub fn from_tag(tag: u8) -> Result<Self, Status> {
+        match tag {
+            0 => Ok(Self::Bool),
+            1 => Ok(Self::Int64),
+            2 => Ok(Self::Float64),
+            3 => Ok(Self::String),
+            _ => Err(Status::err(
+                StatusCode::Internal,
+                "unrecognized scalar type tag",
+            )),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -248,18 +373,100 @@ impl IndexParams {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct OptimizeOptions;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Nullability {
+    Nullable,
+    Required,
+}
+
+impl Nullability {
+    pub fn is_nullable(self) -> bool {
+        matches!(self, Self::Nullable)
+    }
+
+    pub fn to_tag(self) -> u8 {
+        match self {
+            Self::Nullable => 0,
+            Self::Required => 1,
+        }
+    }
+
+    pub fn from_tag(tag: u8) -> Result<Self, Status> {
+        match tag {
+            0 => Ok(Self::Nullable),
+            1 => Ok(Self::Required),
+            _ => Err(Status::err(
+                StatusCode::Internal,
+                "unrecognized nullability tag",
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScalarFieldSchema {
     pub name: FieldName,
     pub field_type: ScalarType,
-    pub nullable: bool,
+    pub nullability: Nullability,
     pub default_value: Option<ScalarValue>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AccessMode {
+    ReadWrite,
+    ReadOnly,
+}
+
+impl AccessMode {
+    pub fn to_tag(self) -> u8 {
+        match self {
+            Self::ReadWrite => 0,
+            Self::ReadOnly => 1,
+        }
+    }
+
+    pub fn from_tag(tag: u8) -> Result<Self, Status> {
+        match tag {
+            0 => Ok(Self::ReadWrite),
+            1 => Ok(Self::ReadOnly),
+            _ => Err(Status::err(
+                StatusCode::Internal,
+                "unrecognized access mode tag",
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StorageAccess {
+    StandardIo,
+    MmapPreferred,
+}
+
+impl StorageAccess {
+    pub fn to_tag(self) -> u8 {
+        match self {
+            Self::StandardIo => 0,
+            Self::MmapPreferred => 1,
+        }
+    }
+
+    pub fn from_tag(tag: u8) -> Result<Self, Status> {
+        match tag {
+            0 => Ok(Self::StandardIo),
+            1 => Ok(Self::MmapPreferred),
+            _ => Err(Status::err(
+                StatusCode::Internal,
+                "unrecognized storage access tag",
+            )),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VectorFieldSchema {
     pub name: FieldName,
-    pub dimension: usize,
+    pub dimension: VectorDimension,
     pub metric: DistanceMetric,
     pub index: IndexParams,
 }
@@ -274,16 +481,16 @@ pub struct CollectionSchema {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CollectionOptions {
-    pub read_only: bool,
-    pub enable_mmap: bool,
+    pub access_mode: AccessMode,
+    pub storage_access: StorageAccess,
     pub segment_max_docs: usize,
 }
 
 impl Default for CollectionOptions {
     fn default() -> Self {
         Self {
-            read_only: false,
-            enable_mmap: true,
+            access_mode: AccessMode::ReadWrite,
+            storage_access: StorageAccess::MmapPreferred,
             segment_max_docs: 1024,
         }
     }
@@ -314,7 +521,7 @@ impl ScalarValue {
 pub struct Doc {
     pub id: DocId,
     pub fields: BTreeMap<String, ScalarValue>,
-    pub vector: Vec<f32>,
+    pub vector: DenseVector,
     pub score: Option<f32>,
 }
 
@@ -323,13 +530,13 @@ impl Doc {
         Self {
             id,
             fields,
-            vector: vector.into_vec(),
+            vector,
             score: None,
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct DenseVector(Vec<f32>);
 
 impl DenseVector {
@@ -379,37 +586,43 @@ pub enum QueryVectorSource {
     DocumentId(DocId),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VectorProjection {
+    Include,
+    Exclude,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VectorQuery {
     pub field_name: FieldName,
     pub source: QueryVectorSource,
-    pub top_k: usize,
+    pub top_k: TopK,
     pub filter: Option<String>,
-    pub include_vector: bool,
+    pub vector_projection: VectorProjection,
     pub output_fields: Option<Vec<String>>,
     pub ef_search: Option<usize>,
 }
 
 impl VectorQuery {
-    pub fn by_vector(field_name: FieldName, vector: DenseVector, top_k: usize) -> Self {
+    pub fn by_vector(field_name: FieldName, vector: DenseVector, top_k: TopK) -> Self {
         Self {
             field_name,
             source: QueryVectorSource::Vector(vector),
             top_k,
             filter: None,
-            include_vector: false,
+            vector_projection: VectorProjection::Exclude,
             output_fields: None,
             ef_search: None,
         }
     }
 
-    pub fn by_id(field_name: FieldName, id: DocId, top_k: usize) -> Self {
+    pub fn by_id(field_name: FieldName, id: DocId, top_k: TopK) -> Self {
         Self {
             field_name,
             source: QueryVectorSource::DocumentId(id),
             top_k,
             filter: None,
-            include_vector: false,
+            vector_projection: VectorProjection::Exclude,
             output_fields: None,
             ef_search: None,
         }

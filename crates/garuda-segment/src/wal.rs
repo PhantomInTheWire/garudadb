@@ -1,6 +1,6 @@
 use crate::codec::{checksum, decode_doc_payload, encode_doc_payload};
 use garuda_storage::{read_file, segment_wal_path, write_file_atomically};
-use garuda_types::{Doc, DocId, Status, StatusCode};
+use garuda_types::{Doc, DocId, SegmentId, Status, StatusCode};
 
 const WAL_MAGIC: &[u8; 8] = b"GRDWAL01";
 const FORMAT_VERSION: u16 = 1;
@@ -19,7 +19,7 @@ pub enum WalOp {
 
 pub fn append_wal_ops(
     root: &std::path::Path,
-    segment_id: u64,
+    segment_id: SegmentId,
     ops: &[WalOp],
 ) -> Result<(), Status> {
     let wal_path = segment_wal_path(root, segment_id);
@@ -46,7 +46,7 @@ pub fn append_wal_ops(
     write_file_atomically(&wal_path, &bytes)
 }
 
-pub fn read_wal_ops(root: &std::path::Path, segment_id: u64) -> Result<Vec<WalOp>, Status> {
+pub fn read_wal_ops(root: &std::path::Path, segment_id: SegmentId) -> Result<Vec<WalOp>, Status> {
     let wal_path = segment_wal_path(root, segment_id);
     if !wal_path.exists() {
         return Ok(Vec::new());
@@ -110,7 +110,7 @@ pub fn read_wal_ops(root: &std::path::Path, segment_id: u64) -> Result<Vec<WalOp
     Ok(ops)
 }
 
-pub fn reset_wal(root: &std::path::Path, segment_id: u64) -> Result<(), Status> {
+pub fn reset_wal(root: &std::path::Path, segment_id: SegmentId) -> Result<(), Status> {
     write_file_atomically(&segment_wal_path(root, segment_id), &new_wal_bytes())
 }
 

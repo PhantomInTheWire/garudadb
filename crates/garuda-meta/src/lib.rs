@@ -1,10 +1,10 @@
-use garuda_types::{DocId, FilterExpr, ScalarValue};
+use garuda_types::{DocId, FilterExpr, InternalDocId, ScalarValue};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct IdMap {
-    entries: HashMap<DocId, u64>,
+    entries: HashMap<DocId, InternalDocId>,
 }
 
 impl IdMap {
@@ -16,7 +16,7 @@ impl IdMap {
         self.entries.clear();
     }
 
-    pub fn insert(&mut self, doc_id: DocId, internal_doc_id: u64) {
+    pub fn insert(&mut self, doc_id: DocId, internal_doc_id: InternalDocId) {
         self.entries.insert(doc_id, internal_doc_id);
     }
 
@@ -24,24 +24,24 @@ impl IdMap {
         self.entries.contains_key(doc_id)
     }
 
-    pub fn get(&self, doc_id: &DocId) -> Option<u64> {
+    pub fn get(&self, doc_id: &DocId) -> Option<InternalDocId> {
         self.entries.get(doc_id).copied()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&DocId, &u64)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&DocId, &InternalDocId)> {
         self.entries.iter()
     }
 }
 
-impl From<HashMap<DocId, u64>> for IdMap {
-    fn from(entries: HashMap<DocId, u64>) -> Self {
+impl From<HashMap<DocId, InternalDocId>> for IdMap {
+    fn from(entries: HashMap<DocId, InternalDocId>) -> Self {
         Self { entries }
     }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DeleteStore {
-    deleted_doc_ids: HashSet<u64>,
+    deleted_doc_ids: HashSet<InternalDocId>,
 }
 
 impl DeleteStore {
@@ -53,21 +53,21 @@ impl DeleteStore {
         self.deleted_doc_ids.clear();
     }
 
-    pub fn insert(&mut self, internal_doc_id: u64) {
+    pub fn insert(&mut self, internal_doc_id: InternalDocId) {
         self.deleted_doc_ids.insert(internal_doc_id);
     }
 
-    pub fn contains(&self, internal_doc_id: u64) -> bool {
+    pub fn contains(&self, internal_doc_id: InternalDocId) -> bool {
         self.deleted_doc_ids.contains(&internal_doc_id)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &u64> {
+    pub fn iter(&self) -> impl Iterator<Item = &InternalDocId> {
         self.deleted_doc_ids.iter()
     }
 }
 
-impl From<HashSet<u64>> for DeleteStore {
-    fn from(deleted_doc_ids: HashSet<u64>) -> Self {
+impl From<HashSet<InternalDocId>> for DeleteStore {
+    fn from(deleted_doc_ids: HashSet<InternalDocId>) -> Self {
         Self { deleted_doc_ids }
     }
 }
@@ -95,27 +95,27 @@ impl MetadataStore {
         self.delete_store.clear();
     }
 
-    pub fn index_live_doc(&mut self, doc_id: DocId, internal_doc_id: u64) {
+    pub fn index_live_doc(&mut self, doc_id: DocId, internal_doc_id: InternalDocId) {
         self.id_map.insert(doc_id, internal_doc_id);
     }
 
-    pub fn mark_deleted(&mut self, internal_doc_id: u64) {
+    pub fn mark_deleted(&mut self, internal_doc_id: InternalDocId) {
         self.delete_store.insert(internal_doc_id);
     }
 
-    pub fn internal_doc_id(&self, doc_id: &DocId) -> Option<u64> {
+    pub fn internal_doc_id(&self, doc_id: &DocId) -> Option<InternalDocId> {
         self.id_map.get(doc_id)
     }
 
-    pub fn is_deleted(&self, internal_doc_id: u64) -> bool {
+    pub fn is_deleted(&self, internal_doc_id: InternalDocId) -> bool {
         self.delete_store.contains(internal_doc_id)
     }
 
-    pub fn id_map_entries(&self) -> impl Iterator<Item = (&DocId, &u64)> {
+    pub fn id_map_entries(&self) -> impl Iterator<Item = (&DocId, &InternalDocId)> {
         self.id_map.iter()
     }
 
-    pub fn deleted_doc_ids(&self) -> impl Iterator<Item = &u64> {
+    pub fn deleted_doc_ids(&self) -> impl Iterator<Item = &InternalDocId> {
         self.delete_store.iter()
     }
 }

@@ -19,7 +19,7 @@ fn filters_should_respect_boolean_grouping_and_not_leak_non_matching_docs() {
     let mut query = VectorQuery::by_vector(
         field_name("embedding"),
         dense_vector(vec![0.0, 1.0, 0.0, 0.0]),
-        10,
+        common::top_k(10),
     );
     query.filter = Some("(category = 'beta' OR category = 'gamma') AND rank >= 4".to_string());
     let results = collection.query(query).expect("query");
@@ -44,7 +44,7 @@ fn filters_on_unknown_fields_or_invalid_types_should_error() {
     let mut unknown_field = VectorQuery::by_vector(
         field_name("embedding"),
         dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
-        5,
+        common::top_k(5),
     );
     unknown_field.filter = Some("missing_field = 'x'".to_string());
     assert!(collection.query(unknown_field).is_err());
@@ -52,7 +52,7 @@ fn filters_on_unknown_fields_or_invalid_types_should_error() {
     let mut wrong_type = VectorQuery::by_vector(
         field_name("embedding"),
         dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
-        5,
+        common::top_k(5),
     );
     wrong_type.filter = Some("rank = 'not-a-number'".to_string());
     assert!(collection.query(wrong_type).is_err());
@@ -74,7 +74,7 @@ fn delete_by_filter_should_remove_only_matching_documents() {
         .query(VectorQuery::by_vector(
             field_name("embedding"),
             dense_vector(vec![0.0, 1.0, 0.0, 0.0]),
-            10,
+            common::top_k(10),
         ))
         .expect("query after delete by filter");
 
