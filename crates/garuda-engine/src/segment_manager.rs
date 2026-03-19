@@ -115,7 +115,9 @@ impl SegmentManager {
 
     pub(crate) fn optimize(&mut self, next_segment_id: &mut u64, segment_max_docs: usize) {
         let all_live_records = self.all_live_records();
-        let mut rebuilt_segments = Vec::new();
+        let rebuilt_capacity = (all_live_records.len() + segment_max_docs.saturating_sub(1))
+            / segment_max_docs.max(1);
+        let mut rebuilt_segments = Vec::with_capacity(rebuilt_capacity);
         let mut current_segment = Self::empty_writing_segment();
 
         for record in all_live_records {
