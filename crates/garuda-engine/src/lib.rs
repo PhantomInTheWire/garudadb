@@ -194,45 +194,23 @@ impl Collection {
 
     pub fn delete(&self, ids: Vec<DocId>) -> Vec<WriteResult> {
         let mut state = self.write_state();
-        let snapshot = state.clone();
-        let mut results = Vec::new();
-        let mut wal_ops = Vec::new();
-
-        for id in ids {
-            let result = state.delete_doc(&id);
-            if result.status.is_ok() {
-                wal_ops.push(WalOp::Delete(id.clone()));
-            }
-
-            results.push(result);
-        }
-
-        let persist_result = if wal_ops.is_empty() {
-            Ok(())
-        } else {
-            append_wal_ops(&state.path, WRITING_SEGMENT_ID, &wal_ops)
-        };
-
-        if let Err(status) = persist_result {
-            *state = snapshot;
-            mark_persist_failure(&mut results, &status);
-        }
-
-        results
+        apply_delete_batch(&mut state, ids)
     }
 
     pub fn delete_by_filter(&self, raw_filter: &str) -> Result<(), Status> {
-        let state = self.read_state();
+        let mut state = self.write_state();
         let filter = parse_query_filter(Some(raw_filter), &state.manifest.schema)?;
         let Some(filter) = filter else {
             return Ok(());
         };
 
         let ids = collect_matching_doc_ids(&state, &filter);
-        drop(state);
+        if ids.is_empty() {
+            return Ok(());
+        }
 
-        for result in self.delete(ids) {
-            if result.status.is_ok() || result.status.code == StatusCode::NotFound {
+        for result in apply_delete_batch(&mut state, ids) {
+            if result.status.is_ok() {
                 continue;
             }
 
@@ -433,4 +411,32 @@ fn mark_persist_failure(results: &mut [WriteResult], status: &Status) {
 
         result.status = Status::err(status.code.clone(), status.message.clone());
     }
+}
+
+fn apply_delete_batch(state: &mut CollectionState, ids: Vec<DocId>) -> Vec<WriteResult> {
+    let snapshot = state.clone();
+    let mut results = Vec::new();
+    let mut wal_ops = Vec::new();
+
+    for id in ids {
+        let result = state.delete_doc(&id);
+        if result.status.is_ok() {
+            wal_ops.push(WalOp::Delete(id.clone()));
+        }
+
+        results.push(result);
+    }
+
+    let persist_result = if wal_ops.is_empty() {
+        Ok(())
+    } else {
+        append_wal_ops(&state.path, WRITING_SEGMENT_ID, &wal_ops)
+    };
+
+    if let Err(status) = persist_result {
+        *state = snapshot;
+        mark_persist_failure(&mut results, &status);
+    }
+
+    results
 }
