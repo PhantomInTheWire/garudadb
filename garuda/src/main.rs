@@ -4,50 +4,56 @@ use garuda_types::{
     CollectionName, CollectionOptions, CollectionSchema, DistanceMetric, FieldName,
     FlatIndexParams, IndexParams, ScalarFieldSchema, ScalarType, VectorFieldSchema,
 };
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
+
+const PRIMARY_KEY_FIELD: &str = "pk";
+const VECTOR_FIELD: &str = "embedding";
 
 #[derive(Parser)]
 struct Cli {
     #[arg(long, default_value = ".")]
     root: PathBuf,
     #[command(subcommand)]
-    command: Option<Commands>,
+    command: Commands,
 }
 
 #[derive(Subcommand)]
 enum Commands {
     Init,
-    Create { name: String, dimension: usize },
-    Stats { name: String },
-    Doctor,
+    Create {
+        #[arg(value_parser = parse_collection_name)]
+        name: CollectionName,
+        dimension: NonZeroUsize,
+    },
+    Stats {
+        #[arg(value_parser = parse_collection_name)]
+        name: CollectionName,
+    },
 }
 
 fn main() -> Result<(), String> {
-    let cli = Cli::parse();
-    let db = Database::open(&cli.root).map_err(|status| status.message)?;
+    let Cli { root, command } = Cli::parse();
 
-    match cli.command {
-        None | Some(Commands::Doctor) => {
-            println!("ok");
+    match command {
+        Commands::Init => {
+            println!("{}", root.display());
             Ok(())
         }
-        Some(Commands::Init) => {
-            println!("{}", cli.root.display());
-            Ok(())
-        }
-        Some(Commands::Create { name, dimension }) => {
+        Commands::Create { name, dimension } => {
+            let db = Database::open(&root).map_err(|status| status.message)?;
             let schema = CollectionSchema {
-                name: CollectionName::parse(name.clone()).map_err(|status| status.message)?,
-                primary_key: FieldName::parse("pk").map_err(|status| status.message)?,
+                name: name.clone(),
+                primary_key: field_name(PRIMARY_KEY_FIELD),
                 fields: vec![ScalarFieldSchema {
-                    name: FieldName::parse("pk").map_err(|status| status.message)?,
+                    name: field_name(PRIMARY_KEY_FIELD),
                     field_type: ScalarType::String,
                     nullable: false,
                     default_value: None,
                 }],
                 vector: VectorFieldSchema {
-                    name: FieldName::parse("embedding").map_err(|status| status.message)?,
-                    dimension,
+                    name: field_name(VECTOR_FIELD),
+                    dimension: dimension.get(),
                     metric: DistanceMetric::Cosine,
                     index: IndexParams::Flat(FlatIndexParams),
                 },
@@ -57,8 +63,8 @@ fn main() -> Result<(), String> {
             println!("{name}");
             Ok(())
         }
-        Some(Commands::Stats { name }) => {
-            let name = CollectionName::parse(name).map_err(|status| status.message)?;
+        Commands::Stats { name } => {
+            let db = Database::open(&root).map_err(|status| status.message)?;
             let collection = db.open_collection(&name).map_err(|status| status.message)?;
             let output = serde_json::to_string_pretty(&collection.stats())
                 .map_err(|error| error.to_string())?;
@@ -66,4 +72,12 @@ fn main() -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+fn parse_collection_name(value: &str) -> Result<CollectionName, String> {
+    CollectionName::parse(value).map_err(|status| status.message)
+}
+
+fn field_name(value: &str) -> FieldName {
+    FieldName::parse(value).expect("hardcoded field name should be valid")
 }
