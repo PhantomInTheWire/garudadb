@@ -53,12 +53,8 @@ fn apply_query_projection(doc: &mut Doc, plan: &QueryPlan) {
         return;
     };
 
-    let allowed_fields = output_fields
-        .iter()
-        .map(String::as_str)
-        .collect::<std::collections::BTreeSet<_>>();
     doc.fields
-        .retain(|field_name, _| allowed_fields.contains(field_name.as_str()));
+        .retain(|field_name, _| output_fields.iter().any(|field| field == field_name));
 }
 
 fn resolve_query_vector<'a>(
@@ -125,7 +121,7 @@ fn score_and_sort_docs(
     query_vector: &[f32],
     plan: &QueryPlan,
 ) -> Vec<Doc> {
-    let mut scored_docs = Vec::new();
+    let mut scored_docs = Vec::with_capacity(docs.len());
 
     for mut doc in docs {
         doc.score = Some(score_doc(
