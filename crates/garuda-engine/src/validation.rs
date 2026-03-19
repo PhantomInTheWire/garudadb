@@ -106,7 +106,12 @@ fn validate_primary_key_value(schema: &CollectionSchema, doc: &Doc) -> Result<()
     let value = doc
         .fields
         .get(schema.primary_key.as_str())
-        .expect("primary key field must exist before identity validation");
+        .ok_or_else(|| {
+            Status::err(
+                StatusCode::InvalidArgument,
+                "primary key field must be present",
+            )
+        })?;
 
     let ScalarValue::String(primary_key) = value else {
         return Err(Status::err(
