@@ -199,7 +199,7 @@ impl Collection {
 
     pub fn fetch(&self, ids: Vec<DocId>) -> HashMap<DocId, Doc> {
         let state = self.read_state();
-        let mut docs = HashMap::new();
+        let mut docs = HashMap::with_capacity(ids.len());
 
         for id in ids {
             let Some(doc) = fetch_doc(&state, &id) else {
