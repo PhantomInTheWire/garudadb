@@ -367,9 +367,9 @@ struct BinaryWriter {
 
 impl BinaryWriter {
     fn new(magic: &[u8; 8]) -> Self {
-        Self {
-            bytes: magic.to_vec(),
-        }
+        let mut bytes = Vec::with_capacity(magic.len() + std::mem::size_of::<u32>());
+        bytes.extend_from_slice(magic);
+        Self { bytes }
     }
 
     fn finish(mut self) -> Vec<u8> {

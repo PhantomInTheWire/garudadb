@@ -132,7 +132,9 @@ fn append_payload(bytes: &mut Vec<u8>, tag: u8, payload: &[u8]) {
 }
 
 fn new_wal_bytes() -> Vec<u8> {
-    let mut bytes = WAL_MAGIC.to_vec();
+    let mut bytes =
+        Vec::with_capacity(WAL_MAGIC.len() + std::mem::size_of::<u16>() + std::mem::size_of::<u32>());
+    bytes.extend_from_slice(WAL_MAGIC);
     bytes.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
     let checksum = checksum(&bytes);
     bytes.extend_from_slice(&checksum.to_le_bytes());
