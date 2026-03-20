@@ -6,7 +6,8 @@ use common::{
 };
 use garuda_storage::{WRITING_SEGMENT_ID, segment_flat_index_path};
 use garuda_types::{
-    FlatIndexParams, HnswIndexParams, IndexKind, IndexParams, SegmentId, VectorQuery,
+    FlatIndexParams, HnswEfConstruction, HnswEfSearch, HnswIndexParams, HnswM, IndexKind,
+    IndexParams, SegmentId, VectorQuery,
 };
 
 const FIRST_PERSISTED_SEGMENT_ID: SegmentId = SegmentId::new_unchecked(1);
@@ -81,9 +82,9 @@ fn hnsw_index_params_should_roundtrip_through_reopen() {
         .expect("create collection");
 
     let params = HnswIndexParams {
-        m: 32,
-        ef_construction: 128,
-        ef_search: 96,
+        m: HnswM::new(32).expect("valid hnsw m"),
+        ef_construction: HnswEfConstruction::new(128).expect("valid hnsw ef_construction"),
+        ef_search: HnswEfSearch::new(96).expect("valid hnsw ef_search"),
     };
 
     collection

@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::collections::BTreeMap;
 use std::fmt;
+use std::num::NonZeroU32;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct CollectionName(String);
@@ -338,19 +339,124 @@ pub enum IndexKind {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FlatIndexParams;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HnswM(NonZeroU32);
+
+impl HnswM {
+    pub fn new(value: u32) -> Result<Self, Status> {
+        let Some(value) = NonZeroU32::new(value) else {
+            return Err(Status::err(
+                StatusCode::InvalidArgument,
+                "hnsw m must be greater than zero",
+            ));
+        };
+
+        Ok(Self(value))
+    }
+
+    pub fn from_persisted_u64(value: u64) -> Result<Self, Status> {
+        let value = u32::try_from(value).map_err(|_| {
+            Status::err(
+                StatusCode::Internal,
+                "hnsw m exceeds u32::MAX in persisted manifest",
+            )
+        })?;
+
+        Self::new(value)
+            .map_err(|_| Status::err(StatusCode::Internal, "hnsw m must be greater than zero"))
+    }
+
+    pub fn get(self) -> u32 {
+        self.0.get()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HnswEfConstruction(NonZeroU32);
+
+impl HnswEfConstruction {
+    pub fn new(value: u32) -> Result<Self, Status> {
+        let Some(value) = NonZeroU32::new(value) else {
+            return Err(Status::err(
+                StatusCode::InvalidArgument,
+                "hnsw ef_construction must be greater than zero",
+            ));
+        };
+
+        Ok(Self(value))
+    }
+
+    pub fn from_persisted_u64(value: u64) -> Result<Self, Status> {
+        let value = u32::try_from(value).map_err(|_| {
+            Status::err(
+                StatusCode::Internal,
+                "hnsw ef_construction exceeds u32::MAX in persisted manifest",
+            )
+        })?;
+
+        Self::new(value).map_err(|_| {
+            Status::err(
+                StatusCode::Internal,
+                "hnsw ef_construction must be greater than zero",
+            )
+        })
+    }
+
+    pub fn get(self) -> u32 {
+        self.0.get()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HnswEfSearch(NonZeroU32);
+
+impl HnswEfSearch {
+    pub fn new(value: u32) -> Result<Self, Status> {
+        let Some(value) = NonZeroU32::new(value) else {
+            return Err(Status::err(
+                StatusCode::InvalidArgument,
+                "hnsw ef_search must be greater than zero",
+            ));
+        };
+
+        Ok(Self(value))
+    }
+
+    pub fn from_persisted_u64(value: u64) -> Result<Self, Status> {
+        let value = u32::try_from(value).map_err(|_| {
+            Status::err(
+                StatusCode::Internal,
+                "hnsw ef_search exceeds u32::MAX in persisted manifest",
+            )
+        })?;
+
+        Self::new(value).map_err(|_| {
+            Status::err(
+                StatusCode::Internal,
+                "hnsw ef_search must be greater than zero",
+            )
+        })
+    }
+
+    pub fn get(self) -> u32 {
+        self.0.get()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HnswIndexParams {
-    pub m: usize,
-    pub ef_construction: usize,
-    pub ef_search: usize,
+    pub m: HnswM,
+    pub ef_construction: HnswEfConstruction,
+    pub ef_search: HnswEfSearch,
 }
 
 impl Default for HnswIndexParams {
     fn default() -> Self {
         Self {
-            m: 16,
-            ef_construction: 200,
-            ef_search: 64,
+            m: HnswM::new(16).expect("default hnsw m should be valid"),
+            ef_construction: HnswEfConstruction::new(200)
+                .expect("default hnsw ef_construction should be valid"),
+            ef_search: HnswEfSearch::new(64).expect("default hnsw ef_search should be valid"),
         }
     }
 }
@@ -600,7 +706,7 @@ pub struct VectorQuery {
     pub filter: Option<String>,
     pub vector_projection: VectorProjection,
     pub output_fields: Option<Vec<String>>,
-    pub ef_search: Option<usize>,
+    pub ef_search: Option<HnswEfSearch>,
 }
 
 impl VectorQuery {

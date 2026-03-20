@@ -1,8 +1,9 @@
 use garuda_types::{
     AccessMode, CollectionName, CollectionOptions, CollectionSchema, DistanceMetric, DocId,
-    FieldName, FlatIndexParams, HnswIndexParams, IndexParams, InternalDocId, Manifest,
-    ManifestVersionId, Nullability, ScalarFieldSchema, ScalarType, ScalarValue, SegmentId,
-    SegmentMeta, SnapshotId, Status, StatusCode, StorageAccess, VectorDimension,
+    FieldName, FlatIndexParams, HnswEfConstruction, HnswEfSearch, HnswIndexParams, HnswM,
+    IndexParams, InternalDocId, Manifest, ManifestVersionId, Nullability, ScalarFieldSchema,
+    ScalarType, ScalarValue, SegmentId, SegmentMeta, SnapshotId, Status, StatusCode, StorageAccess,
+    VectorDimension,
 };
 
 const MANIFEST_MAGIC: &[u8; 8] = b"GRDMAN01";
@@ -218,9 +219,9 @@ fn write_index_params(writer: &mut BinaryWriter, index: &IndexParams) -> Result<
         }
         IndexParams::Hnsw(params) => {
             writer.write_u8(1);
-            writer.write_u64(params.m as u64);
-            writer.write_u64(params.ef_construction as u64);
-            writer.write_u64(params.ef_search as u64);
+            writer.write_u64(params.m.get() as u64);
+            writer.write_u64(params.ef_construction.get() as u64);
+            writer.write_u64(params.ef_search.get() as u64);
         }
     }
 
@@ -231,9 +232,9 @@ fn read_index_params(reader: &mut BinaryReader<'_>) -> Result<IndexParams, Statu
     match reader.read_u8()? {
         0 => Ok(IndexParams::Flat(FlatIndexParams)),
         1 => Ok(IndexParams::Hnsw(HnswIndexParams {
-            m: reader.read_u64()? as usize,
-            ef_construction: reader.read_u64()? as usize,
-            ef_search: reader.read_u64()? as usize,
+            m: HnswM::from_persisted_u64(reader.read_u64()?)?,
+            ef_construction: HnswEfConstruction::from_persisted_u64(reader.read_u64()?)?,
+            ef_search: HnswEfSearch::from_persisted_u64(reader.read_u64()?)?,
         })),
         _ => Err(Status::err(
             StatusCode::Internal,
