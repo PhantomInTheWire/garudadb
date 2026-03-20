@@ -1,4 +1,6 @@
-use garuda_types::{FieldName, FilterExpr, QueryVectorSource, TopK, VectorProjection, VectorQuery};
+use garuda_types::{
+    FieldName, FilterExpr, HnswEfSearch, QueryVectorSource, TopK, VectorProjection, VectorQuery,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum SegmentFilterPlan {
@@ -11,7 +13,7 @@ pub struct ExactFlatPlan {
     pub source: QueryVectorSource,
     pub filter: SegmentFilterPlan,
     pub top_k: TopK,
-    pub ef_search: Option<usize>,
+    pub ef_search: Option<HnswEfSearch>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -1,7 +1,9 @@
 mod common;
 
 use common::{collection_name, database, default_options, default_schema};
-use garuda_types::{CollectionName, CollectionOptions, CollectionSchema, StatusCode};
+use garuda_types::{
+    CollectionName, CollectionOptions, CollectionSchema, HnswIndexParams, StatusCode,
+};
 
 #[test]
 fn rejects_invalid_schema_shapes_and_unknown_collections() {
@@ -35,6 +37,14 @@ fn rejects_invalid_schema_shapes_and_unknown_collections() {
             schema_with_deserialized_zero_dimension("deserialized-zero"),
             default_options()
         )
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<HnswIndexParams>(serde_json::json!({
+            "m": 0,
+            "ef_construction": 200,
+            "ef_search": 64
+        }))
         .is_err()
     );
 }
