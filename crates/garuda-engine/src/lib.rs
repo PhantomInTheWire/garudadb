@@ -177,6 +177,7 @@ impl Collection {
                 &mut state.catalog.next_segment_id,
                 state.catalog.options.segment_max_docs,
                 &state.catalog.schema.vector,
+                |doc_id| state.meta.is_deleted(doc_id),
             );
             state.rebuild_indexes();
 

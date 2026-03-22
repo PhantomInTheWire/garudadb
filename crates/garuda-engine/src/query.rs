@@ -3,7 +3,9 @@ use crate::filter_parser::parse_filter;
 use crate::state::CollectionRuntime;
 use garuda_planner::{QueryPlan, SegmentFilterPlan, SegmentSearchPlan, build_query_plan};
 use garuda_segment::{
-    FlatSearchRequest, HnswSegmentSearchRequest, SegmentFilter, search_flat, search_hnsw,
+    FlatSearchRequest, HnswSegmentSearchRequest, PersistedSegment, SearchVisibility, SegmentFilter,
+    WritingSegment, search_persisted_flat, search_persisted_hnsw, search_writing_flat,
+    search_writing_hnsw,
 };
 use garuda_types::{
     CollectionSchema, DenseVector, Doc, QueryVectorSource, Status, StatusCode, TopK,
@@ -46,7 +48,6 @@ pub(crate) fn execute_query(
 
     let query_vector = resolve_query_vector(&plan, state)?;
     let docs = collect_matching_docs(state, &plan, &query_vector)?;
-
     Ok(finalize_docs(docs, &plan))
 }
 
@@ -103,14 +104,14 @@ fn collect_matching_docs(
             continue;
         }
 
-        collect_docs_from_segment(&mut docs, state, plan, query_vector, segment)?;
+        collect_docs_from_persisted_segment(&mut docs, state, plan, query_vector, segment)?;
     }
 
     if state.segments.writing_segment().meta.doc_count == 0 {
         return Ok(docs);
     }
 
-    collect_docs_from_segment(
+    collect_docs_from_writing_segment(
         &mut docs,
         state,
         plan,
@@ -121,25 +122,60 @@ fn collect_matching_docs(
     Ok(docs)
 }
 
-fn collect_docs_from_segment(
+fn collect_docs_from_persisted_segment(
     docs: &mut Vec<Doc>,
     state: &CollectionRuntime,
     plan: &QueryPlan,
     query_vector: &DenseVector,
-    segment: &garuda_segment::SegmentFile,
+    segment: &PersistedSegment,
 ) -> Result<(), Status> {
     let filter = segment_filter(&plan.filter);
     let hits = match plan.search {
-        SegmentSearchPlan::Flat => search_flat(
+        SegmentSearchPlan::Flat => search_persisted_flat(
             segment,
             FlatSearchRequest {
                 metric: state.catalog.schema.vector.metric,
                 query_vector,
-                top_k: segment_top_k(segment),
+                top_k: segment_top_k(segment.meta.doc_count),
+                filter,
+            },
+            SearchVisibility::HideDeleted(state.meta.delete_store()),
+        )?,
+        SegmentSearchPlan::Hnsw { ef_search } => search_persisted_hnsw(
+            segment,
+            HnswSegmentSearchRequest {
+                query_vector,
+                top_k: plan.top_k,
+                ef_search,
+                filter,
+            },
+            SearchVisibility::HideDeleted(state.meta.delete_store()),
+        )?,
+    };
+
+    collect_docs_from_hits(docs, hits);
+    Ok(())
+}
+
+fn collect_docs_from_writing_segment(
+    docs: &mut Vec<Doc>,
+    state: &CollectionRuntime,
+    plan: &QueryPlan,
+    query_vector: &DenseVector,
+    segment: &WritingSegment,
+) -> Result<(), Status> {
+    let filter = segment_filter(&plan.filter);
+    let hits = match plan.search {
+        SegmentSearchPlan::Flat => search_writing_flat(
+            segment,
+            FlatSearchRequest {
+                metric: state.catalog.schema.vector.metric,
+                query_vector,
+                top_k: segment_top_k(segment.meta.doc_count),
                 filter,
             },
         )?,
-        SegmentSearchPlan::Hnsw { ef_search } => search_hnsw(
+        SegmentSearchPlan::Hnsw { ef_search } => search_writing_hnsw(
             segment,
             HnswSegmentSearchRequest {
                 query_vector,
@@ -150,13 +186,16 @@ fn collect_docs_from_segment(
         )?,
     };
 
+    collect_docs_from_hits(docs, hits);
+    Ok(())
+}
+
+fn collect_docs_from_hits(docs: &mut Vec<Doc>, hits: Vec<garuda_segment::SegmentSearchHit>) {
     for hit in hits {
         let mut doc = hit.record.doc;
         doc.score = Some(hit.score);
         docs.push(doc);
     }
-
-    Ok(())
 }
 
 fn finalize_docs(mut docs: Vec<Doc>, plan: &QueryPlan) -> Vec<Doc> {
@@ -182,7 +221,6 @@ fn segment_filter(filter: &SegmentFilterPlan) -> SegmentFilter<'_> {
     }
 }
 
-fn segment_top_k(segment: &garuda_segment::SegmentFile) -> TopK {
-    TopK::new(segment.meta.doc_count)
-        .expect("queryable segment must have at least one live document")
+fn segment_top_k(doc_count: usize) -> TopK {
+    TopK::new(doc_count).expect("queryable segment must have at least one live document")
 }

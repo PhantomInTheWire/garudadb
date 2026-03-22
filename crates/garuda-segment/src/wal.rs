@@ -1,5 +1,5 @@
-use crate::codec::{checksum, decode_doc_payload, encode_doc_payload};
-use garuda_storage::{read_file, segment_wal_path, write_file_atomically};
+use crate::doc_codec::{decode_doc_payload, encode_doc_payload};
+use garuda_storage::{checksum, read_file, segment_wal_path, write_file_atomically};
 use garuda_types::{Doc, DocId, SegmentId, Status, StatusCode};
 
 const WAL_MAGIC: &[u8; 8] = b"GRDWAL01";

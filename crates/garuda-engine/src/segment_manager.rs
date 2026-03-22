@@ -1,60 +1,58 @@
+use garuda_meta::MetadataStore;
 use garuda_segment::{
-    RecordState, SegmentFile, SegmentKind, StoredRecord, rebuild_search_resources,
+    PersistedSegment, RecordState, StoredRecord, WritingSegment, seal_writing_segment,
     segment_file_name, segment_meta,
 };
 use garuda_storage::WRITING_SEGMENT_ID;
-use garuda_types::{Doc, DocId, InternalDocId, SegmentId, VectorFieldSchema};
+use garuda_types::{Doc, InternalDocId, SegmentId, VectorFieldSchema};
 
 #[derive(Clone)]
 pub(crate) struct SegmentManager {
-    persisted_segments: Vec<SegmentFile>,
-    writing_segment: SegmentFile,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum TouchedSegment {
-    Writing,
-    Persisted(usize),
+    persisted_segments: Vec<PersistedSegment>,
+    writing_segment: WritingSegment,
 }
 
 impl SegmentManager {
-    pub(crate) fn new(persisted_segments: Vec<SegmentFile>, writing_segment: SegmentFile) -> Self {
+    pub(crate) fn new(
+        persisted_segments: Vec<PersistedSegment>,
+        writing_segment: WritingSegment,
+    ) -> Self {
         Self {
             persisted_segments,
             writing_segment,
         }
     }
 
-    pub(crate) fn empty_writing_segment(vector_field: &VectorFieldSchema) -> SegmentFile {
-        SegmentFile::new(
-            segment_meta(WRITING_SEGMENT_ID),
-            Vec::new(),
-            SegmentKind::Writing,
-            vector_field,
-        )
+    pub(crate) fn empty_writing_segment(vector_field: &VectorFieldSchema) -> WritingSegment {
+        WritingSegment::new(segment_meta(WRITING_SEGMENT_ID), Vec::new(), vector_field)
     }
 
-    pub(crate) fn persisted_segments(&self) -> &[SegmentFile] {
+    pub(crate) fn persisted_segments(&self) -> &[PersistedSegment] {
         &self.persisted_segments
     }
 
-    pub(crate) fn persisted_segments_mut(&mut self) -> &mut [SegmentFile] {
-        &mut self.persisted_segments
-    }
-
-    pub(crate) fn writing_segment(&self) -> &SegmentFile {
+    pub(crate) fn writing_segment(&self) -> &WritingSegment {
         &self.writing_segment
     }
 
-    pub(crate) fn writing_segment_mut(&mut self) -> &mut SegmentFile {
-        &mut self.writing_segment
+    pub(crate) fn apply_to_all_records(&mut self, mut apply: impl FnMut(&mut [StoredRecord])) {
+        for segment in &mut self.persisted_segments {
+            apply(&mut segment.records);
+            segment.sync_meta();
+        }
+
+        apply(&mut self.writing_segment.records);
+        self.writing_segment.sync_meta();
     }
 
     pub(crate) fn segment_count(&self) -> usize {
         self.persisted_segments.len() + 1
     }
 
-    pub(crate) fn all_live_records(&self) -> Vec<StoredRecord> {
+    pub(crate) fn all_live_records(
+        &self,
+        is_deleted: impl Fn(InternalDocId) -> bool,
+    ) -> Vec<StoredRecord> {
         let persisted_capacity = self
             .persisted_segments
             .iter()
@@ -63,29 +61,66 @@ impl SegmentManager {
         let mut records =
             Vec::with_capacity(persisted_capacity + self.writing_segment.records.len());
 
-        collect_live_records(self.persisted_segments(), &mut records);
-        collect_live_records_from_segment(self.writing_segment(), &mut records);
+        for segment in &self.persisted_segments {
+            collect_visible_records(&segment.records, &is_deleted, &mut records);
+        }
 
+        collect_visible_records(&self.writing_segment.records, &is_deleted, &mut records);
         records.sort_by_key(|record| record.doc_id);
         records
     }
 
     pub(crate) fn record_by_internal_id(&self, doc_id: InternalDocId) -> Option<&StoredRecord> {
-        if let Some(record) = record_in_segment_by_internal_id(&self.writing_segment, doc_id) {
+        if let Some(record) =
+            record_in_segment_by_internal_id(&self.writing_segment.records, doc_id)
+        {
             return Some(record);
         }
 
         for segment in &self.persisted_segments {
-            if !segment_contains_doc_id(segment, doc_id) {
+            if !segment_contains_doc_id(&segment.meta, doc_id) {
                 continue;
             }
 
-            if let Some(record) = record_in_segment_by_internal_id(segment, doc_id) {
+            if let Some(record) = record_in_segment_by_internal_id(&segment.records, doc_id) {
                 return Some(record);
             }
         }
 
         None
+    }
+
+    pub(crate) fn rebuild_metadata(
+        &self,
+        meta: &mut MetadataStore,
+        deleted_doc_ids: &[InternalDocId],
+    ) {
+        meta.clear();
+
+        for &doc_id in deleted_doc_ids {
+            meta.mark_deleted(doc_id);
+        }
+
+        for segment in &self.persisted_segments {
+            index_segment_meta(&segment.records, meta);
+        }
+
+        index_segment_meta(&self.writing_segment.records, meta);
+    }
+
+    pub(crate) fn rebuild_indexes(&mut self, vector_field: &VectorFieldSchema) {
+        self.persisted_segments = self
+            .persisted_segments
+            .iter()
+            .map(|segment| {
+                PersistedSegment::new(segment.meta.clone(), segment.records.clone(), vector_field)
+            })
+            .collect();
+        self.writing_segment = WritingSegment::new(
+            self.writing_segment.meta.clone(),
+            self.writing_segment.records.clone(),
+            vector_field,
+        );
     }
 
     pub(crate) fn append_new_record(
@@ -99,38 +134,57 @@ impl SegmentManager {
         self.writing_segment.records.push(StoredRecord {
             doc_id,
             state: RecordState::Live,
-            doc,
+            doc: doc.clone(),
         });
 
-        rebuild_search_resources(&mut self.writing_segment, vector_field);
+        if let Some(index) = &mut self.writing_segment.flat_index {
+            index.insert(doc_id, doc.vector.clone());
+        }
+
+        if let Some(index) = &mut self.writing_segment.hnsw_index {
+            index.insert(doc_id, doc.vector);
+        }
+
+        self.writing_segment.sync_meta();
         self.rotate_writing_segment_if_needed(next_segment_id, segment_max_docs, vector_field);
     }
 
-    pub(crate) fn update_doc(
+    pub(crate) fn mark_writing_deleted(&mut self, doc_id: InternalDocId) -> bool {
+        let Some(record) = live_record_by_internal_id(&mut self.writing_segment.records, doc_id)
+        else {
+            return false;
+        };
+
+        record.state = RecordState::Deleted;
+        self.writing_segment.sync_meta();
+        true
+    }
+
+    pub(crate) fn mark_deleted(
         &mut self,
-        id: &DocId,
-        doc: Doc,
+        doc_id: InternalDocId,
         vector_field: &VectorFieldSchema,
     ) -> bool {
-        let Some(touched) = self.mutate_doc(id, |record| record.doc = doc.clone()) else {
-            return false;
-        };
+        if self.mark_writing_deleted(doc_id) {
+            return true;
+        }
 
-        self.rebuild_touched_segment(touched, vector_field);
-        true
-    }
+        for index in 0..self.persisted_segments.len() {
+            if !segment_contains_doc_id(&self.persisted_segments[index].meta, doc_id) {
+                continue;
+            }
 
-    pub(crate) fn delete_doc(&mut self, id: &DocId, vector_field: &VectorFieldSchema) -> bool {
-        let Some(touched) = self.mark_deleted(id) else {
-            return false;
-        };
+            let segment = &mut self.persisted_segments[index];
+            let Some(record) = live_record_by_internal_id(&mut segment.records, doc_id) else {
+                continue;
+            };
 
-        self.rebuild_touched_segment(touched, vector_field);
-        true
-    }
+            record.state = RecordState::Deleted;
+            segment.rebuild_search_resources(vector_field);
+            return true;
+        }
 
-    pub(crate) fn mark_deleted(&mut self, id: &DocId) -> Option<TouchedSegment> {
-        self.mutate_doc(id, |record| record.state = RecordState::Deleted)
+        false
     }
 
     pub(crate) fn optimize(
@@ -138,8 +192,9 @@ impl SegmentManager {
         next_segment_id: &mut SegmentId,
         segment_max_docs: usize,
         vector_field: &VectorFieldSchema,
+        is_deleted: impl Fn(InternalDocId) -> bool,
     ) {
-        let all_live_records = self.all_live_records();
+        let all_live_records = self.all_live_records(is_deleted);
         let rebuilt_capacity =
             (all_live_records.len() + segment_max_docs.saturating_sub(1)) / segment_max_docs.max(1);
         let mut rebuilt_segments = Vec::with_capacity(rebuilt_capacity);
@@ -147,22 +202,49 @@ impl SegmentManager {
 
         for record in all_live_records {
             if current_segment.records.len() >= segment_max_docs {
-                seal_segment(&mut rebuilt_segments, current_segment, next_segment_id);
+                seal_segment(
+                    &mut rebuilt_segments,
+                    current_segment,
+                    next_segment_id,
+                    vector_field,
+                );
                 current_segment = Self::empty_writing_segment(vector_field);
             }
 
             current_segment.records.push(record);
         }
 
-        if current_segment.records.is_empty() {
-            self.persisted_segments = rebuilt_segments;
+        if !current_segment.records.is_empty() {
+            seal_segment(
+                &mut rebuilt_segments,
+                current_segment,
+                next_segment_id,
+                vector_field,
+            );
+        }
+
+        self.persisted_segments = rebuilt_segments;
+        self.writing_segment = Self::empty_writing_segment(vector_field);
+    }
+
+    pub(crate) fn seal_writing_segment(
+        &mut self,
+        next_segment_id: &mut SegmentId,
+        vector_field: &VectorFieldSchema,
+    ) {
+        if self.writing_segment.meta.doc_count == 0 {
             self.writing_segment = Self::empty_writing_segment(vector_field);
             return;
         }
 
-        seal_segment(&mut rebuilt_segments, current_segment, next_segment_id);
-        self.persisted_segments = rebuilt_segments;
-        self.writing_segment = Self::empty_writing_segment(vector_field);
+        let segment_id = *next_segment_id;
+        *next_segment_id = next_segment_id.next();
+        let writing = std::mem::replace(
+            &mut self.writing_segment,
+            Self::empty_writing_segment(vector_field),
+        );
+        self.persisted_segments
+            .push(seal_writing_segment(writing, segment_id, vector_field));
     }
 
     fn rotate_writing_segment_if_needed(
@@ -175,82 +257,17 @@ impl SegmentManager {
             return;
         }
 
-        let new_id = *next_segment_id;
-        *next_segment_id = next_segment_id.next();
-
-        let mut persisted = std::mem::replace(
-            &mut self.writing_segment,
-            Self::empty_writing_segment(vector_field),
-        );
-        persisted.mark_persisted();
-        persisted.meta.id = new_id;
-        persisted.meta.path = segment_file_name(new_id);
-        persisted.sync_meta();
-        self.persisted_segments.push(persisted);
-    }
-
-    pub(crate) fn rebuild_touched_segment(
-        &mut self,
-        touched: TouchedSegment,
-        vector_field: &VectorFieldSchema,
-    ) {
-        match touched {
-            TouchedSegment::Writing => {
-                rebuild_search_resources(&mut self.writing_segment, vector_field);
-            }
-            TouchedSegment::Persisted(index) => {
-                rebuild_search_resources(&mut self.persisted_segments[index], vector_field);
-            }
-        }
-    }
-
-    fn mutate_doc(
-        &mut self,
-        id: &DocId,
-        mut mutate: impl FnMut(&mut StoredRecord),
-    ) -> Option<TouchedSegment> {
-        let touched = self.find_live_doc(id)?;
-
-        match touched {
-            TouchedSegment::Writing => {
-                let record = live_record_in_segment(&mut self.writing_segment, id)
-                    .expect("writing segment record should exist");
-                mutate(record);
-            }
-            TouchedSegment::Persisted(index) => {
-                let record = live_record_in_segment(&mut self.persisted_segments[index], id)
-                    .expect("persisted segment record should exist");
-                mutate(record);
-            }
-        }
-
-        Some(touched)
-    }
-
-    fn find_live_doc(&self, id: &DocId) -> Option<TouchedSegment> {
-        if has_live_doc(&self.writing_segment, id) {
-            return Some(TouchedSegment::Writing);
-        }
-
-        for (index, segment) in self.persisted_segments.iter().enumerate() {
-            if has_live_doc(segment, id) {
-                return Some(TouchedSegment::Persisted(index));
-            }
-        }
-
-        None
+        self.seal_writing_segment(next_segment_id, vector_field);
     }
 }
 
-fn collect_live_records(segments: &[SegmentFile], out: &mut Vec<StoredRecord>) {
-    for segment in segments {
-        collect_live_records_from_segment(segment, out);
-    }
-}
-
-fn collect_live_records_from_segment(segment: &SegmentFile, out: &mut Vec<StoredRecord>) {
-    for record in &segment.records {
-        if matches!(record.state, RecordState::Deleted) {
+fn collect_visible_records(
+    records: &[StoredRecord],
+    is_deleted: &impl Fn(InternalDocId) -> bool,
+    out: &mut Vec<StoredRecord>,
+) {
+    for record in records {
+        if matches!(record.state, RecordState::Deleted) || is_deleted(record.doc_id) {
             continue;
         }
 
@@ -258,11 +275,11 @@ fn collect_live_records_from_segment(segment: &SegmentFile, out: &mut Vec<Stored
     }
 }
 
-fn segment_contains_doc_id(segment: &SegmentFile, doc_id: InternalDocId) -> bool {
-    let Some(min_doc_id) = segment.meta.min_doc_id else {
+fn segment_contains_doc_id(meta: &garuda_types::SegmentMeta, doc_id: InternalDocId) -> bool {
+    let Some(min_doc_id) = meta.min_doc_id else {
         return false;
     };
-    let Some(max_doc_id) = segment.meta.max_doc_id else {
+    let Some(max_doc_id) = meta.max_doc_id else {
         return false;
     };
 
@@ -270,34 +287,20 @@ fn segment_contains_doc_id(segment: &SegmentFile, doc_id: InternalDocId) -> bool
 }
 
 fn record_in_segment_by_internal_id(
-    segment: &SegmentFile,
+    records: &[StoredRecord],
     doc_id: InternalDocId,
 ) -> Option<&StoredRecord> {
-    segment
-        .records
+    records
         .iter()
         .find(|record| record.doc_id == doc_id && matches!(record.state, RecordState::Live))
 }
 
-fn seal_segment(
-    rebuilt_segments: &mut Vec<SegmentFile>,
-    mut segment: SegmentFile,
-    next_segment_id: &mut SegmentId,
-) {
-    segment.mark_persisted();
-    segment.sync_meta();
-    segment.meta.id = *next_segment_id;
-    segment.meta.path = segment_file_name(*next_segment_id);
-    *next_segment_id = next_segment_id.next();
-    rebuilt_segments.push(segment);
-}
-
-fn live_record_in_segment<'a>(
-    segment: &'a mut SegmentFile,
-    id: &DocId,
-) -> Option<&'a mut StoredRecord> {
-    for record in &mut segment.records {
-        if record.doc.id != *id || matches!(record.state, RecordState::Deleted) {
+fn live_record_by_internal_id(
+    records: &mut [StoredRecord],
+    doc_id: InternalDocId,
+) -> Option<&mut StoredRecord> {
+    for record in records {
+        if record.doc_id != doc_id || matches!(record.state, RecordState::Deleted) {
             continue;
         }
 
@@ -307,9 +310,26 @@ fn live_record_in_segment<'a>(
     None
 }
 
-fn has_live_doc(segment: &SegmentFile, id: &DocId) -> bool {
-    segment
-        .records
-        .iter()
-        .any(|record| record.doc.id == *id && matches!(record.state, RecordState::Live))
+fn seal_segment(
+    rebuilt_segments: &mut Vec<PersistedSegment>,
+    current_segment: WritingSegment,
+    next_segment_id: &mut SegmentId,
+    vector_field: &VectorFieldSchema,
+) {
+    let new_id = *next_segment_id;
+    *next_segment_id = next_segment_id.next();
+    let mut segment = seal_writing_segment(current_segment, new_id, vector_field);
+    segment.meta.path = segment_file_name(new_id);
+    rebuilt_segments.push(segment);
+}
+
+fn index_segment_meta(records: &[StoredRecord], meta: &mut MetadataStore) {
+    for record in records {
+        if matches!(record.state, RecordState::Deleted) {
+            meta.mark_deleted(record.doc_id);
+            continue;
+        }
+
+        meta.index_live_doc(record.doc.id.clone(), record.doc_id);
+    }
 }

@@ -1,9 +1,14 @@
+mod binary_codec;
 mod codec;
 mod io;
 mod layout;
 mod snapshots;
 mod version;
 
+pub use binary_codec::{
+    BinaryReader, BinaryWriter, checksum, read_scalar_value, read_segment_meta, write_scalar_value,
+    write_segment_meta,
+};
 pub use io::{
     create_dir_all, create_empty_file, read_file, rename_path, sync_directory,
     write_file_atomically,

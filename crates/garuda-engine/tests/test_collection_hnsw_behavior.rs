@@ -170,6 +170,72 @@ fn delete_on_persisted_segment_updates_hnsw_results() {
 }
 
 #[test]
+fn delete_on_persisted_segment_with_small_ef_search_still_returns_live_hit() {
+    let (_root, db) = database("hnsw-persisted-delete-small-ef-search");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+    seed_collection(&collection);
+    collection.flush().expect("flush");
+
+    collection
+        .create_index(
+            &field_name("embedding"),
+            IndexParams::Hnsw(HnswIndexParams::default()),
+        )
+        .expect("create hnsw index");
+
+    let deleted = collection.delete(vec![doc_id("doc-1")]);
+    assert!(deleted.iter().all(|result| result.status.is_ok()));
+
+    let mut query = VectorQuery::by_vector(
+        field_name("embedding"),
+        dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
+        top_k(1),
+    );
+    query.ef_search = Some(HnswEfSearch::new(1).expect("valid ef_search"));
+
+    let results = collection.query(query).expect("query after delete");
+    assert_eq!(results[0].id.as_str(), "doc-2");
+}
+
+#[test]
+fn update_on_persisted_segment_with_small_ef_search_removes_old_vector() {
+    let (_root, db) = database("hnsw-persisted-update-small-ef-search");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+    seed_collection(&collection);
+    collection.flush().expect("flush");
+
+    collection
+        .create_index(
+            &field_name("embedding"),
+            IndexParams::Hnsw(HnswIndexParams::default()),
+        )
+        .expect("create hnsw index");
+
+    let updated = collection.update(vec![build_doc(
+        "doc-1",
+        1,
+        "alpha",
+        0.9,
+        [0.0, 1.0, 0.0, 0.0],
+    )]);
+    assert!(updated.iter().all(|result| result.status.is_ok()));
+
+    let mut query = VectorQuery::by_vector(
+        field_name("embedding"),
+        dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
+        top_k(1),
+    );
+    query.ef_search = Some(HnswEfSearch::new(1).expect("valid ef_search"));
+
+    let results = collection.query(query).expect("query after update");
+    assert_eq!(results[0].id.as_str(), "doc-2");
+}
+
+#[test]
 fn upsert_on_writing_segment_updates_hnsw_results() {
     let (_root, db) = database("hnsw-writing-upsert");
     let collection = db

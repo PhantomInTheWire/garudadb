@@ -5,5 +5,4 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-garuda-meta = { path = "../garuda-meta" }
 garuda-types = { path = "../garuda-types" }

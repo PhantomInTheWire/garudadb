@@ -1,4 +1,4 @@
-use garuda_segment::SegmentFile;
+use garuda_segment::{PersistedSegment, WritingSegment};
 use garuda_types::{
     CollectionOptions, CollectionSchema, InternalDocId, Manifest, ManifestVersionId, SegmentId,
     SnapshotId,
@@ -30,8 +30,8 @@ impl CollectionCatalog {
 
     pub(crate) fn to_manifest(
         &self,
-        writing_segment: &SegmentFile,
-        persisted_segments: &[SegmentFile],
+        writing_segment: &WritingSegment,
+        persisted_segments: &[PersistedSegment],
     ) -> Manifest {
         Manifest {
             schema: self.schema.clone(),

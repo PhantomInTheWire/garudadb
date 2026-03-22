@@ -427,6 +427,21 @@ impl HnswGraph {
         self.levels[level.get()][node.get()].push(neighbor);
     }
 
+    pub fn push_node(&mut self, level: HnswLevel) -> NodeIndex {
+        let node = NodeIndex::new(self.node_levels.len());
+        self.node_levels.push(level);
+
+        while self.levels.len() <= level.get() {
+            self.levels.push(Vec::new());
+        }
+
+        for neighbors_by_node in &mut self.levels {
+            neighbors_by_node.push(Vec::new());
+        }
+
+        node
+    }
+
     fn validate(
         &self,
         entry_count: usize,
