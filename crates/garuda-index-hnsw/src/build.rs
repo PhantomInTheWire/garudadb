@@ -1,6 +1,7 @@
 use crate::{
     HnswBuildEntry, HnswIndex, HnswLevel, compare::compare_score_then_doc_id, heap::ScoredNode,
 };
+use garuda_math::score_doc;
 use garuda_types::{InternalDocId, NodeIndex};
 
 impl HnswIndex {
@@ -35,7 +36,7 @@ impl HnswIndex {
             });
         }
 
-        self.prune_to_max_neighbors(level, candidates)
+        self.prune_to_max_neighbors(level, node, candidates)
     }
 
     fn add_reverse_neighbor(&mut self, level: HnswLevel, node: NodeIndex, neighbor: NodeIndex) {
@@ -60,35 +61,94 @@ impl HnswIndex {
             score: self.score_node(node_vector, neighbor),
         });
 
-        let neighbors = self.prune_to_max_neighbors(level, candidates);
+        let neighbors = self.prune_to_max_neighbors(level, node, candidates);
         self.graph.replace_neighbors(level, node, neighbors);
     }
 
     fn prune_to_max_neighbors(
         &self,
         level: HnswLevel,
+        node: NodeIndex,
         mut candidates: Vec<ScoredNode>,
     ) -> Vec<NodeIndex> {
         candidates.sort_by(|left, right| {
             let left_doc_id = self.entries[left.index.get()].doc_id();
             let right_doc_id = self.entries[right.index.get()].doc_id();
 
-            compare_score_then_doc_id(
-                left.score,
-                left_doc_id,
-                right.score,
-                right_doc_id,
-            )
+            compare_score_then_doc_id(left.score, left_doc_id, right.score, right_doc_id)
         });
-        
-        let max_neighbors = self.config.neighbor_limits().for_level(level);
-        candidates.truncate(max_neighbors);
 
-        let neighbors: Vec<NodeIndex> = candidates
-            .into_iter()
-            .map(|candidate| candidate.index)
-            .collect();
-        neighbors
+        let prune_width = self.config.build.prune_width.get() as usize;
+        if candidates.len() > prune_width {
+            candidates.truncate(prune_width);
+        }
+
+        let max_neighbors = self.config.neighbor_limits().for_level(level);
+        let min_neighbor_count = self.config.min_neighbor_count().get() as usize;
+        let mut neighbors = Vec::with_capacity(max_neighbors);
+
+        for candidate in &candidates {
+            if candidate.index == node || neighbors.contains(&candidate.index) {
+                continue;
+            }
+
+            if !self.is_distinct_neighbor(node, candidate, &neighbors) {
+                continue;
+            }
+
+            neighbors.push(candidate.index);
+
+            if neighbors.len() >= max_neighbors {
+                return neighbors;
+            }
+        }
+
+        if neighbors.len() < min_neighbor_count {
+            for candidate in &candidates {
+                if candidate.index == node || neighbors.contains(&candidate.index) {
+                    continue;
+                }
+
+                neighbors.push(candidate.index);
+
+                if neighbors.len() >= min_neighbor_count || neighbors.len() >= max_neighbors {
+                    return neighbors;
+                }
+            }
+        }
+
+        return neighbors;
+    }
+
+    fn is_distinct_neighbor(
+        &self,
+        node: NodeIndex,
+        candidate: &ScoredNode,
+        neighbors: &[NodeIndex],
+    ) -> bool {
+        let candidate_vector = self.entries[candidate.index.get()].vector();
+
+        for &selected_neighbor in neighbors {
+            let selected_vector = self.entries[selected_neighbor.get()].vector();
+            let selected_score = score_doc(
+                self.config.metric,
+                candidate_vector.as_slice(),
+                selected_vector.as_slice(),
+            );
+
+            if selected_score >= candidate.score {
+                return false;
+            }
+        }
+
+        let node_vector = self.entries[node.get()].vector();
+        let node_score = score_doc(
+            self.config.metric,
+            candidate_vector.as_slice(),
+            node_vector.as_slice(),
+        );
+
+        return node_score == candidate.score;
     }
 }
 

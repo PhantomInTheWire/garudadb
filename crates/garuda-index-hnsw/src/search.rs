@@ -1,6 +1,6 @@
 use crate::{
     HnswHit, HnswIndex, HnswSearchRequest,
-    compare::{compare_score_then_doc_id},
+    compare::compare_score_then_doc_id,
     heap::{ScoredNode, WorstScoredNode},
 };
 use garuda_types::{DenseVector, HnswLevel, NodeIndex, Status, StatusCode};
