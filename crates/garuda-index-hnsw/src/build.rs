@@ -192,15 +192,31 @@ fn sample_node_level(
     node: NodeIndex,
     doc_id: InternalDocId,
 ) -> HnswLevel {
-    let scale = config.build.scaling_factor.get() as usize;
     let max_level = config.max_graph_level();
-    let mut level = 0usize;
-    let mut value = node.get() + (doc_id.get() as usize);
-
-    while level < max_level && value % scale == 0 {
-        level += 1;
-        value /= scale;
+    if max_level == 0 {
+        return HnswLevel::new(0);
     }
 
-    HnswLevel::new(level)
+    let sample = hashed_unit_interval(node, doc_id);
+    let scale = f64::from(config.build.scaling_factor.get()).ln();
+    let level = (-sample.ln() / scale).floor() as usize;
+
+    HnswLevel::new(level.min(max_level))
+}
+
+fn hashed_unit_interval(node: NodeIndex, doc_id: InternalDocId) -> f64 {
+    const HASH_MIX: u64 = 0x9e37_79b9_7f4a_7c15;
+    const HASH_STEP: u64 = 0xbf58_476d_1ce4_e5b9;
+    const HASH_FINAL: u64 = 0x94d0_49bb_1331_11eb;
+
+    let mut hash = node.get() as u64;
+    hash ^= doc_id.get().wrapping_mul(HASH_MIX);
+    hash ^= hash >> 30;
+    hash = hash.wrapping_mul(HASH_STEP);
+    hash ^= hash >> 27;
+    hash = hash.wrapping_mul(HASH_FINAL);
+    hash ^= hash >> 31;
+
+    let unit = (hash as f64 + 1.0) / (u64::MAX as f64 + 2.0);
+    return unit;
 }
