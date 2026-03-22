@@ -239,8 +239,8 @@ impl HnswNeighborLimits {
         }
     }
 
-    pub fn for_level(self, level: usize) -> usize {
-        match level {
+    pub fn for_level(self, level: HnswLevel) -> usize {
+        match level.get() {
             0 => self.level_zero,
             _ => self.upper_levels,
         }
@@ -606,16 +606,21 @@ impl HnswGraph {
             .expect("hnsw graph entry point")
     }
 
-    pub fn neighbors(&self, level: usize, node: NodeIndex) -> &[NodeIndex] {
-        &self.levels[level][node.get()]
+    pub fn neighbors(&self, level: HnswLevel, node: NodeIndex) -> &[NodeIndex] {
+        &self.levels[level.get()][node.get()]
     }
 
-    pub fn replace_neighbors(&mut self, level: usize, node: NodeIndex, neighbors: Vec<NodeIndex>) {
-        self.levels[level][node.get()] = neighbors;
+    pub fn replace_neighbors(
+        &mut self,
+        level: HnswLevel,
+        node: NodeIndex,
+        neighbors: Vec<NodeIndex>,
+    ) {
+        self.levels[level.get()][node.get()] = neighbors;
     }
 
-    pub fn add_neighbor(&mut self, level: usize, node: NodeIndex, neighbor: NodeIndex) {
-        self.levels[level][node.get()].push(neighbor);
+    pub fn add_neighbor(&mut self, level: HnswLevel, node: NodeIndex, neighbor: NodeIndex) {
+        self.levels[level.get()][node.get()].push(neighbor);
     }
 
     fn validate(
@@ -672,7 +677,7 @@ impl HnswGraph {
         }
 
         for (level, nodes) in self.levels.iter().enumerate() {
-            let max_neighbors = neighbor_limits.for_level(level);
+            let max_neighbors = neighbor_limits.for_level(HnswLevel::new(level));
 
             for neighbors in nodes {
                 if neighbors.len() <= max_neighbors {
