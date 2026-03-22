@@ -3,8 +3,7 @@ use crate::filter_parser::parse_filter;
 use crate::state::CollectionRuntime;
 use garuda_planner::{QueryPlan, SegmentFilterPlan, SegmentSearchPlan, build_query_plan};
 use garuda_segment::{
-    FlatSearchRequest, HnswSegmentSearchRequest, SegmentFilter, search_segment_flat,
-    search_segment_hnsw,
+    FlatSearchRequest, HnswSegmentSearchRequest, SegmentFilter, search_flat, search_hnsw,
 };
 use garuda_types::{
     CollectionSchema, DenseVector, Doc, QueryVectorSource, Status, StatusCode, TopK,
@@ -131,7 +130,7 @@ fn collect_docs_from_segment(
 ) -> Result<(), Status> {
     let filter = segment_filter(&plan.filter);
     let hits = match plan.search {
-        SegmentSearchPlan::Flat => search_segment_flat(
+        SegmentSearchPlan::Flat => search_flat(
             segment,
             FlatSearchRequest {
                 metric: state.catalog.schema.vector.metric,
@@ -140,7 +139,7 @@ fn collect_docs_from_segment(
                 filter,
             },
         )?,
-        SegmentSearchPlan::Hnsw { ef_search } => search_segment_hnsw(
+        SegmentSearchPlan::Hnsw { ef_search } => search_hnsw(
             segment,
             HnswSegmentSearchRequest {
                 query_vector,

@@ -5,7 +5,7 @@ mod storage;
 mod types;
 mod wal;
 
-pub use search::{search_segment_flat, search_segment_hnsw};
+pub use search::{search_flat, search_hnsw};
 pub use storage::{
     doc_exists, ensure_segment_files, read_segment, remove_segment, sync_segment, write_segment,
 };

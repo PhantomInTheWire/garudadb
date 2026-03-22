@@ -1,6 +1,6 @@
 use garuda_segment::{
     HnswSegmentSearchRequest, SegmentFile, SegmentFilter, SegmentKind, StoredRecord, read_segment,
-    search_segment_hnsw, segment_meta, sync_segment, write_segment,
+    search_hnsw, segment_meta, sync_segment, write_segment,
 };
 use garuda_storage::{read_file, segment_hnsw_index_path};
 use garuda_types::{
@@ -39,7 +39,7 @@ fn persisted_hnsw_sidecar_roundtrips_search() {
     let reopened =
         read_segment(&root, &segment.meta, &vector_field).expect("read segment with hnsw sidecar");
 
-    let hits = search_segment_hnsw(
+    let hits = search_hnsw(
         &reopened,
         HnswSegmentSearchRequest {
             query_vector: &DenseVector::parse(vec![1.0, 0.0, 0.0, 0.0]).expect("valid vector"),

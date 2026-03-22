@@ -1,6 +1,6 @@
 use garuda_segment::{
     FlatSearchRequest, SegmentFile, SegmentFilter, SegmentKind, StoredRecord, read_segment,
-    search_segment_flat, segment_meta, sync_segment, write_segment,
+    search_flat, segment_meta, sync_segment, write_segment,
 };
 use garuda_storage::{read_file, segment_flat_index_path};
 use garuda_types::{
@@ -38,7 +38,7 @@ fn persisted_flat_sidecar_roundtrips_exact_search() {
     let reopened =
         read_segment(&root, &segment.meta, &vector_field).expect("read segment with flat sidecar");
 
-    let hits = search_segment_flat(
+    let hits = search_flat(
         &reopened,
         FlatSearchRequest {
             metric: DistanceMetric::Cosine,
@@ -118,7 +118,7 @@ fn filtered_exact_search_does_not_truncate_matching_hits_before_filtering() {
         "category".to_string(),
         garuda_types::ScalarValue::String("beta".to_string()),
     );
-    let hits = search_segment_flat(
+    let hits = search_flat(
         &reopened,
         FlatSearchRequest {
             metric: DistanceMetric::Cosine,
