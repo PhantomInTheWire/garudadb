@@ -587,6 +587,10 @@ impl HnswGraph {
         &self.node_levels
     }
 
+    fn max_node_level(&self) -> HnswLevel {
+        max(&self.node_levels).expect("hnsw graph max node level")
+    }
+
     pub fn max_level(&self) -> HnswLevel {
         assert!(!self.node_levels.is_empty(), "hnsw graph max level");
         HnswLevel::new(self.levels.len() - 1)
@@ -653,7 +657,7 @@ impl HnswGraph {
             ));
         }
 
-        if self.level_count() != self.max_level().get() + 1 {
+        if self.level_count() != self.max_node_level().get() + 1 {
             return Err(Status::err(
                 StatusCode::Internal,
                 "persisted hnsw graph level count does not match node levels",

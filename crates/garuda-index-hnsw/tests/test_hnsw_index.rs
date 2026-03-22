@@ -32,6 +32,18 @@ fn graph_from_parts_rejects_graph_without_top_level_node() {
 }
 
 #[test]
+fn graph_from_parts_rejects_level_count_that_does_not_match_node_levels() {
+    let result = HnswGraph::from_parts(
+        vec![HnswLevel::new(1), HnswLevel::new(0)],
+        vec![vec![Vec::<NodeIndex>::new(), Vec::<NodeIndex>::new()]],
+        2,
+        HnswNeighborLimits::new(HnswM::new(16).expect("valid hnsw max_neighbors")),
+    );
+
+    assert!(result.is_err());
+}
+
+#[test]
 fn graph_from_parts_allows_level_zero_to_use_twice_m_neighbors() {
     let result = HnswGraph::from_parts(
         vec![HnswLevel::new(0), HnswLevel::new(0), HnswLevel::new(0)],
