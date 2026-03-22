@@ -35,7 +35,7 @@ pub(crate) fn execute_query(
     query: VectorQuery,
 ) -> Result<Vec<Doc>, Status> {
     let filter = parse_query_filter(query.filter.as_deref(), &state.catalog.schema)?;
-    let plan = build_query_plan(query, filter, &state.catalog.schema.vector.index);
+    let plan = build_query_plan(query, filter, &state.catalog.schema.vector.indexes);
 
     if plan.field_name != state.catalog.schema.vector.name {
         return Err(Status::err(

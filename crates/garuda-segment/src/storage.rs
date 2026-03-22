@@ -44,27 +44,27 @@ pub fn write_segment(
     let bytes = encode_segment(segment)?;
     write_file_atomically(&segment_data_path(root, segment.meta.id), &bytes)?;
 
-    match (&segment.flat_index, &segment.hnsw_index) {
-        (Some(_), None) if should_use_persisted_flat(segment, vector_field) => {
-            let sidecar = encode_flat_index(
-                flat_index_entries(&segment.records, segment.meta.doc_count),
-                vector_field,
-            )?;
-            write_file_atomically(&segment_flat_index_path(root, segment.meta.id), &sidecar)?;
-            remove_path_if_exists(&segment_hnsw_index_path(root, segment.meta.id))?;
-            return Ok(());
-        }
-        (None, Some(index)) if should_persist_hnsw(segment) => {
-            let sidecar = encode_hnsw_graph(index.graph())?;
-            write_file_atomically(&segment_hnsw_index_path(root, segment.meta.id), &sidecar)?;
-            remove_path_if_exists(&segment_flat_index_path(root, segment.meta.id))?;
-            return Ok(());
-        }
-        _ => {}
+    if should_use_persisted_flat(segment, vector_field) {
+        let sidecar = encode_flat_index(
+            flat_index_entries(&segment.records, segment.meta.doc_count),
+            vector_field,
+        )?;
+        write_file_atomically(&segment_flat_index_path(root, segment.meta.id), &sidecar)?;
+    } else {
+        remove_path_if_exists(&segment_flat_index_path(root, segment.meta.id))?;
     }
 
-    remove_path_if_exists(&segment_flat_index_path(root, segment.meta.id))?;
-    remove_path_if_exists(&segment_hnsw_index_path(root, segment.meta.id))?;
+    if should_persist_hnsw(segment, vector_field) {
+        let index = segment
+            .hnsw_index
+            .as_ref()
+            .expect("enabled hnsw state should exist");
+        let sidecar = encode_hnsw_graph(index.graph())?;
+        write_file_atomically(&segment_hnsw_index_path(root, segment.meta.id), &sidecar)?;
+    } else {
+        remove_path_if_exists(&segment_hnsw_index_path(root, segment.meta.id))?;
+    }
+
     Ok(())
 }
 

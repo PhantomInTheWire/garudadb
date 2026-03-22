@@ -3,7 +3,8 @@ use garuda_engine::Database;
 use garuda_types::{
     CollectionName, CollectionOptions, CollectionSchema, DistanceMetric, FieldName,
     FlatIndexParams, HnswIndexParams, IndexKind, IndexParams, Nullability, ScalarFieldSchema,
-    ScalarType, ScalarValue, TopK, VectorDimension, VectorFieldSchema, VectorQuery,
+    ScalarType, ScalarValue, TopK, VectorDimension, VectorFieldSchema, VectorIndexState,
+    VectorQuery,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -112,7 +113,7 @@ fn main() -> Result<(), String> {
                     dimension: VectorDimension::new(dimension.get())
                         .expect("cli dimension is non-zero"),
                     metric: DistanceMetric::Cosine,
-                    index: IndexParams::Flat(FlatIndexParams),
+                    indexes: VectorIndexState::DefaultFlat,
                 },
             };
 

@@ -3,7 +3,7 @@ mod common;
 use common::{database, default_options, default_schema, doc_id, field_name, seed_collection};
 use garuda_types::{
     DenseVector, Doc, HnswIndexParams, IndexKind, IndexParams, ScalarFieldSchema, ScalarType,
-    ScalarValue,
+    ScalarValue, VectorIndexState,
 };
 use std::collections::BTreeMap;
 
@@ -21,7 +21,10 @@ fn create_drop_index_and_column_ddl_roundtrip() {
             IndexParams::Hnsw(HnswIndexParams::default()),
         )
         .expect("create hnsw index");
-    assert_eq!(collection.schema().vector.index.kind(), IndexKind::Hnsw);
+    assert_eq!(
+        collection.schema().vector.indexes.default_kind(),
+        IndexKind::Hnsw
+    );
 
     collection
         .add_column(ScalarFieldSchema {
@@ -44,9 +47,12 @@ fn create_drop_index_and_column_ddl_roundtrip() {
         .drop_column(&field_name("is_flagged"))
         .expect("drop column");
     collection
-        .drop_index(&field_name("embedding"))
+        .drop_index(&field_name("embedding"), IndexKind::Hnsw)
         .expect("drop index");
-    assert_eq!(collection.schema().vector.index.kind(), IndexKind::Flat);
+    assert_eq!(
+        collection.schema().vector.indexes,
+        VectorIndexState::DefaultFlat
+    );
 }
 
 #[test]

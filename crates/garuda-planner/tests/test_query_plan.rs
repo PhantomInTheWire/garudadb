@@ -1,7 +1,7 @@
 use garuda_planner::{SegmentSearchPlan, build_query_plan};
 use garuda_types::{
-    DenseVector, FieldName, FilterExpr, HnswEfSearch, HnswIndexParams, IndexParams, ScalarValue,
-    TopK, VectorProjection, VectorQuery,
+    DenseVector, FieldName, FilterExpr, HnswEfSearch, HnswIndexParams, IndexKind, ScalarValue,
+    TopK, VectorIndexState, VectorProjection, VectorQuery,
 };
 
 #[test]
@@ -19,7 +19,10 @@ fn hnsw_query_plan_should_use_public_ef_search_override() {
             "category".to_string(),
             ScalarValue::String("alpha".to_string()),
         )),
-        &IndexParams::Hnsw(HnswIndexParams::default()),
+        &VectorIndexState::FlatAndHnsw {
+            default: IndexKind::Hnsw,
+            hnsw: HnswIndexParams::default(),
+        },
     );
 
     assert_eq!(

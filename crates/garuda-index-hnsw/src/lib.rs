@@ -9,6 +9,8 @@ mod build;
 mod compare;
 mod heap;
 mod search;
+#[cfg(test)]
+mod search_tests;
 
 use build::sample_node_levels;
 

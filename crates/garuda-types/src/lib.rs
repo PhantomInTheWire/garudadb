@@ -851,6 +851,82 @@ impl IndexParams {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum VectorIndexState {
+    DefaultFlat,
+    HnswOnly(HnswIndexParams),
+    FlatAndHnsw {
+        default: IndexKind,
+        hnsw: HnswIndexParams,
+    },
+}
+
+impl VectorIndexState {
+    pub fn default_kind(&self) -> IndexKind {
+        match self {
+            Self::DefaultFlat => IndexKind::Flat,
+            Self::HnswOnly(_) => IndexKind::Hnsw,
+            Self::FlatAndHnsw { default, .. } => *default,
+        }
+    }
+
+    pub fn has_flat(&self) -> bool {
+        match self {
+            Self::DefaultFlat | Self::FlatAndHnsw { .. } => true,
+            Self::HnswOnly(_) => false,
+        }
+    }
+
+    pub fn has_hnsw(&self) -> bool {
+        match self {
+            Self::DefaultFlat => false,
+            Self::HnswOnly(_) | Self::FlatAndHnsw { .. } => true,
+        }
+    }
+
+    pub fn hnsw_params(&self) -> Option<&HnswIndexParams> {
+        match self {
+            Self::DefaultFlat => None,
+            Self::HnswOnly(params) => Some(params),
+            Self::FlatAndHnsw { hnsw, .. } => Some(hnsw),
+        }
+    }
+
+    pub fn enable(self, params: IndexParams) -> Self {
+        match params {
+            IndexParams::Flat(_) => match self {
+                Self::DefaultFlat => Self::DefaultFlat,
+                Self::HnswOnly(hnsw) => Self::FlatAndHnsw {
+                    default: IndexKind::Hnsw,
+                    hnsw,
+                },
+                Self::FlatAndHnsw { default, hnsw } => Self::FlatAndHnsw { default, hnsw },
+            },
+            IndexParams::Hnsw(hnsw) => match self {
+                Self::DefaultFlat => Self::FlatAndHnsw {
+                    default: IndexKind::Hnsw,
+                    hnsw,
+                },
+                Self::HnswOnly(_) => Self::HnswOnly(hnsw),
+                Self::FlatAndHnsw { .. } => Self::FlatAndHnsw {
+                    default: IndexKind::Hnsw,
+                    hnsw,
+                },
+            },
+        }
+    }
+
+    pub fn drop(self, kind: IndexKind) -> Self {
+        match (self, kind) {
+            (Self::DefaultFlat, _) => Self::DefaultFlat,
+            (Self::HnswOnly(hnsw), IndexKind::Flat) => Self::HnswOnly(hnsw),
+            (Self::HnswOnly(_), IndexKind::Hnsw) => Self::DefaultFlat,
+            (Self::FlatAndHnsw { hnsw, .. }, IndexKind::Flat) => Self::HnswOnly(hnsw),
+            (Self::FlatAndHnsw { .. }, IndexKind::Hnsw) => Self::DefaultFlat,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct OptimizeOptions;
 
@@ -949,7 +1025,7 @@ pub struct VectorFieldSchema {
     pub name: FieldName,
     pub dimension: VectorDimension,
     pub metric: DistanceMetric,
-    pub index: IndexParams,
+    pub indexes: VectorIndexState,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

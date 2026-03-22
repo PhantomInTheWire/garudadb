@@ -26,6 +26,7 @@ pub(crate) fn validate_create_options(options: &CollectionOptions) -> Result<(),
 pub(crate) fn validate_schema(schema: &CollectionSchema) -> Result<(), Status> {
     validate_vector_dimension(schema)?;
     validate_primary_key(schema)?;
+    validate_vector_indexes(schema)?;
 
     let mut seen: HashSet<FieldName> = HashSet::new();
     for field in &schema.fields {
@@ -40,6 +41,15 @@ pub(crate) fn validate_schema(schema: &CollectionSchema) -> Result<(), Status> {
         ));
     }
 
+    Ok(())
+}
+
+fn validate_vector_indexes(schema: &CollectionSchema) -> Result<(), Status> {
+    let Some(params) = schema.vector.indexes.hnsw_params() else {
+        return Ok(());
+    };
+
+    params.neighbor_config()?;
     Ok(())
 }
 

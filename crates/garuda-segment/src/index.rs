@@ -3,40 +3,45 @@ use crate::types::{RecordState, SegmentFile};
 use garuda_index_flat::{FlatIndex, FlatIndexEntry};
 use garuda_index_hnsw::{HnswBuildConfig, HnswBuildEntry, HnswIndex, HnswIndexConfig};
 use garuda_storage::{read_file, segment_flat_index_path, segment_hnsw_index_path};
-use garuda_types::{IndexParams, SegmentId, SegmentMeta, Status, StatusCode, VectorFieldSchema};
+use garuda_types::{SegmentId, SegmentMeta, Status, StatusCode, VectorFieldSchema};
 
 pub(crate) fn build_vector_search_state(
     vector_field: &VectorFieldSchema,
     meta: &SegmentMeta,
     records: &[crate::StoredRecord],
 ) -> (Option<FlatIndex>, Option<HnswIndex>) {
-    match &vector_field.index {
-        IndexParams::Flat(_) => build_flat_search_state(vector_field, meta, records),
-        IndexParams::Hnsw(params) => build_hnsw_search_state(vector_field, meta, records, params),
-    }
+    let flat_index = build_flat_search_state(vector_field, meta, records);
+    let hnsw_index = build_hnsw_search_state(vector_field, meta, records);
+    (flat_index, hnsw_index)
 }
 
 fn build_flat_search_state(
     vector_field: &VectorFieldSchema,
     meta: &SegmentMeta,
     records: &[crate::StoredRecord],
-) -> (Option<FlatIndex>, Option<HnswIndex>) {
+) -> Option<FlatIndex> {
+    if !vector_field.indexes.has_flat() {
+        return None;
+    }
+
     let entries = flat_index_entries(records, meta.doc_count);
     let index = FlatIndex::build(vector_field.dimension, entries)
         .expect("validated segment records should match the vector field dimension");
-    (Some(index), None)
+    Some(index)
 }
 
 fn build_hnsw_search_state(
     vector_field: &VectorFieldSchema,
     meta: &SegmentMeta,
     records: &[crate::StoredRecord],
-    params: &garuda_types::HnswIndexParams,
-) -> (Option<FlatIndex>, Option<HnswIndex>) {
+) -> Option<HnswIndex> {
+    let Some(params) = vector_field.indexes.hnsw_params() else {
+        return None;
+    };
+
     let config = hnsw_index_config(vector_field, params);
     let entries = hnsw_build_entries(&config, records, meta.doc_count);
-    let index = HnswIndex::build(config, entries);
-    (None, Some(index))
+    Some(HnswIndex::build(config, entries))
 }
 
 pub(crate) fn load_vector_search_state(
@@ -46,16 +51,9 @@ pub(crate) fn load_vector_search_state(
     records: &[crate::StoredRecord],
     vector_field: &VectorFieldSchema,
 ) -> Result<(Option<FlatIndex>, Option<HnswIndex>), Status> {
-    match &vector_field.index {
-        IndexParams::Flat(_) => load_flat_search_state(root, segment_id, meta, vector_field),
-        IndexParams::Hnsw(params) => {
-            let bytes = read_file(&segment_hnsw_index_path(root, segment_id))?;
-            let graph = decode_hnsw_graph(&bytes, vector_field, meta.doc_count)?;
-            let config = hnsw_index_config(vector_field, params);
-            let entries = hnsw_build_entries(&config, records, meta.doc_count);
-            Ok((None, Some(HnswIndex::from_parts(config, entries, graph))))
-        }
-    }
+    let flat_index = load_flat_search_state(root, segment_id, meta, vector_field)?;
+    let hnsw_index = load_hnsw_search_state(root, segment_id, meta, records, vector_field)?;
+    Ok((flat_index, hnsw_index))
 }
 
 pub(crate) fn hnsw_index_config(
@@ -79,7 +77,11 @@ fn load_flat_search_state(
     segment_id: SegmentId,
     meta: &SegmentMeta,
     vector_field: &VectorFieldSchema,
-) -> Result<(Option<FlatIndex>, Option<HnswIndex>), Status> {
+) -> Result<Option<FlatIndex>, Status> {
+    if !vector_field.indexes.has_flat() {
+        return Ok(None);
+    }
+
     let bytes = read_file(&segment_flat_index_path(root, segment_id))?;
     let flat_index = decode_flat_index(&bytes, vector_field)?;
 
@@ -90,7 +92,26 @@ fn load_flat_search_state(
         ));
     }
 
-    Ok((Some(flat_index), None))
+    Ok(Some(flat_index))
+}
+
+fn load_hnsw_search_state(
+    root: &std::path::Path,
+    segment_id: SegmentId,
+    meta: &SegmentMeta,
+    records: &[crate::StoredRecord],
+    vector_field: &VectorFieldSchema,
+) -> Result<Option<HnswIndex>, Status> {
+    let Some(params) = vector_field.indexes.hnsw_params() else {
+        return Ok(None);
+    };
+
+    let bytes = read_file(&segment_hnsw_index_path(root, segment_id))?;
+    let graph = decode_hnsw_graph(&bytes, vector_field, meta.doc_count)?;
+    let config = hnsw_index_config(vector_field, params);
+    let entries = hnsw_build_entries(&config, records, meta.doc_count);
+
+    Ok(Some(HnswIndex::from_parts(config, entries, graph)))
 }
 
 pub(crate) fn flat_index_entries(
@@ -142,9 +163,9 @@ pub(crate) fn should_use_persisted_flat(
         return false;
     }
 
-    matches!(vector_field.index, IndexParams::Flat(_))
+    vector_field.indexes.has_flat()
 }
 
-pub(crate) fn should_persist_hnsw(segment: &SegmentFile) -> bool {
-    !segment.is_writing() && segment.meta.doc_count != 0
+pub(crate) fn should_persist_hnsw(segment: &SegmentFile, vector_field: &VectorFieldSchema) -> bool {
+    !segment.is_writing() && segment.meta.doc_count != 0 && vector_field.indexes.has_hnsw()
 }

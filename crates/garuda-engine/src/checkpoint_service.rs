@@ -3,8 +3,8 @@ use garuda_segment::{reset_wal, write_segment};
 use garuda_storage::{
     SnapshotKind, VersionManager, WRITING_SEGMENT_ID, delete_snapshot_path, id_map_snapshot_path,
     manifest_path, read_file, remove_old_snapshots, remove_path_if_exists, segment_data_path,
-    segment_dir, segment_flat_index_path, segment_wal_path, write_delete_snapshot,
-    write_file_atomically, write_id_map_snapshot,
+    segment_dir, segment_flat_index_path, segment_hnsw_index_path, segment_wal_path,
+    write_delete_snapshot, write_file_atomically, write_id_map_snapshot,
 };
 use garuda_types::{SegmentId, Status, StatusCode};
 use std::collections::HashSet;
@@ -153,6 +153,10 @@ fn capture_checkpoint_files(state: &CollectionRuntime) -> Result<CheckpointFiles
             &state.path,
             segment.meta.id,
         ))?);
+        files.push(capture_file(&segment_hnsw_index_path(
+            &state.path,
+            segment.meta.id,
+        ))?);
     }
 
     files.push(capture_file(&segment_data_path(
@@ -160,6 +164,10 @@ fn capture_checkpoint_files(state: &CollectionRuntime) -> Result<CheckpointFiles
         WRITING_SEGMENT_ID,
     ))?);
     files.push(capture_file(&segment_flat_index_path(
+        &state.path,
+        WRITING_SEGMENT_ID,
+    ))?);
+    files.push(capture_file(&segment_hnsw_index_path(
         &state.path,
         WRITING_SEGMENT_ID,
     ))?);

@@ -1,6 +1,6 @@
 use garuda_types::{
-    FieldName, FilterExpr, HnswEfSearch, IndexParams, QueryVectorSource, TopK, VectorProjection,
-    VectorQuery,
+    FieldName, FilterExpr, HnswEfSearch, IndexKind, QueryVectorSource, TopK, VectorIndexState,
+    VectorProjection, VectorQuery,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -29,7 +29,7 @@ pub struct QueryPlan {
 pub fn build_query_plan(
     query: VectorQuery,
     filter: Option<FilterExpr>,
-    index: &IndexParams,
+    indexes: &VectorIndexState,
 ) -> QueryPlan {
     let filter = match filter {
         Some(filter) => SegmentFilterPlan::Matching(filter),
@@ -41,17 +41,25 @@ pub fn build_query_plan(
         source: query.source,
         filter,
         top_k: query.top_k,
-        search: search_plan(query.ef_search, index),
+        search: search_plan(query.ef_search, indexes),
         vector_projection: query.vector_projection,
         output_fields: query.output_fields,
     }
 }
 
-fn search_plan(query_ef_search: Option<HnswEfSearch>, index: &IndexParams) -> SegmentSearchPlan {
-    match index {
-        IndexParams::Flat(_) => SegmentSearchPlan::Flat,
-        IndexParams::Hnsw(params) => SegmentSearchPlan::Hnsw {
-            ef_search: query_ef_search.unwrap_or(params.ef_search),
+fn search_plan(
+    query_ef_search: Option<HnswEfSearch>,
+    indexes: &VectorIndexState,
+) -> SegmentSearchPlan {
+    match indexes.default_kind() {
+        IndexKind::Flat => SegmentSearchPlan::Flat,
+        IndexKind::Hnsw => SegmentSearchPlan::Hnsw {
+            ef_search: query_ef_search.unwrap_or(
+                indexes
+                    .hnsw_params()
+                    .expect("hnsw default requires hnsw params")
+                    .ef_search,
+            ),
         },
     }
 }

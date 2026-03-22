@@ -1,9 +1,9 @@
 use garuda_types::{
     AccessMode, CollectionName, CollectionOptions, CollectionSchema, DistanceMetric, DocId,
-    FieldName, FlatIndexParams, HnswEfConstruction, HnswEfSearch, HnswIndexParams, HnswM,
-    HnswMinNeighborCount, HnswPruneWidth, HnswScalingFactor, IndexParams, InternalDocId, Manifest,
-    ManifestVersionId, Nullability, ScalarFieldSchema, ScalarType, ScalarValue, SegmentId,
-    SegmentMeta, SnapshotId, Status, StatusCode, StorageAccess, VectorDimension,
+    FieldName, HnswEfConstruction, HnswEfSearch, HnswIndexParams, HnswM, HnswMinNeighborCount,
+    HnswPruneWidth, HnswScalingFactor, IndexKind, InternalDocId, Manifest, ManifestVersionId,
+    Nullability, ScalarFieldSchema, ScalarType, ScalarValue, SegmentId, SegmentMeta, SnapshotId,
+    Status, StatusCode, StorageAccess, VectorDimension, VectorIndexState,
 };
 
 const MANIFEST_MAGIC: &[u8; 8] = b"GRDMAN01";
@@ -136,7 +136,7 @@ fn write_collection_schema(
     writer.write_string(schema.vector.name.as_str())?;
     writer.write_len(schema.vector.dimension.get())?;
     writer.write_u8(schema.vector.metric.to_tag());
-    write_index_params(writer, &schema.vector.index)?;
+    write_vector_index_state(writer, &schema.vector.indexes)?;
 
     Ok(())
 }
@@ -154,7 +154,7 @@ fn read_collection_schema(reader: &mut BinaryReader<'_>) -> Result<CollectionSch
     let vector_name = FieldName::parse(reader.read_string()?)?;
     let dimension = VectorDimension::new(reader.read_len()?)?;
     let metric = DistanceMetric::from_tag(reader.read_u8()?)?;
-    let index = read_index_params(reader)?;
+    let indexes = read_vector_index_state(reader)?;
 
     Ok(CollectionSchema {
         name,
@@ -164,7 +164,7 @@ fn read_collection_schema(reader: &mut BinaryReader<'_>) -> Result<CollectionSch
             name: vector_name,
             dimension,
             metric,
-            index,
+            indexes,
         },
     })
 }
@@ -212,39 +212,77 @@ fn read_scalar_field_schema(reader: &mut BinaryReader<'_>) -> Result<ScalarField
     })
 }
 
-fn write_index_params(writer: &mut BinaryWriter, index: &IndexParams) -> Result<(), Status> {
-    match index {
-        IndexParams::Flat(_) => {
+fn write_vector_index_state(
+    writer: &mut BinaryWriter,
+    indexes: &VectorIndexState,
+) -> Result<(), Status> {
+    match indexes {
+        VectorIndexState::DefaultFlat => {
             writer.write_u8(0);
         }
-        IndexParams::Hnsw(params) => {
+        VectorIndexState::HnswOnly(params) => {
             writer.write_u8(1);
-            writer.write_u64(params.max_neighbors.get() as u64);
-            writer.write_u64(params.scaling_factor.get() as u64);
-            writer.write_u64(params.ef_construction.get() as u64);
-            writer.write_u64(params.prune_width.get() as u64);
-            writer.write_u64(params.min_neighbor_count.get() as u64);
-            writer.write_u64(params.ef_search.get() as u64);
+            write_hnsw_index_params(writer, params);
+        }
+        VectorIndexState::FlatAndHnsw { default, hnsw } => {
+            writer.write_u8(2);
+            writer.write_u8(write_index_kind(*default));
+            write_hnsw_index_params(writer, hnsw);
         }
     }
 
     Ok(())
 }
 
-fn read_index_params(reader: &mut BinaryReader<'_>) -> Result<IndexParams, Status> {
+fn read_vector_index_state(reader: &mut BinaryReader<'_>) -> Result<VectorIndexState, Status> {
     match reader.read_u8()? {
-        0 => Ok(IndexParams::Flat(FlatIndexParams)),
-        1 => Ok(IndexParams::Hnsw(HnswIndexParams {
-            max_neighbors: HnswM::from_persisted_u64(reader.read_u64()?)?,
-            scaling_factor: HnswScalingFactor::from_persisted_u64(reader.read_u64()?)?,
-            ef_construction: HnswEfConstruction::from_persisted_u64(reader.read_u64()?)?,
-            prune_width: HnswPruneWidth::from_persisted_u64(reader.read_u64()?)?,
-            min_neighbor_count: HnswMinNeighborCount::from_persisted_u64(reader.read_u64()?)?,
-            ef_search: HnswEfSearch::from_persisted_u64(reader.read_u64()?)?,
-        })),
+        0 => Ok(VectorIndexState::DefaultFlat),
+        1 => Ok(VectorIndexState::HnswOnly(read_hnsw_index_params(reader)?)),
+        2 => Ok(VectorIndexState::FlatAndHnsw {
+            default: read_index_kind(reader.read_u8()?)?,
+            hnsw: read_hnsw_index_params(reader)?,
+        }),
         _ => Err(Status::err(
             StatusCode::Internal,
-            "unrecognized index params tag",
+            "unrecognized vector index state tag",
+        )),
+    }
+}
+
+fn write_hnsw_index_params(writer: &mut BinaryWriter, params: &HnswIndexParams) {
+    writer.write_u64(params.max_neighbors.get() as u64);
+    writer.write_u64(params.scaling_factor.get() as u64);
+    writer.write_u64(params.ef_construction.get() as u64);
+    writer.write_u64(params.prune_width.get() as u64);
+    writer.write_u64(params.min_neighbor_count.get() as u64);
+    writer.write_u64(params.ef_search.get() as u64);
+}
+
+fn read_hnsw_index_params(reader: &mut BinaryReader<'_>) -> Result<HnswIndexParams, Status> {
+    Ok(HnswIndexParams {
+        max_neighbors: HnswM::from_persisted_u64(reader.read_u64()?)?,
+        scaling_factor: HnswScalingFactor::from_persisted_u64(reader.read_u64()?)?,
+        ef_construction: HnswEfConstruction::from_persisted_u64(reader.read_u64()?)?,
+        prune_width: HnswPruneWidth::from_persisted_u64(reader.read_u64()?)?,
+        min_neighbor_count: HnswMinNeighborCount::from_persisted_u64(reader.read_u64()?)?,
+        ef_search: HnswEfSearch::from_persisted_u64(reader.read_u64()?)?,
+    })
+}
+
+fn write_index_kind(kind: IndexKind) -> u8 {
+    match kind {
+        IndexKind::Flat => 0,
+        IndexKind::Hnsw => 1,
+    }
+}
+
+fn read_index_kind(tag: u8) -> Result<IndexKind, Status> {
+    match tag {
+        0 => Ok(IndexKind::Flat),
+        1 => Ok(IndexKind::Hnsw),
+        _ => Err(Status::err(
+            StatusCode::Internal,
+            "unrecognized vector index kind tag",
         )),
     }
 }

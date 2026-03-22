@@ -22,8 +22,9 @@ use query::execute_query;
 use recovery_service::{create_collection_state, load_collection_state};
 use schema::{validate_create_options, validate_schema};
 use schema_ddl::{
-    drop_column as drop_column_from_schema, ensure_column_can_be_added, ensure_vector_index_field,
-    flat_index_params, rename_column as rename_column_in_schema, set_vector_index_params,
+    drop_column as drop_column_from_schema, drop_vector_index, enable_vector_index,
+    ensure_column_can_be_added, ensure_vector_index_field,
+    rename_column as rename_column_in_schema,
 };
 use segment_ddl::{
     backfill_new_column, drop_column as drop_column_from_state,
@@ -38,7 +39,7 @@ use write_service::{WriteCommand, apply_delete_by_filter, apply_write_command};
 
 use garuda_types::{
     CollectionName, CollectionOptions, CollectionSchema, CollectionStats, Doc, DocId, FieldName,
-    IndexParams, OptimizeOptions, ScalarFieldSchema, Status, VectorQuery, WriteResult,
+    IndexKind, IndexParams, OptimizeOptions, ScalarFieldSchema, Status, VectorQuery, WriteResult,
 };
 
 #[derive(Clone)]
@@ -123,15 +124,21 @@ impl Collection {
     pub fn create_index(&self, field_name: &FieldName, params: IndexParams) -> Result<(), Status> {
         self.mutate_and_checkpoint(|state| {
             ensure_vector_index_field(&state.catalog.schema, field_name)?;
-            set_vector_index_params(&mut state.catalog.schema, params)?;
+            enable_vector_index(&mut state.catalog.schema, params)?;
             state.rebuild_indexes();
 
             Ok(())
         })
     }
 
-    pub fn drop_index(&self, field_name: &FieldName) -> Result<(), Status> {
-        self.create_index(field_name, flat_index_params())
+    pub fn drop_index(&self, field_name: &FieldName, kind: IndexKind) -> Result<(), Status> {
+        self.mutate_and_checkpoint(|state| {
+            ensure_vector_index_field(&state.catalog.schema, field_name)?;
+            drop_vector_index(&mut state.catalog.schema, kind);
+            state.rebuild_indexes();
+
+            Ok(())
+        })
     }
 
     pub fn add_column(&self, field: ScalarFieldSchema) -> Result<(), Status> {

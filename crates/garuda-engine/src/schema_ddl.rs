@@ -1,6 +1,5 @@
 use garuda_types::{
-    CollectionSchema, FieldName, FlatIndexParams, IndexParams, ScalarFieldSchema, Status,
-    StatusCode,
+    CollectionSchema, FieldName, IndexKind, IndexParams, ScalarFieldSchema, Status, StatusCode,
 };
 
 pub(crate) fn ensure_vector_index_field(
@@ -17,7 +16,7 @@ pub(crate) fn ensure_vector_index_field(
     ))
 }
 
-pub(crate) fn set_vector_index_params(
+pub(crate) fn enable_vector_index(
     schema: &mut CollectionSchema,
     params: IndexParams,
 ) -> Result<(), Status> {
@@ -25,12 +24,20 @@ pub(crate) fn set_vector_index_params(
         params.neighbor_config()?;
     }
 
-    schema.vector.index = params;
+    let current = std::mem::replace(
+        &mut schema.vector.indexes,
+        garuda_types::VectorIndexState::DefaultFlat,
+    );
+    schema.vector.indexes = current.enable(params);
     Ok(())
 }
 
-pub(crate) fn flat_index_params() -> IndexParams {
-    IndexParams::Flat(FlatIndexParams)
+pub(crate) fn drop_vector_index(schema: &mut CollectionSchema, kind: IndexKind) {
+    let current = std::mem::replace(
+        &mut schema.vector.indexes,
+        garuda_types::VectorIndexState::DefaultFlat,
+    );
+    schema.vector.indexes = current.drop(kind);
 }
 
 pub(crate) fn ensure_column_can_be_added(

@@ -4,8 +4,8 @@ use garuda_segment::{
 };
 use garuda_storage::{read_file, segment_hnsw_index_path};
 use garuda_types::{
-    DenseVector, DistanceMetric, Doc, DocId, FieldName, HnswIndexParams, IndexParams,
-    InternalDocId, SegmentId, StatusCode, TopK, VectorDimension, VectorFieldSchema,
+    DenseVector, DistanceMetric, Doc, DocId, FieldName, HnswIndexParams, InternalDocId, SegmentId,
+    StatusCode, TopK, VectorDimension, VectorFieldSchema, VectorIndexState,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -21,7 +21,7 @@ fn persisted_hnsw_sidecar_roundtrips_search() {
         segment_meta(SegmentId::new_unchecked(1)),
         Vec::new(),
         SegmentKind::Persisted,
-        &vector_field(IndexParams::Hnsw(HnswIndexParams::default())),
+        &vector_field(VectorIndexState::HnswOnly(HnswIndexParams::default())),
     );
     segment
         .records
@@ -32,7 +32,7 @@ fn persisted_hnsw_sidecar_roundtrips_search() {
     segment
         .records
         .push(stored_record(3, "doc-3", "beta", [0.0, 1.0, 0.0, 0.0]));
-    let vector_field = vector_field(IndexParams::Hnsw(HnswIndexParams::default()));
+    let vector_field = vector_field(VectorIndexState::HnswOnly(HnswIndexParams::default()));
     rebuild_search_resources(&mut segment, &vector_field);
     write_segment(&root, &segment, &vector_field).expect("write segment with hnsw sidecar");
 
@@ -69,12 +69,12 @@ fn missing_or_invalid_hnsw_sidecar_fails_reopen_for_persisted_hnsw_segments() {
         segment_meta(SegmentId::new_unchecked(1)),
         Vec::new(),
         SegmentKind::Persisted,
-        &vector_field(IndexParams::Hnsw(HnswIndexParams::default())),
+        &vector_field(VectorIndexState::HnswOnly(HnswIndexParams::default())),
     );
     segment
         .records
         .push(stored_record(1, "doc-1", "alpha", [1.0, 0.0, 0.0, 0.0]));
-    let vector_field = vector_field(IndexParams::Hnsw(HnswIndexParams::default()));
+    let vector_field = vector_field(VectorIndexState::HnswOnly(HnswIndexParams::default()));
     rebuild_search_resources(&mut segment, &vector_field);
     write_segment(&root, &segment, &vector_field).expect("write segment");
 
@@ -127,11 +127,11 @@ fn stored_record(internal_doc_id: u64, id: &str, category: &str, vector: [f32; 4
     }
 }
 
-fn vector_field(index: IndexParams) -> VectorFieldSchema {
+fn vector_field(indexes: VectorIndexState) -> VectorFieldSchema {
     VectorFieldSchema {
         name: FieldName::parse("embedding").expect("valid field name"),
         dimension: VectorDimension::new(4).expect("valid dimension"),
         metric: DistanceMetric::Cosine,
-        index,
+        indexes,
     }
 }

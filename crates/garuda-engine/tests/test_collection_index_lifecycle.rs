@@ -7,7 +7,7 @@ use common::{
 use garuda_storage::{WRITING_SEGMENT_ID, segment_flat_index_path, segment_hnsw_index_path};
 use garuda_types::{
     FlatIndexParams, HnswEfConstruction, HnswEfSearch, HnswIndexParams, HnswM, IndexKind,
-    IndexParams, SegmentId, VectorQuery,
+    IndexParams, SegmentId, VectorIndexState, VectorQuery,
 };
 
 const FIRST_PERSISTED_SEGMENT_ID: SegmentId = SegmentId::new_unchecked(1);
@@ -37,7 +37,7 @@ fn creating_index_before_and_after_data_should_preserve_logical_results() {
         .expect("indexed query");
 
     collection
-        .drop_index(&field_name("embedding"))
+        .drop_index(&field_name("embedding"), IndexKind::Hnsw)
         .expect("drop index");
     let flat = collection
         .query(VectorQuery::by_vector(
@@ -71,7 +71,12 @@ fn index_choice_should_survive_reopen() {
     let reopened = db
         .open_collection(&collection_name("docs"))
         .expect("reopen");
-    assert_eq!(reopened.schema().vector.index.kind(), IndexKind::Hnsw);
+    assert_eq!(
+        reopened.schema().vector.indexes.default_kind(),
+        IndexKind::Hnsw
+    );
+    assert!(reopened.schema().vector.indexes.has_flat());
+    assert!(reopened.schema().vector.indexes.has_hnsw());
 }
 
 #[test]
@@ -101,11 +106,17 @@ fn hnsw_index_params_should_roundtrip_through_reopen() {
     let reopened = db
         .open_collection(&collection_name("docs"))
         .expect("reopen");
-    assert_eq!(reopened.schema().vector.index, IndexParams::Hnsw(params));
+    assert_eq!(
+        reopened.schema().vector.indexes,
+        VectorIndexState::FlatAndHnsw {
+            default: IndexKind::Hnsw,
+            hnsw: params,
+        }
+    );
 }
 
 #[test]
-fn flat_index_sidecars_should_survive_reopen_and_hnsw_switch_should_remove_them() {
+fn flat_index_sidecars_should_survive_reopen_and_hnsw_enable_should_keep_them() {
     let (root, db) = database("flat-sidecars");
     let collection = db
         .create_collection(default_schema("docs"), default_options())
@@ -153,10 +164,14 @@ fn flat_index_sidecars_should_survive_reopen_and_hnsw_switch_should_remove_them(
             &field_name("embedding"),
             IndexParams::Hnsw(HnswIndexParams::default()),
         )
-        .expect("switch to hnsw compatibility mode");
+        .expect("enable hnsw");
     assert!(
-        !segment_flat_index_path(&root.join("docs"), FIRST_PERSISTED_SEGMENT_ID).exists(),
-        "non-flat index mode should remove persisted flat sidecars"
+        segment_flat_index_path(&root.join("docs"), FIRST_PERSISTED_SEGMENT_ID).exists(),
+        "enabling hnsw should keep persisted flat sidecars"
+    );
+    assert!(
+        segment_hnsw_index_path(&root.join("docs"), FIRST_PERSISTED_SEGMENT_ID).exists(),
+        "enabling hnsw should add persisted hnsw sidecars"
     );
 }
 
@@ -164,7 +179,7 @@ fn flat_index_sidecars_should_survive_reopen_and_hnsw_switch_should_remove_them(
 fn create_flat_index_on_existing_persisted_data_should_create_sidecars_and_preserve_results() {
     let (root, db) = database("flat-create-existing");
     let mut schema = default_schema("docs");
-    schema.vector.index = IndexParams::Hnsw(HnswIndexParams::default());
+    schema.vector.indexes = VectorIndexState::HnswOnly(HnswIndexParams::default());
 
     let collection = db
         .create_collection(schema, default_options())
@@ -208,10 +223,10 @@ fn create_flat_index_on_existing_persisted_data_should_create_sidecars_and_prese
 }
 
 #[test]
-fn hnsw_index_sidecars_should_survive_reopen_and_flat_switch_should_remove_them() {
+fn hnsw_index_sidecars_should_survive_reopen_and_hnsw_drop_should_remove_them() {
     let (root, db) = database("hnsw-sidecars");
     let mut schema = default_schema("docs");
-    schema.vector.index = IndexParams::Hnsw(HnswIndexParams::default());
+    schema.vector.indexes = VectorIndexState::HnswOnly(HnswIndexParams::default());
 
     let collection = db
         .create_collection(schema, default_options())
@@ -252,10 +267,14 @@ fn hnsw_index_sidecars_should_survive_reopen_and_flat_switch_should_remove_them(
     );
 
     reopened
-        .create_index(&field_name("embedding"), IndexParams::Flat(FlatIndexParams))
-        .expect("switch to flat");
+        .drop_index(&field_name("embedding"), IndexKind::Hnsw)
+        .expect("drop hnsw");
     assert!(
         !segment_hnsw_index_path(&collection_root, FIRST_PERSISTED_SEGMENT_ID).exists(),
-        "flat index mode should remove persisted hnsw sidecars"
+        "dropping hnsw should remove persisted hnsw sidecars"
+    );
+    assert!(
+        segment_flat_index_path(&collection_root, FIRST_PERSISTED_SEGMENT_ID).exists(),
+        "dropping hnsw should restore persisted flat sidecars"
     );
 }

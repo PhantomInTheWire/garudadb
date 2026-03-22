@@ -182,5 +182,6 @@ fn to_vec(mut results: BinaryHeap<WorstScoredNode>) -> Vec<ScoredNode> {
         best.push(ScoredNode::from(candidate));
     }
 
+    best.reverse();
     best
 }
