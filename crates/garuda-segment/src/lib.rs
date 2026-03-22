@@ -2,8 +2,8 @@ mod codec;
 mod wal;
 
 use codec::{
-    decode_flat_index, decode_hnsw_graph, decode_segment, encode_flat_index, encode_hnsw_graph,
-    encode_segment,
+    decode_flat_index, decode_hnsw_graph, decode_segment, encode_empty_segment, encode_flat_index,
+    encode_hnsw_graph, encode_segment,
 };
 use garuda_index_flat::{FlatIndex, FlatIndexEntry};
 use garuda_index_hnsw::{
@@ -17,7 +17,7 @@ use garuda_storage::{
 };
 use garuda_types::{
     DenseVector, DistanceMetric, Doc, DocId, FilterExpr, HnswEfSearch, IndexParams, InternalDocId,
-    SegmentId, SegmentMeta, Status, StatusCode, TopK, VectorDimension, VectorFieldSchema,
+    SegmentId, SegmentMeta, Status, StatusCode, TopK, VectorFieldSchema,
 };
 pub use wal::{WalOp, append_wal_ops, read_wal_ops, reset_wal};
 
@@ -56,16 +56,22 @@ pub struct StoredRecord {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SegmentFile {
+    kind: SegmentKind,
     pub meta: SegmentMeta,
     pub records: Vec<StoredRecord>,
     vector_search: VectorSearchState,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SegmentKind {
+    Writing,
+    Persisted,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 enum VectorSearchState {
-    ScanRecords,
-    UseFlatIndex(FlatIndex),
-    UseHnswIndex(HnswIndex),
+    Flat(FlatIndex),
+    Hnsw(HnswIndex),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -81,18 +87,25 @@ pub enum SegmentFilter<'a> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ExactSearchRequest<'a> {
+pub struct FlatSearchRequest<'a> {
     pub metric: DistanceMetric,
     pub query_vector: &'a DenseVector,
     pub top_k: TopK,
-    pub index: SegmentIndexSearch,
     pub filter: SegmentFilter<'a>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SegmentIndexSearch {
-    Flat,
-    Hnsw { ef_search: HnswEfSearch },
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HnswSegmentSearchRequest<'a> {
+    pub query_vector: &'a DenseVector,
+    pub top_k: TopK,
+    pub ef_search: HnswEfSearch,
+    pub filter: SegmentFilter<'a>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SegmentSearchRequest<'a> {
+    Flat(FlatSearchRequest<'a>),
+    Hnsw(HnswSegmentSearchRequest<'a>),
 }
 
 pub fn segment_file_name(segment_id: SegmentId) -> String {
@@ -110,37 +123,87 @@ pub fn segment_meta(id: SegmentId) -> SegmentMeta {
 }
 
 impl SegmentFile {
-    pub fn new_writing(meta: SegmentMeta) -> Self {
-        Self {
-            meta,
-            records: Vec::new(),
-            vector_search: VectorSearchState::ScanRecords,
-        }
-    }
+    pub fn new(
+        meta: SegmentMeta,
+        records: Vec<StoredRecord>,
+        kind: SegmentKind,
+        vector_field: &VectorFieldSchema,
+    ) -> Self {
+        let meta = synced_segment_meta(meta, &records);
+        let vector_search = build_vector_search_state(vector_field, &meta, &records);
 
-    pub fn new_persisted(meta: SegmentMeta) -> Self {
         Self {
-            meta,
-            records: Vec::new(),
-            vector_search: VectorSearchState::ScanRecords,
-        }
-    }
-
-    fn new_persisted_with_records(meta: SegmentMeta, records: Vec<StoredRecord>) -> Self {
-        Self {
+            kind,
             meta,
             records,
-            vector_search: VectorSearchState::ScanRecords,
+            vector_search,
         }
+    }
+
+    pub fn is_writing(&self) -> bool {
+        matches!(self.kind, SegmentKind::Writing)
+    }
+
+    pub fn mark_persisted(&mut self) {
+        self.kind = SegmentKind::Persisted;
     }
 }
 
+fn build_vector_search_state(
+    vector_field: &VectorFieldSchema,
+    meta: &SegmentMeta,
+    records: &[StoredRecord],
+) -> VectorSearchState {
+    match &vector_field.index {
+        IndexParams::Flat(_) => build_flat_search_state(vector_field, meta, records),
+        IndexParams::Hnsw(params) => build_hnsw_search_state(vector_field, meta, records, params),
+    }
+}
+
+fn build_flat_search_state(
+    vector_field: &VectorFieldSchema,
+    meta: &SegmentMeta,
+    records: &[StoredRecord],
+) -> VectorSearchState {
+    let entries = flat_index_entries(records, meta.doc_count);
+    let index = FlatIndex::build(vector_field.dimension, entries)
+        .expect("validated segment records should match the vector field dimension");
+    VectorSearchState::Flat(index)
+}
+
+fn build_hnsw_search_state(
+    vector_field: &VectorFieldSchema,
+    meta: &SegmentMeta,
+    records: &[StoredRecord],
+    params: &garuda_types::HnswIndexParams,
+) -> VectorSearchState {
+    let config = hnsw_index_config(vector_field, params);
+    let entries = hnsw_build_entries(&config, records, meta.doc_count);
+    let index = HnswIndex::build(config, entries);
+    VectorSearchState::Hnsw(index)
+}
+
 pub fn sync_segment_meta(segment: &mut SegmentFile) {
+    sync_segment_meta_fields(&mut segment.meta, &segment.records);
+}
+
+pub fn sync_segment(segment: &mut SegmentFile, vector_field: &VectorFieldSchema) {
+    sync_segment_meta_fields(&mut segment.meta, &segment.records);
+    segment.vector_search =
+        build_vector_search_state(vector_field, &segment.meta, &segment.records);
+}
+
+fn synced_segment_meta(mut meta: SegmentMeta, records: &[StoredRecord]) -> SegmentMeta {
+    sync_segment_meta_fields(&mut meta, records);
+    meta
+}
+
+fn sync_segment_meta_fields(meta: &mut SegmentMeta, records: &[StoredRecord]) {
     let mut min_doc_id = None;
     let mut max_doc_id = None;
     let mut live_doc_count = 0usize;
 
-    for record in &segment.records {
+    for record in records {
         let record_id = record.doc_id;
 
         min_doc_id = Some(min_doc_id.unwrap_or(record_id).min(record_id));
@@ -151,33 +214,9 @@ pub fn sync_segment_meta(segment: &mut SegmentFile) {
         }
     }
 
-    segment.meta.min_doc_id = min_doc_id;
-    segment.meta.max_doc_id = max_doc_id;
-    segment.meta.doc_count = live_doc_count;
-}
-
-pub fn sync_vector_search(segment: &mut SegmentFile, vector_field: &VectorFieldSchema) {
-    match &vector_field.index {
-        IndexParams::Flat(_) => {
-            if !should_use_persisted_flat(segment.meta.id, vector_field, segment.meta.doc_count) {
-                segment.vector_search = VectorSearchState::ScanRecords;
-                return;
-            }
-
-            let entries = flat_index_entries(segment);
-            let dimension = vector_field.dimension;
-            let flat_index = FlatIndex::build(dimension, entries)
-                .expect("validated segment records should match the vector field dimension");
-
-            segment.vector_search = VectorSearchState::UseFlatIndex(flat_index);
-        }
-        IndexParams::Hnsw(params) => {
-            let config = hnsw_index_config(vector_field, params);
-            let entries = hnsw_build_entries(&config, segment);
-            let index = HnswIndex::build(config, entries);
-            segment.vector_search = VectorSearchState::UseHnswIndex(index);
-        }
-    }
+    meta.min_doc_id = min_doc_id;
+    meta.max_doc_id = max_doc_id;
+    meta.doc_count = live_doc_count;
 }
 
 pub fn ensure_segment_files(root: &std::path::Path, segment_id: SegmentId) -> Result<(), Status> {
@@ -185,8 +224,7 @@ pub fn ensure_segment_files(root: &std::path::Path, segment_id: SegmentId) -> Re
     create_dir_all(&segment_dir, "failed to create segment directory")?;
 
     if !segment_data_path(root, segment_id).exists() {
-        let segment = SegmentFile::new_writing(segment_meta(segment_id));
-        let bytes = encode_segment(&segment)?;
+        let bytes = encode_empty_segment(&segment_meta(segment_id))?;
         write_file_atomically(&segment_data_path(root, segment_id), &bytes)?;
     }
 
@@ -206,15 +244,16 @@ pub fn write_segment(
     write_file_atomically(&segment_data_path(root, segment.meta.id), &bytes)?;
 
     match &segment.vector_search {
-        VectorSearchState::UseFlatIndex(index)
-            if should_use_persisted_flat(segment.meta.id, vector_field, segment.meta.doc_count) =>
-        {
-            let sidecar = encode_flat_index(flat_index_entries(segment), vector_field)?;
+        VectorSearchState::Flat(index) if should_use_persisted_flat(segment, vector_field) => {
+            let sidecar = encode_flat_index(
+                flat_index_entries(&segment.records, segment.meta.doc_count),
+                vector_field,
+            )?;
             write_file_atomically(&segment_flat_index_path(root, segment.meta.id), &sidecar)?;
             remove_path_if_exists(&segment_hnsw_index_path(root, segment.meta.id))?;
             return Ok(());
         }
-        VectorSearchState::UseHnswIndex(index) if should_persist_hnsw(segment.meta.id, segment) => {
+        VectorSearchState::Hnsw(index) if should_persist_hnsw(segment) => {
             let sidecar = encode_hnsw_graph(index.graph())?;
             write_file_atomically(&segment_hnsw_index_path(root, segment.meta.id), &sidecar)?;
             remove_path_if_exists(&segment_flat_index_path(root, segment.meta.id))?;
@@ -234,10 +273,40 @@ pub fn read_segment(
     vector_field: &VectorFieldSchema,
 ) -> Result<SegmentFile, Status> {
     let bytes = read_file(&segment_data_path(root, meta.id))?;
-    let mut segment = decode_segment(&bytes)?;
-    segment.meta.path = meta.path.clone();
-    segment.vector_search = load_vector_search_state(root, &segment, vector_field)?;
-    Ok(segment)
+    let decoded = decode_segment(&bytes)?;
+    let kind = segment_kind(meta.id);
+    let mut segment_meta = synced_segment_meta(decoded.meta, &decoded.records);
+    segment_meta.path = meta.path.clone();
+
+    if matches!(kind, SegmentKind::Writing) {
+        let vector_search =
+            build_vector_search_state(vector_field, &segment_meta, &decoded.records);
+
+        return Ok(SegmentFile {
+            kind,
+            meta: segment_meta,
+            records: decoded.records,
+            vector_search,
+        });
+    }
+
+    let vector_search =
+        load_vector_search_state(root, meta.id, &segment_meta, &decoded.records, vector_field)?;
+
+    Ok(SegmentFile {
+        kind,
+        meta: segment_meta,
+        records: decoded.records,
+        vector_search,
+    })
+}
+
+fn segment_kind(id: SegmentId) -> SegmentKind {
+    if id == WRITING_SEGMENT_ID {
+        return SegmentKind::Writing;
+    }
+
+    SegmentKind::Persisted
 }
 
 pub fn remove_segment(root: &std::path::Path, segment_id: SegmentId) -> Result<(), Status> {
@@ -252,63 +321,53 @@ pub fn doc_exists(records: &[StoredRecord], id: &DocId) -> bool {
 
 pub fn exact_search(
     segment: &SegmentFile,
-    request: ExactSearchRequest<'_>,
+    request: SegmentSearchRequest<'_>,
 ) -> Result<Vec<SegmentSearchHit>, Status> {
-    let mut records = std::collections::HashMap::new();
+    let mut record_indexes = std::collections::HashMap::new();
 
-    for record in &segment.records {
+    for (record_index, record) in segment.records.iter().enumerate() {
         if matches!(record.state, RecordState::Deleted) {
             continue;
         }
 
-        records.insert(record.doc_id, record.clone());
+        record_indexes.insert(record.doc_id, record_index);
     }
 
-    if records.is_empty() {
+    if record_indexes.is_empty() {
         return Ok(Vec::new());
     }
 
-    let search_top_k = search_top_k(request, records.len())?;
-    let hits = match (&segment.vector_search, request.index) {
-        (VectorSearchState::ScanRecords, SegmentIndexSearch::Flat) => {
-            scan_records(segment, request, search_top_k)?
+    let filter = match request {
+        SegmentSearchRequest::Flat(request) => request.filter,
+        SegmentSearchRequest::Hnsw(request) => request.filter,
+    };
+
+    let hits = match (&segment.vector_search, request) {
+        (VectorSearchState::Flat(index), SegmentSearchRequest::Flat(request)) => {
+            search_flat(index, request, search_top_k(request, record_indexes.len()))?
         }
-        (VectorSearchState::ScanRecords, SegmentIndexSearch::Hnsw { .. }) => {
-            return Err(Status::err(
-                StatusCode::Internal,
-                "hnsw query requested without hnsw segment search state",
-            ));
-        }
-        (VectorSearchState::UseFlatIndex(index), SegmentIndexSearch::Flat) => {
-            index.search(request.metric, request.query_vector, search_top_k)?
-        }
-        (VectorSearchState::UseFlatIndex(_), SegmentIndexSearch::Hnsw { .. }) => {
-            return Err(Status::err(
-                StatusCode::Internal,
-                "hnsw query requested for flat segment search state",
-            ));
-        }
-        (VectorSearchState::UseHnswIndex(index), SegmentIndexSearch::Hnsw { ef_search }) => {
-            search_hnsw(index, request.query_vector, search_top_k, ef_search)?
-        }
-        (VectorSearchState::UseHnswIndex(_), SegmentIndexSearch::Flat) => {
-            return Err(Status::err(
-                StatusCode::Internal,
-                "flat query requested for hnsw segment search state",
-            ));
+        (VectorSearchState::Hnsw(index), SegmentSearchRequest::Hnsw(request)) => search_hnsw(
+            index,
+            request.query_vector,
+            request.top_k,
+            request.ef_search,
+        )?,
+        (state, request) => {
+            unreachable!("segment search mismatch: state={state:?} request={request:?}");
         }
     };
     let mut search_hits = Vec::with_capacity(hits.len());
 
     for hit in hits {
-        let Some(record) = records.remove(&hit.doc_id) else {
+        let Some(record_index) = record_indexes.remove(&hit.doc_id) else {
             return Err(Status::err(
                 StatusCode::Internal,
                 "flat index hit missing backing record",
             ));
         };
+        let record = segment.records[record_index].clone();
 
-        if let SegmentFilter::Matching(filter) = request.filter {
+        if let SegmentFilter::Matching(filter) = filter {
             if !evaluate_filter(filter, &record.doc.fields) {
                 continue;
             }
@@ -323,18 +382,11 @@ pub fn exact_search(
     Ok(search_hits)
 }
 
-fn scan_records(
-    segment: &SegmentFile,
-    request: ExactSearchRequest<'_>,
+fn search_flat(
+    index: &FlatIndex,
+    request: FlatSearchRequest<'_>,
     top_k: TopK,
 ) -> Result<Vec<garuda_index_flat::FlatSearchHit>, Status> {
-    let entries = flat_index_entries(segment);
-    if entries.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let dimension = VectorDimension::new(entries[0].vector.len())?;
-    let index = FlatIndex::build(dimension, entries)?;
     index.search(request.metric, request.query_vector, top_k)
 }
 
@@ -348,10 +400,10 @@ fn search_hnsw(
     Ok(flat_search_hits(hits))
 }
 
-fn flat_index_entries(segment: &SegmentFile) -> Vec<FlatIndexEntry> {
-    let mut entries = Vec::with_capacity(segment.meta.doc_count);
+fn flat_index_entries(records: &[StoredRecord], live_doc_count: usize) -> Vec<FlatIndexEntry> {
+    let mut entries = Vec::with_capacity(live_doc_count);
 
-    for record in &segment.records {
+    for record in records {
         if matches!(record.state, RecordState::Deleted) {
             continue;
         }
@@ -367,26 +419,20 @@ fn flat_index_entries(segment: &SegmentFile) -> Vec<FlatIndexEntry> {
 
 fn load_vector_search_state(
     root: &std::path::Path,
-    segment: &SegmentFile,
+    segment_id: SegmentId,
+    meta: &SegmentMeta,
+    records: &[StoredRecord],
     vector_field: &VectorFieldSchema,
 ) -> Result<VectorSearchState, Status> {
     match &vector_field.index {
-        IndexParams::Flat(_) => load_flat_search_state(root, segment, vector_field),
+        IndexParams::Flat(_) => load_flat_search_state(root, segment_id, meta, vector_field),
         IndexParams::Hnsw(params) => {
-            if should_persist_hnsw(segment.meta.id, segment) {
-                let bytes = read_file(&segment_hnsw_index_path(root, segment.meta.id))?;
-                let graph = decode_hnsw_graph(&bytes, vector_field, segment.meta.doc_count)?;
-                let config = hnsw_index_config(vector_field, params);
-                let entries = hnsw_build_entries(&config, segment);
-                return Ok(VectorSearchState::UseHnswIndex(HnswIndex::from_parts(
-                    config, entries, graph,
-                )));
-            }
-
+            let bytes = read_file(&segment_hnsw_index_path(root, segment_id))?;
+            let graph = decode_hnsw_graph(&bytes, vector_field, meta.doc_count)?;
             let config = hnsw_index_config(vector_field, params);
-            let entries = hnsw_build_entries(&config, segment);
-            Ok(VectorSearchState::UseHnswIndex(HnswIndex::build(
-                config, entries,
+            let entries = hnsw_build_entries(&config, records, meta.doc_count);
+            Ok(VectorSearchState::Hnsw(HnswIndex::from_parts(
+                config, entries, graph,
             )))
         }
     }
@@ -410,16 +456,13 @@ fn hnsw_index_config(
 
 fn load_flat_search_state(
     root: &std::path::Path,
-    segment: &SegmentFile,
+    segment_id: SegmentId,
+    meta: &SegmentMeta,
     vector_field: &VectorFieldSchema,
 ) -> Result<VectorSearchState, Status> {
-    if !should_use_persisted_flat(segment.meta.id, vector_field, segment.meta.doc_count) {
-        return Ok(VectorSearchState::ScanRecords);
-    }
-
-    let bytes = read_file(&segment_flat_index_path(root, segment.meta.id))?;
+    let bytes = read_file(&segment_flat_index_path(root, segment_id))?;
     let flat_index = decode_flat_index(&bytes, vector_field)?;
-    let expected_len = segment.meta.doc_count;
+    let expected_len = meta.doc_count;
 
     if flat_index.len() != expected_len {
         return Err(Status::err(
@@ -428,13 +471,17 @@ fn load_flat_search_state(
         ));
     }
 
-    Ok(VectorSearchState::UseFlatIndex(flat_index))
+    Ok(VectorSearchState::Flat(flat_index))
 }
 
-fn hnsw_build_entries(config: &HnswIndexConfig, segment: &SegmentFile) -> Vec<HnswBuildEntry> {
-    let mut entries = Vec::with_capacity(segment.meta.doc_count);
+fn hnsw_build_entries(
+    config: &HnswIndexConfig,
+    records: &[StoredRecord],
+    live_doc_count: usize,
+) -> Vec<HnswBuildEntry> {
+    let mut entries = Vec::with_capacity(live_doc_count);
 
-    for record in &segment.records {
+    for record in records {
         if matches!(record.state, RecordState::Deleted) {
             continue;
         }
@@ -457,31 +504,22 @@ fn flat_search_hits(hits: Vec<HnswHit>) -> Vec<garuda_index_flat::FlatSearchHit>
         .collect()
 }
 
-fn should_use_persisted_flat(
-    segment_id: SegmentId,
-    vector_field: &VectorFieldSchema,
-    doc_count: usize,
-) -> bool {
-    if segment_id == WRITING_SEGMENT_ID || doc_count == 0 {
+fn should_use_persisted_flat(segment: &SegmentFile, vector_field: &VectorFieldSchema) -> bool {
+    if segment.is_writing() || segment.meta.doc_count == 0 {
         return false;
     }
 
     matches!(vector_field.index, IndexParams::Flat(_))
 }
 
-fn should_persist_hnsw(segment_id: SegmentId, segment: &SegmentFile) -> bool {
-    segment_id != WRITING_SEGMENT_ID && segment.meta.doc_count != 0
+fn should_persist_hnsw(segment: &SegmentFile) -> bool {
+    !segment.is_writing() && segment.meta.doc_count != 0
 }
 
-fn search_top_k(request: ExactSearchRequest<'_>, live_doc_count: usize) -> Result<TopK, Status> {
+fn search_top_k(request: FlatSearchRequest<'_>, live_doc_count: usize) -> TopK {
     if matches!(request.filter, SegmentFilter::All) {
-        return Ok(request.top_k);
+        return request.top_k;
     }
 
-    TopK::new(live_doc_count).map_err(|_| {
-        Status::err(
-            StatusCode::Internal,
-            "filtered exact search requires at least one live document",
-        )
-    })
+    TopK::new(live_doc_count).expect("queryable segment must have at least one live document")
 }

@@ -169,6 +169,7 @@ impl Collection {
             state.segments.optimize(
                 &mut state.catalog.next_segment_id,
                 state.catalog.options.segment_max_docs,
+                &state.catalog.schema.vector,
             );
             state.rebuild_indexes();
 

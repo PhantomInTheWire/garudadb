@@ -27,7 +27,20 @@ pub fn encode_segment(segment: &SegmentFile) -> Result<Vec<u8>, Status> {
     Ok(writer.finish())
 }
 
-pub fn decode_segment(bytes: &[u8]) -> Result<SegmentFile, Status> {
+pub fn encode_empty_segment(meta: &SegmentMeta) -> Result<Vec<u8>, Status> {
+    let mut writer = BinaryWriter::new(SEGMENT_MAGIC);
+    writer.write_u16(FORMAT_VERSION);
+    write_segment_meta(&mut writer, meta)?;
+    writer.write_len(0)?;
+    Ok(writer.finish())
+}
+
+pub struct DecodedSegment {
+    pub meta: SegmentMeta,
+    pub records: Vec<StoredRecord>,
+}
+
+pub fn decode_segment(bytes: &[u8]) -> Result<DecodedSegment, Status> {
     let mut reader = BinaryReader::new(bytes, SEGMENT_MAGIC)?;
     reader.expect_u16(FORMAT_VERSION)?;
     let meta = read_segment_meta(&mut reader)?;
@@ -43,7 +56,7 @@ pub fn decode_segment(bytes: &[u8]) -> Result<SegmentFile, Status> {
 
     reader.finish()?;
 
-    Ok(SegmentFile::new_persisted_with_records(meta, records))
+    Ok(DecodedSegment { meta, records })
 }
 
 pub fn encode_doc_payload(doc: &Doc) -> Result<Vec<u8>, Status> {

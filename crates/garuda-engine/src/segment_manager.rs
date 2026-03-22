@@ -1,8 +1,9 @@
 use garuda_segment::{
-    RecordState, SegmentFile, StoredRecord, segment_file_name, segment_meta, sync_segment_meta,
+    RecordState, SegmentFile, SegmentKind, StoredRecord, segment_file_name, segment_meta,
+    sync_segment_meta,
 };
 use garuda_storage::WRITING_SEGMENT_ID;
-use garuda_types::{Doc, DocId, InternalDocId, SegmentId};
+use garuda_types::{Doc, DocId, InternalDocId, SegmentId, VectorFieldSchema};
 
 #[derive(Clone)]
 pub(crate) struct SegmentManager {
@@ -18,8 +19,13 @@ impl SegmentManager {
         }
     }
 
-    pub(crate) fn empty_writing_segment() -> SegmentFile {
-        SegmentFile::new_writing(segment_meta(WRITING_SEGMENT_ID))
+    pub(crate) fn empty_writing_segment(vector_field: &VectorFieldSchema) -> SegmentFile {
+        SegmentFile::new(
+            segment_meta(WRITING_SEGMENT_ID),
+            Vec::new(),
+            SegmentKind::Writing,
+            vector_field,
+        )
     }
 
     pub(crate) fn persisted_segments(&self) -> &[SegmentFile] {
@@ -100,6 +106,7 @@ impl SegmentManager {
         doc: Doc,
         next_segment_id: &mut SegmentId,
         segment_max_docs: usize,
+        vector_field: &VectorFieldSchema,
     ) {
         self.writing_segment.records.push(StoredRecord {
             doc_id,
@@ -108,20 +115,25 @@ impl SegmentManager {
         });
 
         sync_segment_meta(&mut self.writing_segment);
-        self.rotate_writing_segment_if_needed(next_segment_id, segment_max_docs);
+        self.rotate_writing_segment_if_needed(next_segment_id, segment_max_docs, vector_field);
     }
 
-    pub(crate) fn optimize(&mut self, next_segment_id: &mut SegmentId, segment_max_docs: usize) {
+    pub(crate) fn optimize(
+        &mut self,
+        next_segment_id: &mut SegmentId,
+        segment_max_docs: usize,
+        vector_field: &VectorFieldSchema,
+    ) {
         let all_live_records = self.all_live_records();
         let rebuilt_capacity =
             (all_live_records.len() + segment_max_docs.saturating_sub(1)) / segment_max_docs.max(1);
         let mut rebuilt_segments = Vec::with_capacity(rebuilt_capacity);
-        let mut current_segment = Self::empty_writing_segment();
+        let mut current_segment = Self::empty_writing_segment(vector_field);
 
         for record in all_live_records {
             if current_segment.records.len() >= segment_max_docs {
                 seal_segment(&mut rebuilt_segments, current_segment, next_segment_id);
-                current_segment = Self::empty_writing_segment();
+                current_segment = Self::empty_writing_segment(vector_field);
             }
 
             current_segment.records.push(record);
@@ -129,19 +141,20 @@ impl SegmentManager {
 
         if current_segment.records.is_empty() {
             self.persisted_segments = rebuilt_segments;
-            self.writing_segment = Self::empty_writing_segment();
+            self.writing_segment = Self::empty_writing_segment(vector_field);
             return;
         }
 
         seal_segment(&mut rebuilt_segments, current_segment, next_segment_id);
         self.persisted_segments = rebuilt_segments;
-        self.writing_segment = Self::empty_writing_segment();
+        self.writing_segment = Self::empty_writing_segment(vector_field);
     }
 
     fn rotate_writing_segment_if_needed(
         &mut self,
         next_segment_id: &mut SegmentId,
         segment_max_docs: usize,
+        vector_field: &VectorFieldSchema,
     ) {
         if self.writing_segment.meta.doc_count < segment_max_docs {
             return;
@@ -150,8 +163,11 @@ impl SegmentManager {
         let new_id = *next_segment_id;
         *next_segment_id = next_segment_id.next();
 
-        let mut persisted =
-            std::mem::replace(&mut self.writing_segment, Self::empty_writing_segment());
+        let mut persisted = std::mem::replace(
+            &mut self.writing_segment,
+            Self::empty_writing_segment(vector_field),
+        );
+        persisted.mark_persisted();
         persisted.meta.id = new_id;
         persisted.meta.path = segment_file_name(new_id);
         sync_segment_meta(&mut persisted);
@@ -201,6 +217,7 @@ fn seal_segment(
     mut segment: SegmentFile,
     next_segment_id: &mut SegmentId,
 ) {
+    segment.mark_persisted();
     sync_segment_meta(&mut segment);
     segment.meta.id = *next_segment_id;
     segment.meta.path = segment_file_name(*next_segment_id);

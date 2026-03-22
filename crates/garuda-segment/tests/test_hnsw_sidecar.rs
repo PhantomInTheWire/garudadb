@@ -1,6 +1,6 @@
 use garuda_segment::{
-    ExactSearchRequest, SegmentFile, SegmentFilter, SegmentIndexSearch, StoredRecord, exact_search,
-    read_segment, segment_meta, sync_segment_meta, write_segment,
+    HnswSegmentSearchRequest, SegmentFile, SegmentFilter, SegmentKind, SegmentSearchRequest,
+    StoredRecord, exact_search, read_segment, segment_meta, sync_segment, write_segment,
 };
 use garuda_storage::{read_file, segment_hnsw_index_path};
 use garuda_types::{
@@ -17,7 +17,12 @@ static COUNTER: AtomicU64 = AtomicU64::new(0);
 #[test]
 fn persisted_hnsw_sidecar_roundtrips_search() {
     let root = temp_root("segment-hnsw-sidecar");
-    let mut segment = SegmentFile::new_persisted(segment_meta(SegmentId::new_unchecked(1)));
+    let mut segment = SegmentFile::new(
+        segment_meta(SegmentId::new_unchecked(1)),
+        Vec::new(),
+        SegmentKind::Persisted,
+        &vector_field(IndexParams::Hnsw(HnswIndexParams::default())),
+    );
     segment
         .records
         .push(stored_record(1, "doc-1", "alpha", [1.0, 0.0, 0.0, 0.0]));
@@ -27,10 +32,8 @@ fn persisted_hnsw_sidecar_roundtrips_search() {
     segment
         .records
         .push(stored_record(3, "doc-3", "beta", [0.0, 1.0, 0.0, 0.0]));
-    sync_segment_meta(&mut segment);
-
     let vector_field = vector_field(IndexParams::Hnsw(HnswIndexParams::default()));
-    garuda_segment::sync_vector_search(&mut segment, &vector_field);
+    sync_segment(&mut segment, &vector_field);
     write_segment(&root, &segment, &vector_field).expect("write segment with hnsw sidecar");
 
     let reopened =
@@ -38,15 +41,12 @@ fn persisted_hnsw_sidecar_roundtrips_search() {
 
     let hits = exact_search(
         &reopened,
-        ExactSearchRequest {
-            metric: DistanceMetric::Cosine,
+        SegmentSearchRequest::Hnsw(HnswSegmentSearchRequest {
             query_vector: &DenseVector::parse(vec![1.0, 0.0, 0.0, 0.0]).expect("valid vector"),
             top_k: TopK::new(3).expect("valid top_k"),
-            index: SegmentIndexSearch::Hnsw {
-                ef_search: HnswIndexParams::default().ef_search,
-            },
+            ef_search: HnswIndexParams::default().ef_search,
             filter: SegmentFilter::All,
-        },
+        }),
     )
     .expect("search reopened segment");
 
@@ -65,14 +65,17 @@ fn persisted_hnsw_sidecar_roundtrips_search() {
 #[test]
 fn missing_or_invalid_hnsw_sidecar_fails_reopen_for_persisted_hnsw_segments() {
     let root = temp_root("segment-hnsw-sidecar-invalid");
-    let mut segment = SegmentFile::new_persisted(segment_meta(SegmentId::new_unchecked(1)));
+    let mut segment = SegmentFile::new(
+        segment_meta(SegmentId::new_unchecked(1)),
+        Vec::new(),
+        SegmentKind::Persisted,
+        &vector_field(IndexParams::Hnsw(HnswIndexParams::default())),
+    );
     segment
         .records
         .push(stored_record(1, "doc-1", "alpha", [1.0, 0.0, 0.0, 0.0]));
-    sync_segment_meta(&mut segment);
-
     let vector_field = vector_field(IndexParams::Hnsw(HnswIndexParams::default()));
-    garuda_segment::sync_vector_search(&mut segment, &vector_field);
+    sync_segment(&mut segment, &vector_field);
     write_segment(&root, &segment, &vector_field).expect("write segment");
 
     std::fs::remove_file(segment_hnsw_index_path(&root, segment.meta.id)).expect("remove sidecar");

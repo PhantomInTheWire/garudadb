@@ -2,9 +2,7 @@ use crate::catalog::CollectionCatalog;
 use crate::segment_manager::SegmentManager;
 use crate::validation::{apply_schema_defaults, validate_doc};
 use garuda_meta::MetadataStore;
-use garuda_segment::{
-    RecordState, SegmentFile, StoredRecord, sync_segment_meta, sync_vector_search,
-};
+use garuda_segment::{RecordState, SegmentFile, StoredRecord, sync_segment};
 use garuda_types::{Doc, DocId, StatusCode, VectorFieldSchema, WriteResult};
 use std::path::PathBuf;
 
@@ -118,6 +116,7 @@ impl CollectionRuntime {
             doc,
             &mut self.catalog.next_segment_id,
             self.catalog.options.segment_max_docs,
+            &self.catalog.schema.vector,
         );
     }
 
@@ -139,8 +138,7 @@ fn index_segment(
     meta: &mut MetadataStore,
     vector_field: &VectorFieldSchema,
 ) {
-    sync_segment_meta(segment);
-    sync_vector_search(segment, vector_field);
+    sync_segment(segment, vector_field);
 
     for record in &segment.records {
         if matches!(record.state, RecordState::Deleted) {
