@@ -601,7 +601,7 @@ impl HnswGraph {
 
         self.node_levels
             .iter()
-            .position(|&level| level == max_level)
+            .rposition(|&level| level == max_level)
             .map(NodeIndex::new)
             .expect("hnsw graph entry point")
     }
