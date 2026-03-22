@@ -32,7 +32,7 @@ impl HnswIndex {
 
             candidates.push(ScoredNode {
                 index: candidate,
-                score: self.score_node(self.entries[node.get()].vector(), candidate),
+                score: self.score_node(self.vector(node), candidate),
             });
         }
 
@@ -48,7 +48,7 @@ impl HnswIndex {
         let num_of_max_neighbors = self.config.neighbor_limits().for_level(level);
         let mut candidates = Vec::with_capacity(num_of_max_neighbors + 1);
 
-        let node_vector = self.entries[node.get()].vector();
+        let node_vector = self.vector(node);
         for &existing_neighbor in neighbors {
             candidates.push(ScoredNode {
                 index: existing_neighbor,
@@ -72,8 +72,8 @@ impl HnswIndex {
         mut candidates: Vec<ScoredNode>,
     ) -> Vec<NodeIndex> {
         candidates.sort_by(|left, right| {
-            let left_doc_id = self.entries[left.index.get()].doc_id();
-            let right_doc_id = self.entries[right.index.get()].doc_id();
+            let left_doc_id = self.doc_id(left.index);
+            let right_doc_id = self.doc_id(right.index);
 
             compare_score_then_doc_id(left.score, left_doc_id, right.score, right_doc_id)
         });
@@ -83,9 +83,9 @@ impl HnswIndex {
             candidates.truncate(prune_width);
         }
 
-        let max_neighbors = self.config.neighbor_limits().for_level(level);
+        let max_neighbors_count = self.config.neighbor_limits().for_level(level);
         let min_neighbor_count = self.config.min_neighbor_count().get() as usize;
-        let mut neighbors = Vec::with_capacity(max_neighbors);
+        let mut neighbors = Vec::with_capacity(max_neighbors_count);
 
         for candidate in &candidates {
             if candidate.index == node || neighbors.contains(&candidate.index) {
@@ -98,7 +98,7 @@ impl HnswIndex {
 
             neighbors.push(candidate.index);
 
-            if neighbors.len() >= max_neighbors {
+            if neighbors.len() >= max_neighbors_count {
                 return neighbors;
             }
         }
@@ -111,7 +111,7 @@ impl HnswIndex {
 
                 neighbors.push(candidate.index);
 
-                if neighbors.len() >= min_neighbor_count || neighbors.len() >= max_neighbors {
+                if neighbors.len() >= min_neighbor_count || neighbors.len() >= max_neighbors_count {
                     return neighbors;
                 }
             }
@@ -126,10 +126,10 @@ impl HnswIndex {
         candidate: &ScoredNode,
         neighbors: &[NodeIndex],
     ) -> bool {
-        let candidate_vector = self.entries[candidate.index.get()].vector();
+        let candidate_vector = self.vector(candidate.index);
 
         for &selected_neighbor in neighbors {
-            let selected_vector = self.entries[selected_neighbor.get()].vector();
+            let selected_vector = self.vector(selected_neighbor);
             let selected_score = score_doc(
                 self.config.metric,
                 candidate_vector.as_slice(),
@@ -141,7 +141,7 @@ impl HnswIndex {
             }
         }
 
-        let node_vector = self.entries[node.get()].vector();
+        let node_vector = self.vector(node);
         let node_score = score_doc(
             self.config.metric,
             candidate_vector.as_slice(),
