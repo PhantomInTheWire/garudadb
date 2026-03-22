@@ -148,9 +148,18 @@ impl HnswIndex {
 
                 let scored_neighbor = self.scored_node(query_vector, neighbor);
                 let has_capacity = results.len() < candidate_limit;
-                let improves_worst = results
-                    .peek()
-                    .is_some_and(|current_worst| scored_neighbor.score >= current_worst.score);
+                let improves_worst = results.peek().is_some_and(|current_worst| {
+                    let neighbor_doc_id = self.doc_id(scored_neighbor.index);
+                    let worst_doc_id = self.doc_id(current_worst.index);
+
+                    compare_score_then_doc_id(
+                        scored_neighbor.score,
+                        neighbor_doc_id,
+                        current_worst.score,
+                        worst_doc_id,
+                    )
+                    .is_lt()
+                });
 
                 if has_capacity || improves_worst {
                     candidates.push(scored_neighbor);
