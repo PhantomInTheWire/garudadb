@@ -198,8 +198,27 @@ impl NodeIndex {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct HnswLevel(usize);
+
+impl HnswLevel {
+    pub fn new(value: usize) -> Self {
+        Self(value)
+    }
+
+    pub fn get(self) -> usize {
+        self.0
+    }
+}
+
 pub const HNSW_LEVEL_ZERO_NEIGHBOR_MULTIPLIER: usize = 2;
 pub const HNSW_MAX_GRAPH_LEVEL: usize = 15;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HnswGraph {
+    node_levels: Vec<HnswLevel>,
+    levels: Vec<Vec<Vec<NodeIndex>>>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HnswNeighborLimits {
@@ -526,6 +545,65 @@ impl HnswMinNeighborCount {
     pub fn get(self) -> u32 {
         self.0.get()
     }
+}
+
+impl HnswGraph {
+    pub fn new(node_levels: Vec<HnswLevel>) -> Self {
+        let level_count = max(&node_levels).map_or(1, |level| level.get() + 1);
+        let node_count = node_levels.len();
+
+        Self {
+            node_levels,
+            levels: vec![vec![Vec::new(); node_count]; level_count],
+        }
+    }
+
+    pub fn node_count(&self) -> usize {
+        self.node_levels.len()
+    }
+
+    pub fn node_level(&self, node: NodeIndex) -> HnswLevel {
+        self.node_levels[node.get()]
+    }
+
+    pub fn node_levels(&self) -> &[HnswLevel] {
+        &self.node_levels
+    }
+
+    pub fn max_level(&self) -> HnswLevel {
+        assert!(!self.node_levels.is_empty(), "hnsw graph max level");
+        HnswLevel::new(self.levels.len() - 1)
+    }
+
+    pub fn level_count(&self) -> usize {
+        self.levels.len()
+    }
+
+    pub fn entry_point(&self) -> NodeIndex {
+        let max_level = self.max_level();
+
+        self.node_levels
+            .iter()
+            .position(|&level| level == max_level)
+            .map(NodeIndex::new)
+            .expect("hnsw graph entry point")
+    }
+
+    pub fn neighbors(&self, level: usize, node: NodeIndex) -> &[NodeIndex] {
+        &self.levels[level][node.get()]
+    }
+
+    pub fn replace_neighbors(&mut self, level: usize, node: NodeIndex, neighbors: Vec<NodeIndex>) {
+        self.levels[level][node.get()] = neighbors;
+    }
+
+    pub fn add_neighbor(&mut self, level: usize, node: NodeIndex, neighbor: NodeIndex) {
+        self.levels[level][node.get()].push(neighbor);
+    }
+}
+
+fn max<T: Copy + Ord>(values: &[T]) -> Option<T> {
+    values.iter().copied().max()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
