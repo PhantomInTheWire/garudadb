@@ -230,8 +230,8 @@ pub struct HnswNeighborLimits {
 }
 
 impl HnswNeighborLimits {
-    pub fn new(m: HnswM) -> Self {
-        let upper_levels = m.get() as usize;
+    pub fn new(max_neighbors: HnswM) -> Self {
+        let upper_levels = max_neighbors.get() as usize;
 
         Self {
             level_zero: upper_levels * HNSW_LEVEL_ZERO_NEIGHBOR_MULTIPLIER,
@@ -701,13 +701,16 @@ fn max<T: Copy + Ord>(values: &[T]) -> Option<T> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HnswNeighborConfig {
-    m: HnswM,
+    max_neighbors: HnswM,
     min_neighbor_count: HnswMinNeighborCount,
 }
 
 impl HnswNeighborConfig {
-    pub fn new(m: HnswM, min_neighbor_count: HnswMinNeighborCount) -> Result<Self, Status> {
-        if min_neighbor_count.get() > m.get() {
+    pub fn new(
+        max_neighbors: HnswM,
+        min_neighbor_count: HnswMinNeighborCount,
+    ) -> Result<Self, Status> {
+        if min_neighbor_count.get() > max_neighbors.get() {
             return Err(Status::err(
                 StatusCode::InvalidArgument,
                 "hnsw min_neighbor_count must not exceed m",
@@ -715,13 +718,13 @@ impl HnswNeighborConfig {
         }
 
         Ok(Self {
-            m,
+            max_neighbors,
             min_neighbor_count,
         })
     }
 
-    pub fn m(self) -> HnswM {
-        self.m
+    pub fn max_neighbors(self) -> HnswM {
+        self.max_neighbors
     }
 
     pub fn min_neighbor_count(self) -> HnswMinNeighborCount {
@@ -803,7 +806,7 @@ impl HnswEfSearch {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HnswIndexParams {
-    pub m: HnswM,
+    pub max_neighbors: HnswM,
     pub scaling_factor: HnswScalingFactor,
     pub ef_construction: HnswEfConstruction,
     pub prune_width: HnswPruneWidth,
@@ -814,7 +817,7 @@ pub struct HnswIndexParams {
 impl Default for HnswIndexParams {
     fn default() -> Self {
         Self {
-            m: HnswM::new(16).expect("default hnsw m should be valid"),
+            max_neighbors: HnswM::new(16).expect("default hnsw max_neighbors should be valid"),
             scaling_factor: HnswScalingFactor::new(50)
                 .expect("default hnsw scaling_factor should be valid"),
             ef_construction: HnswEfConstruction::new(200)
@@ -829,7 +832,7 @@ impl Default for HnswIndexParams {
 
 impl HnswIndexParams {
     pub fn neighbor_config(&self) -> Result<HnswNeighborConfig, Status> {
-        HnswNeighborConfig::new(self.m, self.min_neighbor_count)
+        HnswNeighborConfig::new(self.max_neighbors, self.min_neighbor_count)
     }
 }
 

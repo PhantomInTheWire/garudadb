@@ -41,8 +41,11 @@ fn rejects_invalid_schema_shapes_and_unknown_collections() {
     );
     assert!(
         serde_json::from_value::<HnswIndexParams>(serde_json::json!({
-            "m": 0,
+            "max_neighbors": 0,
+            "scaling_factor": 50,
             "ef_construction": 200,
+            "prune_width": 16,
+            "min_neighbor_count": 8,
             "ef_search": 64
         }))
         .is_err()
