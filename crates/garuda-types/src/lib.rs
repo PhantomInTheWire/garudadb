@@ -434,7 +434,7 @@ impl HnswM {
 pub struct HnswScalingFactor(NonZeroU32);
 
 impl HnswScalingFactor {
-    const MIN: u32 = 2;
+    const MIN_SCALING_FACTOR: u32 = 2;
 
     pub fn new(value: u32) -> Result<Self, Status> {
         let Some(value) = NonZeroU32::new(value) else {
@@ -444,7 +444,7 @@ impl HnswScalingFactor {
             ));
         };
 
-        if value.get() < Self::MIN {
+        if value.get() < Self::MIN_SCALING_FACTOR {
             return Err(Status::err(
                 StatusCode::InvalidArgument,
                 "hnsw scaling_factor must be greater than one",
