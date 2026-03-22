@@ -652,6 +652,22 @@ impl HnswGraph {
             ));
         }
 
+        if !self.node_levels.contains(&self.max_level()) {
+            return Err(Status::err(
+                StatusCode::Internal,
+                "persisted hnsw graph has no node at the top level",
+            ));
+        }
+
+        for level in &self.levels {
+            if level.len() != entry_count {
+                return Err(Status::err(
+                    StatusCode::Internal,
+                    "persisted hnsw graph levels do not match entry count",
+                ));
+            }
+        }
+
         Ok(())
     }
 }
