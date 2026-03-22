@@ -3,14 +3,17 @@ mod wal;
 
 use codec::{decode_flat_index, decode_segment, encode_flat_index, encode_segment};
 use garuda_index_flat::{FlatIndex, FlatIndexEntry};
+use garuda_index_hnsw::{
+    HnswBuildConfig, HnswBuildEntry, HnswHit, HnswIndex, HnswIndexConfig, HnswSearchRequest,
+};
 use garuda_meta::evaluate_filter;
 use garuda_storage::{
     WRITING_SEGMENT_ID, create_dir_all, read_file, remove_path_if_exists, segment_data_path,
     segment_dir, segment_flat_index_path, segment_wal_path, write_file_atomically,
 };
 use garuda_types::{
-    DenseVector, DistanceMetric, Doc, DocId, FilterExpr, IndexParams, InternalDocId, SegmentId,
-    SegmentMeta, Status, StatusCode, TopK, VectorDimension, VectorFieldSchema,
+    DenseVector, DistanceMetric, Doc, DocId, FilterExpr, HnswEfSearch, IndexParams, InternalDocId,
+    SegmentId, SegmentMeta, Status, StatusCode, TopK, VectorDimension, VectorFieldSchema,
 };
 pub use wal::{WalOp, append_wal_ops, read_wal_ops, reset_wal};
 
@@ -58,6 +61,7 @@ pub struct SegmentFile {
 enum VectorSearchState {
     ScanRecords,
     UseFlatIndex(FlatIndex),
+    UseHnswIndex(HnswIndex),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -77,7 +81,14 @@ pub struct ExactSearchRequest<'a> {
     pub metric: DistanceMetric,
     pub query_vector: &'a DenseVector,
     pub top_k: TopK,
+    pub index: SegmentIndexSearch,
     pub filter: SegmentFilter<'a>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SegmentIndexSearch {
+    Flat,
+    Hnsw { ef_search: HnswEfSearch },
 }
 
 pub fn segment_file_name(segment_id: SegmentId) -> String {
@@ -142,17 +153,27 @@ pub fn sync_segment_meta(segment: &mut SegmentFile) {
 }
 
 pub fn sync_vector_search(segment: &mut SegmentFile, vector_field: &VectorFieldSchema) {
-    if !should_use_persisted_flat(segment.meta.id, vector_field, segment.meta.doc_count) {
-        segment.vector_search = VectorSearchState::ScanRecords;
-        return;
+    match &vector_field.index {
+        IndexParams::Flat(_) => {
+            if !should_use_persisted_flat(segment.meta.id, vector_field, segment.meta.doc_count) {
+                segment.vector_search = VectorSearchState::ScanRecords;
+                return;
+            }
+
+            let entries = flat_index_entries(segment);
+            let dimension = vector_field.dimension;
+            let flat_index = FlatIndex::build(dimension, entries)
+                .expect("validated segment records should match the vector field dimension");
+
+            segment.vector_search = VectorSearchState::UseFlatIndex(flat_index);
+        }
+        IndexParams::Hnsw(params) => {
+            let config = hnsw_index_config(vector_field, params);
+            let entries = hnsw_build_entries(&config, segment);
+            let index = HnswIndex::build(config, entries);
+            segment.vector_search = VectorSearchState::UseHnswIndex(index);
+        }
     }
-
-    let entries = flat_index_entries(segment);
-    let dimension = vector_field.dimension;
-    let flat_index = FlatIndex::build(dimension, entries)
-        .expect("validated segment records should match the vector field dimension");
-
-    segment.vector_search = VectorSearchState::UseFlatIndex(flat_index);
 }
 
 pub fn ensure_segment_files(root: &std::path::Path, segment_id: SegmentId) -> Result<(), Status> {
@@ -231,10 +252,33 @@ pub fn exact_search(
     }
 
     let search_top_k = search_top_k(request, records.len())?;
-    let hits = match &segment.vector_search {
-        VectorSearchState::ScanRecords => scan_records(segment, request, search_top_k)?,
-        VectorSearchState::UseFlatIndex(index) => {
+    let hits = match (&segment.vector_search, request.index) {
+        (VectorSearchState::ScanRecords, SegmentIndexSearch::Flat) => {
+            scan_records(segment, request, search_top_k)?
+        }
+        (VectorSearchState::ScanRecords, SegmentIndexSearch::Hnsw { .. }) => {
+            return Err(Status::err(
+                StatusCode::Internal,
+                "hnsw query requested without hnsw segment search state",
+            ));
+        }
+        (VectorSearchState::UseFlatIndex(index), SegmentIndexSearch::Flat) => {
             index.search(request.metric, request.query_vector, search_top_k)?
+        }
+        (VectorSearchState::UseFlatIndex(_), SegmentIndexSearch::Hnsw { .. }) => {
+            return Err(Status::err(
+                StatusCode::Internal,
+                "hnsw query requested for flat segment search state",
+            ));
+        }
+        (VectorSearchState::UseHnswIndex(index), SegmentIndexSearch::Hnsw { ef_search }) => {
+            search_hnsw(index, request.query_vector, search_top_k, ef_search)?
+        }
+        (VectorSearchState::UseHnswIndex(_), SegmentIndexSearch::Flat) => {
+            return Err(Status::err(
+                StatusCode::Internal,
+                "flat query requested for hnsw segment search state",
+            ));
         }
     };
     let mut search_hits = Vec::with_capacity(hits.len());
@@ -277,6 +321,16 @@ fn scan_records(
     index.search(request.metric, request.query_vector, top_k)
 }
 
+fn search_hnsw(
+    index: &HnswIndex,
+    query_vector: &DenseVector,
+    top_k: TopK,
+    ef_search: HnswEfSearch,
+) -> Result<Vec<garuda_index_flat::FlatSearchHit>, Status> {
+    let hits = index.search(HnswSearchRequest::new(query_vector, top_k, ef_search))?;
+    Ok(flat_search_hits(hits))
+}
+
 fn flat_index_entries(segment: &SegmentFile) -> Vec<FlatIndexEntry> {
     let mut entries = Vec::with_capacity(segment.meta.doc_count);
 
@@ -299,6 +353,39 @@ fn load_vector_search_state(
     segment: &SegmentFile,
     vector_field: &VectorFieldSchema,
 ) -> Result<VectorSearchState, Status> {
+    match &vector_field.index {
+        IndexParams::Flat(_) => load_flat_search_state(root, segment, vector_field),
+        IndexParams::Hnsw(params) => {
+            let config = hnsw_index_config(vector_field, params);
+            let entries = hnsw_build_entries(&config, segment);
+            Ok(VectorSearchState::UseHnswIndex(HnswIndex::build(
+                config, entries,
+            )))
+        }
+    }
+}
+
+fn hnsw_index_config(
+    vector_field: &VectorFieldSchema,
+    params: &garuda_types::HnswIndexParams,
+) -> HnswIndexConfig {
+    HnswIndexConfig::new(
+        vector_field.dimension,
+        vector_field.metric,
+        HnswBuildConfig::new(
+            params.neighbor_config().expect("validated hnsw params"),
+            params.scaling_factor,
+            params.ef_construction,
+            params.prune_width,
+        ),
+    )
+}
+
+fn load_flat_search_state(
+    root: &std::path::Path,
+    segment: &SegmentFile,
+    vector_field: &VectorFieldSchema,
+) -> Result<VectorSearchState, Status> {
     if !should_use_persisted_flat(segment.meta.id, vector_field, segment.meta.doc_count) {
         return Ok(VectorSearchState::ScanRecords);
     }
@@ -315,6 +402,32 @@ fn load_vector_search_state(
     }
 
     Ok(VectorSearchState::UseFlatIndex(flat_index))
+}
+
+fn hnsw_build_entries(config: &HnswIndexConfig, segment: &SegmentFile) -> Vec<HnswBuildEntry> {
+    let mut entries = Vec::with_capacity(segment.meta.doc_count);
+
+    for record in &segment.records {
+        if matches!(record.state, RecordState::Deleted) {
+            continue;
+        }
+
+        entries.push(
+            HnswBuildEntry::new(config, record.doc_id, record.doc.vector.clone())
+                .expect("validated segment records should match the vector field dimension"),
+        );
+    }
+
+    entries
+}
+
+fn flat_search_hits(hits: Vec<HnswHit>) -> Vec<garuda_index_flat::FlatSearchHit> {
+    hits.into_iter()
+        .map(|hit| garuda_index_flat::FlatSearchHit {
+            doc_id: hit.doc_id,
+            score: hit.score,
+        })
+        .collect()
 }
 
 fn should_use_persisted_flat(
