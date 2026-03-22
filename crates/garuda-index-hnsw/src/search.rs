@@ -164,7 +164,7 @@ impl HnswIndex {
             }
         }
 
-        to_vec(results)
+        collect_best_first(results)
     }
 
     fn scored_node(&self, query_vector: &DenseVector, node: NodeIndex) -> ScoredNode {
@@ -175,13 +175,13 @@ impl HnswIndex {
     }
 }
 
-fn to_vec(mut results: BinaryHeap<WorstScoredNode>) -> Vec<ScoredNode> {
-    let mut best = Vec::with_capacity(results.len());
+fn collect_best_first(mut results: BinaryHeap<WorstScoredNode>) -> Vec<ScoredNode> {
+    let mut candidates = Vec::with_capacity(results.len());
 
     while let Some(candidate) = results.pop() {
-        best.push(ScoredNode::from(candidate));
+        candidates.push(ScoredNode::from(candidate));
     }
 
-    best.reverse();
-    best
+    candidates.reverse();
+    candidates
 }
