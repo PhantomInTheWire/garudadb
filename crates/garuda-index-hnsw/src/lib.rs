@@ -1,3 +1,4 @@
+use garuda_math::score_doc;
 use garuda_types::{
     DenseVector, DistanceMetric, HNSW_MAX_GRAPH_LEVEL, HnswEfConstruction, HnswEfSearch, HnswGraph,
     HnswLevel, HnswM, HnswMinNeighborCount, HnswNeighborConfig, HnswPruneWidth, HnswScalingFactor,
@@ -145,6 +146,38 @@ impl HnswIndex {
         &self.config
     }
 
+    pub fn search(&self, request: HnswSearchRequest<'_>) -> Result<Vec<HnswHit>, Status> {
+        if request.query_vector.len() != self.config.dimension.get() {
+            return Err(Status::err(
+                StatusCode::InvalidArgument,
+                "query vector dimension does not match hnsw index dimension",
+            ));
+        }
+
+        let mut hits = Vec::with_capacity(self.entries.len());
+
+        for entry in &self.entries {
+            hits.push(HnswHit {
+                doc_id: entry.doc_id(),
+                score: score_doc(
+                    self.config.metric,
+                    request.query_vector.as_slice(),
+                    entry.vector().as_slice(),
+                ),
+            });
+        }
+
+        hits.sort_by(|left, right| {
+            right
+                .score
+                .total_cmp(&left.score)
+                .then_with(|| left.doc_id.cmp(&right.doc_id))
+        });
+        hits.truncate(request.limit.get());
+
+        Ok(hits)
+    }
+
     pub fn entries(&self) -> &[HnswBuildEntry] {
         &self.entries
     }
@@ -184,4 +217,59 @@ fn sample_node_level(
     }
 
     HnswLevel::new(level)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HnswBuildConfig, HnswBuildEntry, HnswIndex, HnswIndexConfig, HnswSearchRequest};
+    use garuda_types::{
+        DenseVector, DistanceMetric, HnswEfConstruction, HnswEfSearch, HnswM, HnswMinNeighborCount,
+        HnswNeighborConfig, HnswPruneWidth, HnswScalingFactor, InternalDocId, TopK,
+        VectorDimension,
+    };
+
+    #[test]
+    fn search_returns_scored_hits_in_deterministic_order() {
+        let config = HnswIndexConfig::new(
+            VectorDimension::new(2).unwrap(),
+            DistanceMetric::InnerProduct,
+            HnswBuildConfig::new(
+                HnswNeighborConfig::new(
+                    HnswM::new(16).unwrap(),
+                    HnswMinNeighborCount::new(8).unwrap(),
+                )
+                .unwrap(),
+                HnswScalingFactor::new(50).unwrap(),
+                HnswEfConstruction::new(200).unwrap(),
+                HnswPruneWidth::new(64).unwrap(),
+            ),
+        );
+        let entries = vec![
+            HnswBuildEntry::new(
+                &config,
+                InternalDocId::new(2).unwrap(),
+                DenseVector::parse(vec![1.0, 0.0]).unwrap(),
+            )
+            .unwrap(),
+            HnswBuildEntry::new(
+                &config,
+                InternalDocId::new(1).unwrap(),
+                DenseVector::parse(vec![1.0, 0.0]).unwrap(),
+            )
+            .unwrap(),
+        ];
+        let index = HnswIndex::build(config, entries);
+
+        let hits = index
+            .search(HnswSearchRequest::new(
+                &DenseVector::parse(vec![1.0, 0.0]).unwrap(),
+                TopK::new(2).unwrap(),
+                HnswEfSearch::new(32).unwrap(),
+            ))
+            .unwrap();
+
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].doc_id, InternalDocId::new(1).unwrap());
+        assert_eq!(hits[1].doc_id, InternalDocId::new(2).unwrap());
+    }
 }
