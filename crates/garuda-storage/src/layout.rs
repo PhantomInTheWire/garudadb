@@ -9,6 +9,7 @@ pub const DELETE_FILE_PREFIX: &str = "del.";
 pub const DATA_SEG_FILE_NAME: &str = "data.seg";
 pub const DATA_WAL_FILE_NAME: &str = "data.wal";
 pub const FLAT_INDEX_FILE_NAME: &str = "flat.idx";
+pub const HNSW_INDEX_FILE_NAME: &str = "hnsw.idx";
 pub const WRITING_SEGMENT_ID: SegmentId = SegmentId::new_unchecked(0);
 
 pub fn ensure_database_root(path: &Path) -> Result<(), Status> {
@@ -87,6 +88,10 @@ pub fn segment_wal_path(root: &Path, segment_id: SegmentId) -> PathBuf {
 
 pub fn segment_flat_index_path(root: &Path, segment_id: SegmentId) -> PathBuf {
     segment_dir(root, segment_id).join(FLAT_INDEX_FILE_NAME)
+}
+
+pub fn segment_hnsw_index_path(root: &Path, segment_id: SegmentId) -> PathBuf {
+    segment_dir(root, segment_id).join(HNSW_INDEX_FILE_NAME)
 }
 
 pub fn manifest_paths(root: &Path) -> Result<Vec<(ManifestVersionId, PathBuf)>, Status> {
