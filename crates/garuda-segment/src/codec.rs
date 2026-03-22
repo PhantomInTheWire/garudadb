@@ -4,8 +4,10 @@ use garuda_types::{
     DenseVector, DistanceMetric, Doc, DocId, IndexParams, InternalDocId, ScalarValue, SegmentId,
     SegmentMeta, Status, StatusCode, VectorDimension, VectorFieldSchema,
 };
+use garuda_types::{HnswGraph, HnswLevel, HnswNeighborLimits};
 const SEGMENT_MAGIC: &[u8; 8] = b"GRDSEG01";
 const FLAT_INDEX_MAGIC: &[u8; 8] = b"GRDFLT01";
+const HNSW_INDEX_MAGIC: &[u8; 8] = b"GRDHNS01";
 const FORMAT_VERSION: u16 = 1;
 const FNV_OFFSET_BASIS: u32 = 2_166_136_261;
 const FNV_PRIME: u32 = 16_777_619;
@@ -120,6 +122,89 @@ pub fn decode_flat_index(
 
     reader.finish()?;
     FlatIndex::build(dimension, entries)
+}
+
+pub fn encode_hnsw_graph(graph: &HnswGraph) -> Result<Vec<u8>, Status> {
+    let mut writer = BinaryWriter::new(HNSW_INDEX_MAGIC);
+    writer.write_u16(FORMAT_VERSION);
+    writer.write_len(graph.node_count())?;
+    writer.write_len(graph.level_count())?;
+
+    for &level in graph.node_levels() {
+        writer.write_len(level.get())?;
+    }
+
+    for raw_level in 0..graph.level_count() {
+        let level = HnswLevel::new(raw_level);
+
+        for raw_node in 0..graph.node_count() {
+            let node = garuda_types::NodeIndex::new(raw_node);
+            let neighbors = graph.neighbors(level, node);
+            writer.write_len(neighbors.len())?;
+
+            for &neighbor in neighbors {
+                writer.write_len(neighbor.get())?;
+            }
+        }
+    }
+
+    Ok(writer.finish())
+}
+
+pub fn decode_hnsw_graph(
+    bytes: &[u8],
+    vector_field: &VectorFieldSchema,
+    entry_count: usize,
+) -> Result<HnswGraph, Status> {
+    let mut reader = BinaryReader::new(bytes, HNSW_INDEX_MAGIC)?;
+    reader.expect_u16(FORMAT_VERSION)?;
+
+    if !matches!(&vector_field.index, IndexParams::Hnsw(_)) {
+        return Err(Status::err(
+            StatusCode::Internal,
+            "persisted hnsw index requested for a non-hnsw vector field",
+        ));
+    }
+
+    let node_count = reader.read_len()?;
+    let level_count = reader.read_len()?;
+    let mut node_levels = Vec::with_capacity(node_count);
+
+    for _ in 0..node_count {
+        node_levels.push(HnswLevel::new(reader.read_len()?));
+    }
+
+    let mut levels = Vec::with_capacity(level_count);
+
+    for _ in 0..level_count {
+        let mut nodes = Vec::with_capacity(node_count);
+
+        for _ in 0..node_count {
+            let neighbor_count = reader.read_len()?;
+            let mut neighbors = Vec::with_capacity(neighbor_count);
+
+            for _ in 0..neighbor_count {
+                neighbors.push(garuda_types::NodeIndex::new(reader.read_len()?));
+            }
+
+            nodes.push(neighbors);
+        }
+
+        levels.push(nodes);
+    }
+
+    reader.finish()?;
+
+    let IndexParams::Hnsw(params) = &vector_field.index else {
+        unreachable!("validated hnsw vector field")
+    };
+
+    HnswGraph::from_parts(
+        node_levels,
+        levels,
+        entry_count,
+        HnswNeighborLimits::new(params.max_neighbors),
+    )
 }
 
 pub fn decode_doc_payload(bytes: &[u8]) -> Result<Doc, Status> {

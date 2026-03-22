@@ -1,7 +1,10 @@
 mod codec;
 mod wal;
 
-use codec::{decode_flat_index, decode_segment, encode_flat_index, encode_segment};
+use codec::{
+    decode_flat_index, decode_hnsw_graph, decode_segment, encode_flat_index, encode_hnsw_graph,
+    encode_segment,
+};
 use garuda_index_flat::{FlatIndex, FlatIndexEntry};
 use garuda_index_hnsw::{
     HnswBuildConfig, HnswBuildEntry, HnswHit, HnswIndex, HnswIndexConfig, HnswSearchRequest,
@@ -9,7 +12,8 @@ use garuda_index_hnsw::{
 use garuda_meta::evaluate_filter;
 use garuda_storage::{
     WRITING_SEGMENT_ID, create_dir_all, read_file, remove_path_if_exists, segment_data_path,
-    segment_dir, segment_flat_index_path, segment_wal_path, write_file_atomically,
+    segment_dir, segment_flat_index_path, segment_hnsw_index_path, segment_wal_path,
+    write_file_atomically,
 };
 use garuda_types::{
     DenseVector, DistanceMetric, Doc, DocId, FilterExpr, HnswEfSearch, IndexParams, InternalDocId,
@@ -201,13 +205,26 @@ pub fn write_segment(
     let bytes = encode_segment(segment)?;
     write_file_atomically(&segment_data_path(root, segment.meta.id), &bytes)?;
 
-    if should_use_persisted_flat(segment.meta.id, vector_field, segment.meta.doc_count) {
-        let sidecar = encode_flat_index(flat_index_entries(segment), vector_field)?;
-        write_file_atomically(&segment_flat_index_path(root, segment.meta.id), &sidecar)?;
-        return Ok(());
+    match &segment.vector_search {
+        VectorSearchState::UseFlatIndex(index)
+            if should_use_persisted_flat(segment.meta.id, vector_field, segment.meta.doc_count) =>
+        {
+            let sidecar = encode_flat_index(flat_index_entries(segment), vector_field)?;
+            write_file_atomically(&segment_flat_index_path(root, segment.meta.id), &sidecar)?;
+            remove_path_if_exists(&segment_hnsw_index_path(root, segment.meta.id))?;
+            return Ok(());
+        }
+        VectorSearchState::UseHnswIndex(index) if should_persist_hnsw(segment.meta.id, segment) => {
+            let sidecar = encode_hnsw_graph(index.graph())?;
+            write_file_atomically(&segment_hnsw_index_path(root, segment.meta.id), &sidecar)?;
+            remove_path_if_exists(&segment_flat_index_path(root, segment.meta.id))?;
+            return Ok(());
+        }
+        _ => {}
     }
 
     remove_path_if_exists(&segment_flat_index_path(root, segment.meta.id))?;
+    remove_path_if_exists(&segment_hnsw_index_path(root, segment.meta.id))?;
     Ok(())
 }
 
@@ -356,6 +373,16 @@ fn load_vector_search_state(
     match &vector_field.index {
         IndexParams::Flat(_) => load_flat_search_state(root, segment, vector_field),
         IndexParams::Hnsw(params) => {
+            if should_persist_hnsw(segment.meta.id, segment) {
+                let bytes = read_file(&segment_hnsw_index_path(root, segment.meta.id))?;
+                let graph = decode_hnsw_graph(&bytes, vector_field, segment.meta.doc_count)?;
+                let config = hnsw_index_config(vector_field, params);
+                let entries = hnsw_build_entries(&config, segment);
+                return Ok(VectorSearchState::UseHnswIndex(HnswIndex::from_parts(
+                    config, entries, graph,
+                )));
+            }
+
             let config = hnsw_index_config(vector_field, params);
             let entries = hnsw_build_entries(&config, segment);
             Ok(VectorSearchState::UseHnswIndex(HnswIndex::build(
@@ -440,6 +467,10 @@ fn should_use_persisted_flat(
     }
 
     matches!(vector_field.index, IndexParams::Flat(_))
+}
+
+fn should_persist_hnsw(segment_id: SegmentId, segment: &SegmentFile) -> bool {
+    segment_id != WRITING_SEGMENT_ID && segment.meta.doc_count != 0
 }
 
 fn search_top_k(request: ExactSearchRequest<'_>, live_doc_count: usize) -> Result<TopK, Status> {
