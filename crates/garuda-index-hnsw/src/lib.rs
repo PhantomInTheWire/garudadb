@@ -1,1 +1,119 @@
-pub const GARUDA_INDEX_HNSW_CONTRACT_ONLY: &str = "contract-only crate";
+use garuda_types::{
+    DenseVector, DistanceMetric, HnswEfConstruction, HnswEfSearch, HnswNeighborConfig,
+    HnswPruneWidth, HnswScalingFactor, InternalDocId, Status, StatusCode, TopK, VectorDimension,
+};
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HnswBuildConfig {
+    pub neighbors: HnswNeighborConfig,
+    pub scaling_factor: HnswScalingFactor,
+    pub ef_construction: HnswEfConstruction,
+    pub prune_width: HnswPruneWidth,
+}
+
+impl HnswBuildConfig {
+    pub fn new(
+        neighbors: HnswNeighborConfig,
+        scaling_factor: HnswScalingFactor,
+        ef_construction: HnswEfConstruction,
+        prune_width: HnswPruneWidth,
+    ) -> Self {
+        Self {
+            neighbors,
+            scaling_factor,
+            ef_construction,
+            prune_width,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HnswIndexConfig {
+    pub dimension: VectorDimension,
+    pub metric: DistanceMetric,
+    pub build: HnswBuildConfig,
+}
+
+impl HnswIndexConfig {
+    pub fn new(dimension: VectorDimension, metric: DistanceMetric, build: HnswBuildConfig) -> Self {
+        Self {
+            dimension,
+            metric,
+            build,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HnswBuildEntry {
+    doc_id: InternalDocId,
+    vector: DenseVector,
+}
+
+impl HnswBuildEntry {
+    pub fn new(
+        config: &HnswIndexConfig,
+        doc_id: InternalDocId,
+        vector: DenseVector,
+    ) -> Result<Self, Status> {
+        if vector.len() != config.dimension.get() {
+            return Err(Status::err(
+                StatusCode::InvalidArgument,
+                "hnsw index entry dimension does not match index dimension",
+            ));
+        }
+
+        Ok(Self { doc_id, vector })
+    }
+
+    pub fn doc_id(&self) -> InternalDocId {
+        self.doc_id
+    }
+
+    pub fn vector(&self) -> &DenseVector {
+        &self.vector
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HnswSearchRequest<'a> {
+    pub query_vector: &'a DenseVector,
+    pub limit: TopK,
+    pub ef_search: HnswEfSearch,
+}
+
+impl<'a> HnswSearchRequest<'a> {
+    pub fn new(query_vector: &'a DenseVector, limit: TopK, ef_search: HnswEfSearch) -> Self {
+        Self {
+            query_vector,
+            limit,
+            ef_search,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HnswHit {
+    pub doc_id: InternalDocId,
+    pub score: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HnswIndex {
+    config: HnswIndexConfig,
+    entries: Vec<HnswBuildEntry>,
+}
+
+impl HnswIndex {
+    pub fn build(config: HnswIndexConfig, entries: Vec<HnswBuildEntry>) -> Self {
+        Self { config, entries }
+    }
+
+    pub fn config(&self) -> &HnswIndexConfig {
+        &self.config
+    }
+
+    pub fn entries(&self) -> &[HnswBuildEntry] {
+        &self.entries
+    }
+}
