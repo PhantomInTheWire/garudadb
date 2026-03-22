@@ -1,7 +1,7 @@
 use garuda_types::{
-    DenseVector, DistanceMetric, HnswEfConstruction, HnswEfSearch, HnswGraph, HnswM,
-    HnswMinNeighborCount, HnswNeighborConfig, HnswPruneWidth, HnswScalingFactor, InternalDocId,
-    Status, StatusCode, TopK, VectorDimension,
+    DenseVector, DistanceMetric, HNSW_MAX_GRAPH_LEVEL, HnswEfConstruction, HnswEfSearch, HnswGraph,
+    HnswLevel, HnswM, HnswMinNeighborCount, HnswNeighborConfig, HnswPruneWidth, HnswScalingFactor,
+    InternalDocId, NodeIndex, Status, StatusCode, TopK, VectorDimension,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -50,6 +50,10 @@ impl HnswIndexConfig {
 
     pub fn min_neighbor_count(&self) -> HnswMinNeighborCount {
         self.build.neighbors.min_neighbor_count()
+    }
+
+    fn max_graph_level(&self) -> usize {
+        HNSW_MAX_GRAPH_LEVEL
     }
 }
 
@@ -116,9 +120,11 @@ pub struct HnswIndex {
 
 impl HnswIndex {
     pub fn build(config: HnswIndexConfig, entries: Vec<HnswBuildEntry>) -> Self {
+        let node_levels = sample_node_levels(&config, &entries);
+
         Self {
             config,
-            graph: HnswGraph::new(Vec::new()),
+            graph: HnswGraph::new(node_levels),
             entries,
         }
     }
@@ -146,4 +152,36 @@ impl HnswIndex {
     pub fn graph(&self) -> &HnswGraph {
         &self.graph
     }
+}
+
+fn sample_node_levels(config: &HnswIndexConfig, entries: &[HnswBuildEntry]) -> Vec<HnswLevel> {
+    let mut node_levels = Vec::with_capacity(entries.len());
+
+    for (index, entry) in entries.iter().enumerate() {
+        node_levels.push(sample_node_level(
+            config,
+            NodeIndex::new(index),
+            entry.doc_id(),
+        ));
+    }
+
+    node_levels
+}
+
+fn sample_node_level(
+    config: &HnswIndexConfig,
+    node: NodeIndex,
+    doc_id: InternalDocId,
+) -> HnswLevel {
+    let scale = config.build.scaling_factor.get() as usize; // scale factor = 50
+    let max_level = config.max_graph_level(); // max graph level = 15
+    let mut level = 0usize;
+    let mut value = node.get() + (doc_id.get() as usize);
+
+    while level < max_level && value % scale == 0 {
+        level += 1;
+        value /= scale.max(2);
+    }
+
+    HnswLevel::new(level)
 }
