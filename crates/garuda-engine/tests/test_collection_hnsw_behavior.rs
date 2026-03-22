@@ -5,7 +5,7 @@ use common::{
 };
 use garuda_types::{
     HnswEfConstruction, HnswEfSearch, HnswIndexParams, HnswM, HnswMinNeighborCount, HnswPruneWidth,
-    HnswScalingFactor, IndexParams, VectorQuery,
+    HnswScalingFactor, IndexParams, StatusCode, VectorQuery,
 };
 
 #[test]
@@ -121,6 +121,22 @@ fn create_index_rebuilds_hnsw_with_new_prune_width() {
             .collect::<Vec<_>>(),
         vec!["doc-6", "doc-5", "doc-2"]
     );
+}
+
+#[test]
+fn create_index_rejects_hnsw_min_neighbor_count_above_max_neighbors() {
+    let (_root, db) = database("hnsw-invalid-min-neighbors");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+
+    let status = collection
+        .create_index(
+            &field_name("embedding"),
+            IndexParams::Hnsw(hnsw_params(2, 50, 8, 8, 3, 8)),
+        )
+        .expect_err("invalid hnsw params should fail");
+    assert_eq!(status.code, StatusCode::InvalidArgument);
 }
 
 fn hnsw_params(
