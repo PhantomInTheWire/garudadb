@@ -558,6 +558,20 @@ impl HnswGraph {
         }
     }
 
+    pub fn from_parts(
+        node_levels: Vec<HnswLevel>,
+        levels: Vec<Vec<Vec<NodeIndex>>>,
+        entry_count: usize,
+        neighbor_limits: HnswNeighborLimits,
+    ) -> Result<Self, Status> {
+        let graph = Self {
+            node_levels,
+            levels,
+        };
+        graph.validate(entry_count, neighbor_limits)?;
+        Ok(graph)
+    }
+
     pub fn node_count(&self) -> usize {
         self.node_levels.len()
     }
@@ -601,7 +615,7 @@ impl HnswGraph {
         self.levels[level][node.get()].push(neighbor);
     }
 
-    pub fn validate(
+    fn validate(
         &self,
         entry_count: usize,
         _neighbor_limits: HnswNeighborLimits,
