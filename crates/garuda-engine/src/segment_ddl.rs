@@ -1,5 +1,5 @@
 use crate::segment_manager::SegmentManager;
-use garuda_segment::{SegmentFile, StoredRecord, sync_segment_meta};
+use garuda_segment::{SegmentFile, StoredRecord};
 use garuda_types::{FieldName, ScalarFieldSchema, ScalarValue};
 
 pub(crate) fn backfill_new_column(segments: &mut SegmentManager, field: &ScalarFieldSchema) {
@@ -28,12 +28,12 @@ pub(crate) fn drop_column(segments: &mut SegmentManager, name: &FieldName) {
 fn apply_to_all_segments(segments: &mut SegmentManager, mut apply: impl FnMut(&mut SegmentFile)) {
     for segment in segments.persisted_segments_mut() {
         apply(segment);
-        sync_segment_meta(segment);
+        segment.sync_meta();
     }
 
     let segment = segments.writing_segment_mut();
     apply(segment);
-    sync_segment_meta(segment);
+    segment.sync_meta();
 }
 
 fn insert_field_into_records(records: &mut [StoredRecord], field_name: &str, value: &ScalarValue) {

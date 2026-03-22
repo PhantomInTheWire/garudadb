@@ -3,7 +3,8 @@ use crate::filter_parser::parse_filter;
 use crate::state::CollectionRuntime;
 use garuda_planner::{QueryPlan, SegmentFilterPlan, SegmentSearchPlan, build_query_plan};
 use garuda_segment::{
-    FlatSearchRequest, HnswSegmentSearchRequest, SegmentFilter, SegmentSearchRequest, exact_search,
+    FlatSearchRequest, HnswSegmentSearchRequest, SegmentFilter, search_segment_flat,
+    search_segment_hnsw,
 };
 use garuda_types::{
     CollectionSchema, DenseVector, Doc, QueryVectorSource, Status, StatusCode, TopK,
@@ -103,11 +104,7 @@ fn collect_matching_docs(
             continue;
         }
 
-        collect_docs_from_segment(
-            &mut docs,
-            segment,
-            exact_search_request(state, plan, query_vector, segment)?,
-        )?;
+        collect_docs_from_segment(&mut docs, state, plan, query_vector, segment)?;
     }
 
     if state.segments.writing_segment().meta.doc_count == 0 {
@@ -116,8 +113,10 @@ fn collect_matching_docs(
 
     collect_docs_from_segment(
         &mut docs,
+        state,
+        plan,
+        query_vector,
         state.segments.writing_segment(),
-        exact_search_request(state, plan, query_vector, state.segments.writing_segment())?,
     )?;
 
     Ok(docs)
@@ -125,10 +124,32 @@ fn collect_matching_docs(
 
 fn collect_docs_from_segment(
     docs: &mut Vec<Doc>,
+    state: &CollectionRuntime,
+    plan: &QueryPlan,
+    query_vector: &DenseVector,
     segment: &garuda_segment::SegmentFile,
-    request: SegmentSearchRequest<'_>,
 ) -> Result<(), Status> {
-    let hits = exact_search(segment, request)?;
+    let filter = segment_filter(&plan.filter);
+    let hits = match plan.search {
+        SegmentSearchPlan::Flat => search_segment_flat(
+            segment,
+            FlatSearchRequest {
+                metric: state.catalog.schema.vector.metric,
+                query_vector,
+                top_k: segment_top_k(segment),
+                filter,
+            },
+        )?,
+        SegmentSearchPlan::Hnsw { ef_search } => search_segment_hnsw(
+            segment,
+            HnswSegmentSearchRequest {
+                query_vector,
+                top_k: plan.top_k,
+                ef_search,
+                filter,
+            },
+        )?,
+    };
 
     for hit in hits {
         let mut doc = hit.record.doc;
@@ -153,32 +174,6 @@ fn finalize_docs(mut docs: Vec<Doc>, plan: &QueryPlan) -> Vec<Doc> {
     }
 
     docs
-}
-
-fn exact_search_request<'a>(
-    state: &'a CollectionRuntime,
-    plan: &'a QueryPlan,
-    query_vector: &'a DenseVector,
-    segment: &'a garuda_segment::SegmentFile,
-) -> Result<SegmentSearchRequest<'a>, Status> {
-    let filter = segment_filter(&plan.filter);
-
-    match plan.search {
-        SegmentSearchPlan::Flat => Ok(SegmentSearchRequest::Flat(FlatSearchRequest {
-            metric: state.catalog.schema.vector.metric,
-            query_vector,
-            top_k: segment_top_k(segment),
-            filter,
-        })),
-        SegmentSearchPlan::Hnsw { ef_search } => {
-            Ok(SegmentSearchRequest::Hnsw(HnswSegmentSearchRequest {
-                query_vector,
-                top_k: plan.top_k,
-                ef_search,
-                filter,
-            }))
-        }
-    }
 }
 
 fn segment_filter(filter: &SegmentFilterPlan) -> SegmentFilter<'_> {

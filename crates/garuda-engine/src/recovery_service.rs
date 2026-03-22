@@ -4,7 +4,7 @@ use crate::segment_manager::SegmentManager;
 use crate::state::CollectionRuntime;
 use crate::write_service::replay_wal_ops;
 use garuda_meta::{DeleteStore, IdMap, MetadataStore};
-use garuda_segment::{SegmentFile, read_segment, read_wal_ops, sync_segment_meta};
+use garuda_segment::{SegmentFile, read_segment, read_wal_ops};
 use garuda_storage::{
     VersionManager, WRITING_SEGMENT_ID, read_delete_snapshot, read_id_map_snapshot,
 };
@@ -87,6 +87,6 @@ fn load_segment(
     vector_field: &VectorFieldSchema,
 ) -> Result<SegmentFile, Status> {
     let mut segment = read_segment(path, meta, vector_field)?;
-    sync_segment_meta(&mut segment);
+    segment.sync_meta();
     Ok(segment)
 }
