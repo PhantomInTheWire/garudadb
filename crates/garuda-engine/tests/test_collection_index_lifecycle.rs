@@ -4,7 +4,7 @@ use common::{
     collection_name, database, default_options, default_schema, dense_vector, field_name,
     seed_collection, seed_more_collection_docs,
 };
-use garuda_storage::{WRITING_SEGMENT_ID, segment_flat_index_path};
+use garuda_storage::{WRITING_SEGMENT_ID, segment_flat_index_path, segment_hnsw_index_path};
 use garuda_types::{
     FlatIndexParams, HnswEfConstruction, HnswEfSearch, HnswIndexParams, HnswM, IndexKind,
     IndexParams, SegmentId, VectorQuery,
@@ -204,5 +204,58 @@ fn create_flat_index_on_existing_persisted_data_should_create_sidecars_and_prese
     assert_eq!(
         before.iter().map(|doc| doc.id.clone()).collect::<Vec<_>>(),
         after.iter().map(|doc| doc.id.clone()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn hnsw_index_sidecars_should_survive_reopen_and_flat_switch_should_remove_them() {
+    let (root, db) = database("hnsw-sidecars");
+    let mut schema = default_schema("docs");
+    schema.vector.index = IndexParams::Hnsw(HnswIndexParams::default());
+
+    let collection = db
+        .create_collection(schema, default_options())
+        .expect("create collection");
+    seed_collection(&collection);
+    seed_more_collection_docs(&collection);
+    collection.flush().expect("flush");
+
+    let collection_root = root.join("docs");
+    assert!(segment_hnsw_index_path(&collection_root, FIRST_PERSISTED_SEGMENT_ID).exists());
+    assert!(
+        !segment_hnsw_index_path(&collection_root, WRITING_SEGMENT_ID).exists(),
+        "writing segment should keep in-memory hnsw state"
+    );
+
+    let before = collection
+        .query(VectorQuery::by_vector(
+            field_name("embedding"),
+            dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
+            common::top_k(5),
+        ))
+        .expect("query before reopen");
+    drop(collection);
+
+    let reopened = db
+        .open_collection(&collection_name("docs"))
+        .expect("reopen");
+    let after = reopened
+        .query(VectorQuery::by_vector(
+            field_name("embedding"),
+            dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
+            common::top_k(5),
+        ))
+        .expect("query after reopen");
+    assert_eq!(
+        before.iter().map(|doc| doc.id.clone()).collect::<Vec<_>>(),
+        after.iter().map(|doc| doc.id.clone()).collect::<Vec<_>>()
+    );
+
+    reopened
+        .create_index(&field_name("embedding"), IndexParams::Flat(FlatIndexParams))
+        .expect("switch to flat");
+    assert!(
+        !segment_hnsw_index_path(&collection_root, FIRST_PERSISTED_SEGMENT_ID).exists(),
+        "flat index mode should remove persisted hnsw sidecars"
     );
 }
