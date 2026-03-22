@@ -634,6 +634,24 @@ impl HnswGraph {
             ));
         }
 
+        if entry_count == 0 {
+            if self.levels.len() == 1 && self.levels[0].is_empty() {
+                return Ok(());
+            }
+
+            return Err(Status::err(
+                StatusCode::Internal,
+                "persisted empty hnsw graph has an invalid shape",
+            ));
+        }
+
+        if self.level_count() != self.max_level().get() + 1 {
+            return Err(Status::err(
+                StatusCode::Internal,
+                "persisted hnsw graph level count does not match node levels",
+            ));
+        }
+
         Ok(())
     }
 }
