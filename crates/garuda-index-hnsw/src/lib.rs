@@ -5,6 +5,12 @@ use garuda_types::{
     HnswScalingFactor, InternalDocId, NodeIndex, Status, StatusCode, TopK, VectorDimension,
 };
 
+mod build;
+mod heap;
+mod search;
+
+use build::sample_node_levels;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct HnswBuildConfig {
     pub neighbors: HnswNeighborConfig,
@@ -156,35 +162,7 @@ impl HnswIndex {
     }
 
     pub fn search(&self, request: HnswSearchRequest<'_>) -> Result<Vec<HnswHit>, Status> {
-        if request.query_vector.len() != self.config.dimension.get() {
-            return Err(Status::err(
-                StatusCode::InvalidArgument,
-                "query vector dimension does not match hnsw index dimension",
-            ));
-        }
-
-        let mut hits = Vec::with_capacity(self.entries.len());
-
-        for entry in &self.entries {
-            hits.push(HnswHit {
-                doc_id: entry.doc_id(),
-                score: score_doc(
-                    self.config.metric,
-                    request.query_vector.as_slice(),
-                    entry.vector().as_slice(),
-                ),
-            });
-        }
-
-        hits.sort_by(|left, right| {
-            right
-                .score
-                .total_cmp(&left.score)
-                .then_with(|| left.doc_id.cmp(&right.doc_id))
-        });
-        hits.truncate(request.limit.get());
-
-        Ok(hits)
+        self.execute_search(request)
     }
 
     pub fn entries(&self) -> &[HnswBuildEntry] {
@@ -195,47 +173,6 @@ impl HnswIndex {
         &self.graph
     }
 
-    fn connect_new_node(&mut self, node: NodeIndex) {
-        let node_level = self.graph.node_level(node);
-
-        for raw_level in 0..=node_level.get() {
-            let level = HnswLevel::new(raw_level);
-            let neighbors = self.best_previous_neighbors(level, node);
-            self.graph.replace_neighbors(level, node, neighbors);
-        }
-    }
-
-    fn best_previous_neighbors(&self, level: HnswLevel, node: NodeIndex) -> Vec<NodeIndex> {
-        let mut candidates = Vec::with_capacity(node.get());
-
-        for raw_index in 0..node.get() {
-            let candidate = NodeIndex::new(raw_index);
-
-            if self.graph.node_level(candidate) < level {
-                continue;
-            }
-
-            candidates.push(ScoredNode {
-                index: candidate,
-                score: self.score_node(self.entries[node.get()].vector(), candidate),
-            });
-        }
-
-        candidates.sort_by(|left, right| {
-            right.score.total_cmp(&left.score).then_with(|| {
-                self.entries[left.index.get()]
-                    .doc_id()
-                    .cmp(&self.entries[right.index.get()].doc_id())
-            })
-        });
-        candidates.truncate(self.config.neighbor_limits().for_level(level));
-
-        candidates
-            .into_iter()
-            .map(|candidate| candidate.index)
-            .collect()
-    }
-
     fn score_node(&self, query_vector: &DenseVector, node: NodeIndex) -> f32 {
         score_doc(
             self.config.metric,
@@ -243,42 +180,4 @@ impl HnswIndex {
             self.entries[node.get()].vector().as_slice(),
         )
     }
-}
-
-fn sample_node_levels(config: &HnswIndexConfig, entries: &[HnswBuildEntry]) -> Vec<HnswLevel> {
-    let mut node_levels = Vec::with_capacity(entries.len());
-
-    for (index, entry) in entries.iter().enumerate() {
-        node_levels.push(sample_node_level(
-            config,
-            NodeIndex::new(index),
-            entry.doc_id(),
-        ));
-    }
-
-    node_levels
-}
-
-fn sample_node_level(
-    config: &HnswIndexConfig,
-    node: NodeIndex,
-    doc_id: InternalDocId,
-) -> HnswLevel {
-    let scale = config.build.scaling_factor.get() as usize; // scale factor = 50
-    let max_level = config.max_graph_level(); // max graph level = 15
-    let mut level = 0usize;
-    let mut value = node.get() + (doc_id.get() as usize);
-
-    while level < max_level && value % scale == 0 {
-        level += 1;
-        value /= scale.max(2);
-    }
-
-    HnswLevel::new(level)
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct ScoredNode {
-    index: NodeIndex,
-    score: f32,
 }
