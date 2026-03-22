@@ -1,6 +1,6 @@
 use garuda_segment::{
-    FlatSearchRequest, SegmentFile, SegmentFilter, SegmentKind, SegmentSearchRequest, StoredRecord,
-    exact_search, read_segment, segment_meta, sync_segment, write_segment,
+    FlatSearchRequest, SegmentFile, SegmentFilter, SegmentKind, StoredRecord, read_segment,
+    search_segment_flat, segment_meta, sync_segment, write_segment,
 };
 use garuda_storage::{read_file, segment_flat_index_path};
 use garuda_types::{
@@ -38,14 +38,14 @@ fn persisted_flat_sidecar_roundtrips_exact_search() {
     let reopened =
         read_segment(&root, &segment.meta, &vector_field).expect("read segment with flat sidecar");
 
-    let hits = exact_search(
+    let hits = search_segment_flat(
         &reopened,
-        SegmentSearchRequest::Flat(FlatSearchRequest {
+        FlatSearchRequest {
             metric: DistanceMetric::Cosine,
             query_vector: &DenseVector::parse(vec![1.0, 0.0, 0.0, 0.0]).expect("valid vector"),
             top_k: TopK::new(3).expect("valid top_k"),
             filter: SegmentFilter::All,
-        }),
+        },
     )
     .expect("search reopened segment");
 
@@ -118,14 +118,14 @@ fn filtered_exact_search_does_not_truncate_matching_hits_before_filtering() {
         "category".to_string(),
         garuda_types::ScalarValue::String("beta".to_string()),
     );
-    let hits = exact_search(
+    let hits = search_segment_flat(
         &reopened,
-        SegmentSearchRequest::Flat(FlatSearchRequest {
+        FlatSearchRequest {
             metric: DistanceMetric::Cosine,
             query_vector: &DenseVector::parse(vec![1.0, 0.0, 0.0, 0.0]).expect("valid vector"),
             top_k: TopK::new(1).expect("valid top_k"),
             filter: SegmentFilter::Matching(&filter),
-        }),
+        },
     )
     .expect("search reopened segment");
 

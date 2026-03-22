@@ -1,6 +1,5 @@
 use garuda_segment::{
     RecordState, SegmentFile, SegmentKind, StoredRecord, segment_file_name, segment_meta,
-    sync_segment_meta,
 };
 use garuda_storage::WRITING_SEGMENT_ID;
 use garuda_types::{Doc, DocId, InternalDocId, SegmentId, VectorFieldSchema};
@@ -114,7 +113,7 @@ impl SegmentManager {
             doc,
         });
 
-        sync_segment_meta(&mut self.writing_segment);
+        self.writing_segment.sync_meta();
         self.rotate_writing_segment_if_needed(next_segment_id, segment_max_docs, vector_field);
     }
 
@@ -170,7 +169,7 @@ impl SegmentManager {
         persisted.mark_persisted();
         persisted.meta.id = new_id;
         persisted.meta.path = segment_file_name(new_id);
-        sync_segment_meta(&mut persisted);
+        persisted.sync_meta();
         self.persisted_segments.push(persisted);
     }
 }
@@ -218,7 +217,7 @@ fn seal_segment(
     next_segment_id: &mut SegmentId,
 ) {
     segment.mark_persisted();
-    sync_segment_meta(&mut segment);
+    segment.sync_meta();
     segment.meta.id = *next_segment_id;
     segment.meta.path = segment_file_name(*next_segment_id);
     *next_segment_id = next_segment_id.next();
