@@ -1,8 +1,8 @@
 use crate::{HnswBuildConfig, HnswBuildEntry, HnswIndex, HnswIndexConfig};
 use garuda_types::{
     DenseVector, DistanceMetric, HnswEfConstruction, HnswGraph, HnswLevel, HnswM,
-    HnswMinNeighborCount, HnswNeighborConfig, HnswPruneWidth, HnswScalingFactor,
-    InternalDocId, NodeIndex, TopK, VectorDimension,
+    HnswMinNeighborCount, HnswNeighborConfig, HnswPruneWidth, HnswScalingFactor, InternalDocId,
+    NodeIndex, TopK, VectorDimension,
 };
 
 #[test]

@@ -1,4 +1,4 @@
-use crate::{CollectionSchema, CollectionOptions, DocId, InternalDocId, SegmentId};
+use crate::{CollectionOptions, CollectionSchema, DocId, InternalDocId, SegmentId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

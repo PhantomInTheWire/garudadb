@@ -1,11 +1,12 @@
 mod common;
 
 use common::{
-    build_doc, database, default_options, default_schema, dense_vector, field_name, top_k,
+    build_doc, database, default_options, default_schema, dense_vector, doc_id, field_name,
+    seed_collection, top_k,
 };
 use garuda_types::{
-    HnswEfConstruction, HnswEfSearch, HnswIndexParams, HnswM, HnswMinNeighborCount, HnswPruneWidth,
-    HnswScalingFactor, IndexParams, StatusCode, VectorQuery,
+    CollectionOptions, HnswEfConstruction, HnswEfSearch, HnswIndexParams, HnswM,
+    HnswMinNeighborCount, HnswPruneWidth, HnswScalingFactor, IndexParams, StatusCode, VectorQuery,
 };
 
 #[test]
@@ -139,6 +140,70 @@ fn create_index_rejects_hnsw_min_neighbor_count_above_max_neighbors() {
     assert_eq!(status.code, StatusCode::InvalidArgument);
 }
 
+#[test]
+fn delete_on_persisted_segment_updates_hnsw_results() {
+    let (_root, db) = database("hnsw-persisted-delete");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+    seed_collection(&collection);
+
+    collection
+        .create_index(
+            &field_name("embedding"),
+            IndexParams::Hnsw(HnswIndexParams::default()),
+        )
+        .expect("create hnsw index");
+
+    let deleted = collection.delete(vec![doc_id("doc-1")]);
+    assert!(deleted.iter().all(|result| result.status.is_ok()));
+
+    let results = collection
+        .query(VectorQuery::by_vector(
+            field_name("embedding"),
+            dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
+            top_k(1),
+        ))
+        .expect("query after delete");
+
+    assert_eq!(results[0].id.as_str(), "doc-2");
+}
+
+#[test]
+fn upsert_on_writing_segment_updates_hnsw_results() {
+    let (_root, db) = database("hnsw-writing-upsert");
+    let collection = db
+        .create_collection(default_schema("docs"), single_segment_options())
+        .expect("create collection");
+    seed_collection(&collection);
+
+    collection
+        .create_index(
+            &field_name("embedding"),
+            IndexParams::Hnsw(HnswIndexParams::default()),
+        )
+        .expect("create hnsw index");
+
+    let upserted = collection.upsert(vec![build_doc(
+        "doc-1",
+        1,
+        "alpha",
+        0.9,
+        [0.0, 1.0, 0.0, 0.0],
+    )]);
+    assert!(upserted.iter().all(|result| result.status.is_ok()));
+
+    let results = collection
+        .query(VectorQuery::by_vector(
+            field_name("embedding"),
+            dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
+            top_k(1),
+        ))
+        .expect("query after upsert");
+
+    assert_eq!(results[0].id.as_str(), "doc-2");
+}
+
 fn hnsw_params(
     max_neighbors: u32,
     scaling_factor: u32,
@@ -219,7 +284,7 @@ fn seed_prune_fixture(collection: &garuda_engine::Collection) {
     assert!(results.iter().all(|result| result.status.is_ok()));
 }
 
-fn single_segment_options() -> garuda_types::CollectionOptions {
+fn single_segment_options() -> CollectionOptions {
     let mut options = default_options();
     options.segment_max_docs = 16;
     options

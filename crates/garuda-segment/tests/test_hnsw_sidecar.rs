@@ -4,8 +4,8 @@ use garuda_segment::{
 };
 use garuda_storage::{read_file, segment_hnsw_index_path};
 use garuda_types::{
-    DenseVector, DistanceMetric, Doc, DocId, FieldName, HnswIndexParams, InternalDocId, SegmentId,
-    StatusCode, TopK, VectorDimension, VectorFieldSchema, VectorIndexState,
+    DenseVector, DistanceMetric, Doc, DocId, FieldName, FilterExpr, HnswIndexParams, InternalDocId,
+    ScalarValue, SegmentId, StatusCode, TopK, VectorDimension, VectorFieldSchema, VectorIndexState,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -115,9 +115,9 @@ fn filtered_hnsw_search_does_not_truncate_matching_hits_before_filtering() {
     write_segment(&root, &segment, &vector_field).expect("write segment");
     let reopened = read_segment(&root, &segment.meta, &vector_field).expect("read segment");
 
-    let filter = garuda_types::FilterExpr::Eq(
+    let filter = FilterExpr::Eq(
         "category".to_string(),
-        garuda_types::ScalarValue::String("beta".to_string()),
+        ScalarValue::String("beta".to_string()),
     );
     let hits = search_hnsw(
         &reopened,
@@ -179,17 +179,14 @@ fn temp_root(prefix: &str) -> PathBuf {
 fn stored_record(internal_doc_id: u64, id: &str, category: &str, vector: [f32; 4]) -> StoredRecord {
     StoredRecord {
         doc_id: InternalDocId::new(internal_doc_id).expect("valid internal doc id"),
-        state: garuda_segment::RecordState::Live,
+        state: RecordState::Live,
         doc: Doc::new(
             DocId::parse(id).expect("valid doc id"),
             BTreeMap::from([
-                (
-                    "pk".to_string(),
-                    garuda_types::ScalarValue::String(id.to_string()),
-                ),
+                ("pk".to_string(), ScalarValue::String(id.to_string())),
                 (
                     "category".to_string(),
-                    garuda_types::ScalarValue::String(category.to_string()),
+                    ScalarValue::String(category.to_string()),
                 ),
             ]),
             DenseVector::parse(vector.to_vec()).expect("valid vector"),

@@ -1,9 +1,9 @@
 use crate::catalog::CollectionCatalog;
-use crate::segment_manager::SegmentManager;
+use crate::segment_manager::{SegmentManager, TouchedSegment};
 use crate::validation::{apply_schema_defaults, validate_doc};
 use garuda_meta::MetadataStore;
 use garuda_segment::{RecordState, SegmentFile, StoredRecord, rebuild_search_resources};
-use garuda_types::{Doc, DocId, StatusCode, VectorFieldSchema, WriteResult};
+use garuda_types::{Doc, DocId, StatusCode, WriteResult};
 use std::path::PathBuf;
 
 #[derive(Clone, Copy)]
@@ -53,21 +53,22 @@ impl CollectionRuntime {
             return WriteResult::err(doc.id, status.code, status.message);
         }
 
-        let Some(record) = self.record_mut(&doc.id) else {
+        if !self
+            .segments
+            .update_doc(&doc.id, merged_doc, &self.catalog.schema.vector)
+        {
             return WriteResult::err(doc.id, StatusCode::NotFound, "document not found");
-        };
+        }
 
-        record.doc = merged_doc;
         self.finish_mutation();
         WriteResult::ok(doc.id)
     }
 
     pub(crate) fn delete_doc(&mut self, id: DocId) -> WriteResult {
-        let Some(record) = self.record_mut(&id) else {
+        if !self.segments.delete_doc(&id, &self.catalog.schema.vector) {
             return WriteResult::err(id, StatusCode::NotFound, "document not found");
-        };
+        }
 
-        record.state = RecordState::Deleted;
         self.finish_mutation();
         WriteResult::ok(id)
     }
@@ -77,14 +78,13 @@ impl CollectionRuntime {
         let vector_field = self.catalog.schema.vector.clone();
 
         for segment in self.segments.persisted_segments_mut() {
-            index_segment(segment, &mut self.meta, &vector_field);
+            rebuild_search_resources(segment, &vector_field);
+            index_segment_meta(segment, &mut self.meta);
         }
 
-        index_segment(
-            self.segments.writing_segment_mut(),
-            &mut self.meta,
-            &vector_field,
-        );
+        let writing_segment = self.segments.writing_segment_mut();
+        rebuild_search_resources(writing_segment, &vector_field);
+        index_segment_meta(writing_segment, &mut self.meta);
     }
 
     pub(crate) fn live_doc_count(&self) -> usize {
@@ -104,9 +104,6 @@ impl CollectionRuntime {
         self.segments.record_by_internal_id(internal_doc_id)
     }
 
-    pub(crate) fn record_mut(&mut self, id: &DocId) -> Option<&mut StoredRecord> {
-        self.segments.record_mut(id)
-    }
     fn append_new_record(&mut self, doc: Doc) {
         let doc_id = self.catalog.next_doc_id;
         self.catalog.next_doc_id = self.catalog.next_doc_id.next();
@@ -121,25 +118,36 @@ impl CollectionRuntime {
     }
 
     fn finish_mutation(&mut self) {
-        self.rebuild_indexes();
+        self.refresh_metadata();
     }
 
     fn delete_existing_if_present(&mut self, id: &DocId) {
-        let Some(record) = self.record_mut(id) else {
+        let Some(touched) = self.segments.mark_deleted(id) else {
             return;
         };
 
-        record.state = RecordState::Deleted;
+        if matches!(touched, TouchedSegment::Writing) {
+            return;
+        }
+
+        self.segments
+            .rebuild_touched_segment(touched, &self.catalog.schema.vector);
     }
 }
 
-fn index_segment(
-    segment: &mut SegmentFile,
-    meta: &mut MetadataStore,
-    vector_field: &VectorFieldSchema,
-) {
-    rebuild_search_resources(segment, vector_field);
+impl CollectionRuntime {
+    fn refresh_metadata(&mut self) {
+        self.meta.clear();
 
+        for segment in self.segments.persisted_segments() {
+            index_segment_meta(segment, &mut self.meta);
+        }
+
+        index_segment_meta(self.segments.writing_segment(), &mut self.meta);
+    }
+}
+
+fn index_segment_meta(segment: &SegmentFile, meta: &mut MetadataStore) {
     for record in &segment.records {
         if matches!(record.state, RecordState::Deleted) {
             meta.mark_deleted(record.doc_id);

@@ -1,5 +1,6 @@
 use garuda_segment::{
-    RecordState, SegmentFile, SegmentKind, StoredRecord, segment_file_name, segment_meta,
+    RecordState, SegmentFile, SegmentKind, StoredRecord, rebuild_search_resources,
+    segment_file_name, segment_meta,
 };
 use garuda_storage::WRITING_SEGMENT_ID;
 use garuda_types::{Doc, DocId, InternalDocId, SegmentId, VectorFieldSchema};
@@ -8,6 +9,12 @@ use garuda_types::{Doc, DocId, InternalDocId, SegmentId, VectorFieldSchema};
 pub(crate) struct SegmentManager {
     persisted_segments: Vec<SegmentFile>,
     writing_segment: SegmentFile,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TouchedSegment {
+    Writing,
+    Persisted(usize),
 }
 
 impl SegmentManager {
@@ -63,24 +70,6 @@ impl SegmentManager {
         records
     }
 
-    pub(crate) fn record_mut(&mut self, id: &DocId) -> Option<&mut StoredRecord> {
-        for record in &mut self.writing_segment.records {
-            if record.doc.id == *id && matches!(record.state, RecordState::Live) {
-                return Some(record);
-            }
-        }
-
-        for segment in &mut self.persisted_segments {
-            for record in &mut segment.records {
-                if record.doc.id == *id && matches!(record.state, RecordState::Live) {
-                    return Some(record);
-                }
-            }
-        }
-
-        None
-    }
-
     pub(crate) fn record_by_internal_id(&self, doc_id: InternalDocId) -> Option<&StoredRecord> {
         if let Some(record) = record_in_segment_by_internal_id(&self.writing_segment, doc_id) {
             return Some(record);
@@ -113,8 +102,35 @@ impl SegmentManager {
             doc,
         });
 
-        self.writing_segment.sync_meta();
+        rebuild_search_resources(&mut self.writing_segment, vector_field);
         self.rotate_writing_segment_if_needed(next_segment_id, segment_max_docs, vector_field);
+    }
+
+    pub(crate) fn update_doc(
+        &mut self,
+        id: &DocId,
+        doc: Doc,
+        vector_field: &VectorFieldSchema,
+    ) -> bool {
+        let Some(touched) = self.mutate_doc(id, |record| record.doc = doc.clone()) else {
+            return false;
+        };
+
+        self.rebuild_touched_segment(touched, vector_field);
+        true
+    }
+
+    pub(crate) fn delete_doc(&mut self, id: &DocId, vector_field: &VectorFieldSchema) -> bool {
+        let Some(touched) = self.mark_deleted(id) else {
+            return false;
+        };
+
+        self.rebuild_touched_segment(touched, vector_field);
+        true
+    }
+
+    pub(crate) fn mark_deleted(&mut self, id: &DocId) -> Option<TouchedSegment> {
+        self.mutate_doc(id, |record| record.state = RecordState::Deleted)
     }
 
     pub(crate) fn optimize(
@@ -172,6 +188,58 @@ impl SegmentManager {
         persisted.sync_meta();
         self.persisted_segments.push(persisted);
     }
+
+    pub(crate) fn rebuild_touched_segment(
+        &mut self,
+        touched: TouchedSegment,
+        vector_field: &VectorFieldSchema,
+    ) {
+        match touched {
+            TouchedSegment::Writing => {
+                rebuild_search_resources(&mut self.writing_segment, vector_field);
+            }
+            TouchedSegment::Persisted(index) => {
+                rebuild_search_resources(&mut self.persisted_segments[index], vector_field);
+            }
+        }
+    }
+
+    fn mutate_doc(
+        &mut self,
+        id: &DocId,
+        mut mutate: impl FnMut(&mut StoredRecord),
+    ) -> Option<TouchedSegment> {
+        let touched = self.find_live_doc(id)?;
+
+        match touched {
+            TouchedSegment::Writing => {
+                let record = live_record_in_segment(&mut self.writing_segment, id)
+                    .expect("writing segment record should exist");
+                mutate(record);
+            }
+            TouchedSegment::Persisted(index) => {
+                let record = live_record_in_segment(&mut self.persisted_segments[index], id)
+                    .expect("persisted segment record should exist");
+                mutate(record);
+            }
+        }
+
+        Some(touched)
+    }
+
+    fn find_live_doc(&self, id: &DocId) -> Option<TouchedSegment> {
+        if has_live_doc(&self.writing_segment, id) {
+            return Some(TouchedSegment::Writing);
+        }
+
+        for (index, segment) in self.persisted_segments.iter().enumerate() {
+            if has_live_doc(segment, id) {
+                return Some(TouchedSegment::Persisted(index));
+            }
+        }
+
+        None
+    }
 }
 
 fn collect_live_records(segments: &[SegmentFile], out: &mut Vec<StoredRecord>) {
@@ -222,4 +290,26 @@ fn seal_segment(
     segment.meta.path = segment_file_name(*next_segment_id);
     *next_segment_id = next_segment_id.next();
     rebuilt_segments.push(segment);
+}
+
+fn live_record_in_segment<'a>(
+    segment: &'a mut SegmentFile,
+    id: &DocId,
+) -> Option<&'a mut StoredRecord> {
+    for record in &mut segment.records {
+        if record.doc.id != *id || matches!(record.state, RecordState::Deleted) {
+            continue;
+        }
+
+        return Some(record);
+    }
+
+    None
+}
+
+fn has_live_doc(segment: &SegmentFile, id: &DocId) -> bool {
+    segment
+        .records
+        .iter()
+        .any(|record| record.doc.id == *id && matches!(record.state, RecordState::Live))
 }
