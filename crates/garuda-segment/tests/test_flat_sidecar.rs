@@ -4,8 +4,8 @@ use garuda_segment::{
 };
 use garuda_storage::{read_file, segment_flat_index_path};
 use garuda_types::{
-    DenseVector, DistanceMetric, Doc, DocId, FieldName, FlatIndexParams, IndexParams,
-    InternalDocId, SegmentId, StatusCode, TopK, VectorDimension, VectorFieldSchema,
+    DenseVector, DistanceMetric, Doc, DocId, FieldName, InternalDocId, SegmentId, StatusCode, TopK,
+    VectorDimension, VectorFieldSchema, VectorIndexState,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -21,7 +21,7 @@ fn persisted_flat_sidecar_roundtrips_exact_search() {
         segment_meta(SegmentId::new_unchecked(1)),
         Vec::new(),
         SegmentKind::Persisted,
-        &vector_field(IndexParams::Flat(FlatIndexParams)),
+        &vector_field(VectorIndexState::DefaultFlat),
     );
     segment
         .records
@@ -32,7 +32,7 @@ fn persisted_flat_sidecar_roundtrips_exact_search() {
     segment
         .records
         .push(stored_record(3, "doc-3", "beta", [0.0, 1.0, 0.0, 0.0]));
-    let vector_field = vector_field(IndexParams::Flat(FlatIndexParams));
+    let vector_field = vector_field(VectorIndexState::DefaultFlat);
     rebuild_search_resources(&mut segment, &vector_field);
     write_segment(&root, &segment, &vector_field).expect("write segment with flat sidecar");
     let reopened =
@@ -68,12 +68,12 @@ fn missing_or_invalid_flat_sidecar_fails_reopen_for_persisted_flat_segments() {
         segment_meta(SegmentId::new_unchecked(1)),
         Vec::new(),
         SegmentKind::Persisted,
-        &vector_field(IndexParams::Flat(FlatIndexParams)),
+        &vector_field(VectorIndexState::DefaultFlat),
     );
     segment
         .records
         .push(stored_record(1, "doc-1", "alpha", [1.0, 0.0, 0.0, 0.0]));
-    let vector_field = vector_field(IndexParams::Flat(FlatIndexParams));
+    let vector_field = vector_field(VectorIndexState::DefaultFlat);
     rebuild_search_resources(&mut segment, &vector_field);
     write_segment(&root, &segment, &vector_field).expect("write segment");
 
@@ -101,7 +101,7 @@ fn filtered_exact_search_does_not_truncate_matching_hits_before_filtering() {
         segment_meta(SegmentId::new_unchecked(1)),
         Vec::new(),
         SegmentKind::Persisted,
-        &vector_field(IndexParams::Flat(FlatIndexParams)),
+        &vector_field(VectorIndexState::DefaultFlat),
     );
     segment
         .records
@@ -109,7 +109,7 @@ fn filtered_exact_search_does_not_truncate_matching_hits_before_filtering() {
     segment
         .records
         .push(stored_record(2, "doc-2", "beta", [0.0, 1.0, 0.0, 0.0]));
-    let vector_field = vector_field(IndexParams::Flat(FlatIndexParams));
+    let vector_field = vector_field(VectorIndexState::DefaultFlat);
     rebuild_search_resources(&mut segment, &vector_field);
     write_segment(&root, &segment, &vector_field).expect("write segment");
     let reopened = read_segment(&root, &segment.meta, &vector_field).expect("read segment");
@@ -168,11 +168,11 @@ fn stored_record(internal_doc_id: u64, id: &str, category: &str, vector: [f32; 4
     }
 }
 
-fn vector_field(index: IndexParams) -> VectorFieldSchema {
+fn vector_field(indexes: VectorIndexState) -> VectorFieldSchema {
     VectorFieldSchema {
         name: FieldName::parse("embedding").expect("valid field name"),
         dimension: VectorDimension::new(4).expect("valid dimension"),
         metric: DistanceMetric::Cosine,
-        index,
+        indexes,
     }
 }

@@ -1,8 +1,8 @@
 use garuda_engine::{Collection, Database};
 use garuda_types::{
     AccessMode, CollectionName, CollectionOptions, CollectionSchema, DenseVector, DistanceMetric,
-    Doc, DocId, FieldName, FlatIndexParams, IndexParams, Nullability, ScalarFieldSchema,
-    ScalarType, ScalarValue, StorageAccess, TopK, VectorDimension, VectorFieldSchema,
+    Doc, DocId, FieldName, Nullability, ScalarFieldSchema, ScalarType, ScalarValue, StorageAccess,
+    TopK, VectorDimension, VectorFieldSchema, VectorIndexState,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -56,7 +56,7 @@ pub fn default_schema(name: &str) -> CollectionSchema {
             name: field_name("embedding"),
             dimension: VectorDimension::new(4).expect("valid dimension"),
             metric: DistanceMetric::Cosine,
-            index: IndexParams::Flat(FlatIndexParams),
+            indexes: VectorIndexState::DefaultFlat,
         },
     }
 }

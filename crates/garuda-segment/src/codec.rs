@@ -1,8 +1,8 @@
 use crate::{RecordState, SegmentFile, StoredRecord};
 use garuda_index_flat::{FlatIndex, FlatIndexEntry};
 use garuda_types::{
-    DenseVector, DistanceMetric, Doc, DocId, IndexParams, InternalDocId, ScalarValue, SegmentId,
-    SegmentMeta, Status, StatusCode, VectorDimension, VectorFieldSchema,
+    DenseVector, DistanceMetric, Doc, DocId, InternalDocId, ScalarValue, SegmentId, SegmentMeta,
+    Status, StatusCode, VectorDimension, VectorFieldSchema,
 };
 use garuda_types::{HnswGraph, HnswLevel, HnswNeighborLimits};
 const SEGMENT_MAGIC: &[u8; 8] = b"GRDSEG01";
@@ -111,7 +111,7 @@ pub fn decode_flat_index(
         ));
     }
 
-    if !matches!(vector_field.index, IndexParams::Flat(_)) {
+    if !vector_field.indexes.has_flat() {
         return Err(Status::err(
             StatusCode::Internal,
             "persisted flat index requested for a non-flat vector field",
@@ -172,7 +172,7 @@ pub fn decode_hnsw_graph(
     let mut reader = BinaryReader::new(bytes, HNSW_INDEX_MAGIC)?;
     reader.expect_u16(FORMAT_VERSION)?;
 
-    if !matches!(&vector_field.index, IndexParams::Hnsw(_)) {
+    if !vector_field.indexes.has_hnsw() {
         return Err(Status::err(
             StatusCode::Internal,
             "persisted hnsw index requested for a non-hnsw vector field",
@@ -208,9 +208,10 @@ pub fn decode_hnsw_graph(
 
     reader.finish()?;
 
-    let IndexParams::Hnsw(params) = &vector_field.index else {
-        unreachable!("validated hnsw vector field")
-    };
+    let params = vector_field
+        .indexes
+        .hnsw_params()
+        .expect("validated hnsw vector field");
 
     HnswGraph::from_parts(
         node_levels,
