@@ -600,6 +600,28 @@ impl HnswGraph {
     pub fn add_neighbor(&mut self, level: usize, node: NodeIndex, neighbor: NodeIndex) {
         self.levels[level][node.get()].push(neighbor);
     }
+
+    pub fn validate(
+        &self,
+        entry_count: usize,
+        _neighbor_limits: HnswNeighborLimits,
+    ) -> Result<(), Status> {
+        if self.node_count() != entry_count {
+            return Err(Status::err(
+                StatusCode::Internal,
+                "persisted hnsw graph node levels do not match entry count",
+            ));
+        }
+
+        if self.levels.is_empty() {
+            return Err(Status::err(
+                StatusCode::Internal,
+                "persisted hnsw graph has no levels",
+            ));
+        }
+
+        Ok(())
+    }
 }
 
 fn max<T: Copy + Ord>(values: &[T]) -> Option<T> {
