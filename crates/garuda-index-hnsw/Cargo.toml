@@ -6,4 +6,5 @@ license.workspace = true
 
 [dependencies]
 garuda-index-flat = { path = "../garuda-index-flat" }
+garuda-math = { path = "../garuda-math" }
 garuda-types = { path = "../garuda-types" }
