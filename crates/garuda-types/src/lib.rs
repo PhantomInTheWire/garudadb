@@ -186,6 +186,46 @@ impl SegmentId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct NodeIndex(usize);
+
+impl NodeIndex {
+    pub fn new(value: usize) -> Self {
+        Self(value)
+    }
+
+    pub fn get(self) -> usize {
+        self.0
+    }
+}
+
+pub const HNSW_LEVEL_ZERO_NEIGHBOR_MULTIPLIER: usize = 2;
+pub const HNSW_MAX_GRAPH_LEVEL: usize = 15;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HnswNeighborLimits {
+    level_zero: usize,
+    upper_levels: usize,
+}
+
+impl HnswNeighborLimits {
+    pub fn new(m: HnswM) -> Self {
+        let upper_levels = m.get() as usize;
+
+        Self {
+            level_zero: upper_levels * HNSW_LEVEL_ZERO_NEIGHBOR_MULTIPLIER,
+            upper_levels,
+        }
+    }
+
+    pub fn for_level(self, level: usize) -> usize {
+        match level {
+            0 => self.level_zero,
+            _ => self.upper_levels,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct VectorDimension(usize);
 
 impl VectorDimension {
