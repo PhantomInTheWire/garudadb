@@ -618,7 +618,7 @@ impl HnswGraph {
     fn validate(
         &self,
         entry_count: usize,
-        _neighbor_limits: HnswNeighborLimits,
+        neighbor_limits: HnswNeighborLimits,
     ) -> Result<(), Status> {
         if self.node_count() != entry_count {
             return Err(Status::err(
@@ -664,6 +664,21 @@ impl HnswGraph {
                 return Err(Status::err(
                     StatusCode::Internal,
                     "persisted hnsw graph levels do not match entry count",
+                ));
+            }
+        }
+
+        for (level, nodes) in self.levels.iter().enumerate() {
+            let max_neighbors = neighbor_limits.for_level(level);
+
+            for neighbors in nodes {
+                if neighbors.len() <= max_neighbors {
+                    continue;
+                }
+
+                return Err(Status::err(
+                    StatusCode::Internal,
+                    "persisted hnsw graph exceeds configured neighbor limit",
                 ));
             }
         }
