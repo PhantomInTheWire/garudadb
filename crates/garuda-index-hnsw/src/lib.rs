@@ -12,7 +12,7 @@ mod search;
 #[cfg(test)]
 mod search_tests;
 
-use build::sample_node_levels;
+use build::{sample_node_level, sample_node_levels};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct HnswBuildConfig {
@@ -133,6 +133,11 @@ pub struct HnswHit {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct WritingHnswIndex {
+    index: HnswIndex,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct HnswIndex {
     config: HnswIndexConfig,
     entries: Vec<HnswBuildEntry>,
@@ -140,6 +145,14 @@ pub struct HnswIndex {
 }
 
 impl HnswIndex {
+    pub fn empty(config: HnswIndexConfig) -> Self {
+        Self {
+            config,
+            entries: Vec::new(),
+            graph: HnswGraph::new(Vec::new()),
+        }
+    }
+
     pub fn build(config: HnswIndexConfig, entries: Vec<HnswBuildEntry>) -> Self {
         let node_levels = sample_node_levels(&config, &entries);
         let mut index = Self {
@@ -189,6 +202,25 @@ impl HnswIndex {
         self.execute_search(request)
     }
 
+    pub fn insert(&mut self, entry: HnswBuildEntry) {
+        if self.entries.is_empty() {
+            let level = sample_node_level(&self.config, NodeIndex::new(0), entry.doc_id());
+            self.graph.push_node(level);
+            self.entries.push(entry);
+            return;
+        }
+
+        let entry_point = self.graph.entry_point();
+        let max_level = self.graph.max_level();
+        let node = self.graph.push_node(sample_node_level(
+            &self.config,
+            NodeIndex::new(self.entries.len()),
+            entry.doc_id(),
+        ));
+        self.entries.push(entry);
+        self.insert_node(node, entry_point, max_level);
+    }
+
     pub fn entries(&self) -> &[HnswBuildEntry] {
         &self.entries
     }
@@ -215,5 +247,33 @@ impl HnswIndex {
             query_vector.as_slice(),
             self.vector(node).as_slice(),
         )
+    }
+}
+
+impl WritingHnswIndex {
+    pub fn new(config: HnswIndexConfig) -> Self {
+        Self {
+            index: HnswIndex::empty(config),
+        }
+    }
+
+    pub fn insert(&mut self, doc_id: InternalDocId, vector: DenseVector) {
+        let entry = HnswBuildEntry::new(self.index.config(), doc_id, vector)
+            .expect("writing hnsw entry dimension");
+        self.index.insert(entry);
+    }
+
+    pub fn search(
+        &self,
+        query_vector: &DenseVector,
+        top_k: TopK,
+        ef_search: HnswEfSearch,
+    ) -> Result<Vec<HnswHit>, Status> {
+        self.index
+            .search(HnswSearchRequest::new(query_vector, top_k, ef_search))
+    }
+
+    pub fn graph(&self) -> &HnswGraph {
+        self.index.graph()
     }
 }

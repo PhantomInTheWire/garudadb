@@ -1,5 +1,6 @@
 use crate::{
-    HnswBuildEntry, HnswIndex, HnswLevel, compare::compare_score_then_doc_id, heap::ScoredNode,
+    HnswBuildEntry, HnswIndex, HnswIndexConfig, HnswLevel, compare::compare_score_then_doc_id,
+    heap::ScoredNode,
 };
 use garuda_math::score_doc;
 use garuda_types::{InternalDocId, NodeIndex};
@@ -163,7 +164,7 @@ fn best_retained_candidate(candidates: &[ScoredNode]) -> Option<ScoredNode> {
 }
 
 pub(crate) fn sample_node_levels(
-    config: &crate::HnswIndexConfig,
+    config: &HnswIndexConfig,
     entries: &[HnswBuildEntry],
 ) -> Vec<HnswLevel> {
     let mut node_levels = Vec::with_capacity(entries.len());
@@ -179,8 +180,8 @@ pub(crate) fn sample_node_levels(
     node_levels
 }
 
-fn sample_node_level(
-    config: &crate::HnswIndexConfig,
+pub(crate) fn sample_node_level(
+    config: &HnswIndexConfig,
     node: NodeIndex,
     doc_id: InternalDocId,
 ) -> HnswLevel {

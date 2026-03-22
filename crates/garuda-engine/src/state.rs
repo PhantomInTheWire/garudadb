@@ -1,8 +1,8 @@
 use crate::catalog::CollectionCatalog;
-use crate::segment_manager::{SegmentManager, TouchedSegment};
+use crate::segment_manager::SegmentManager;
 use crate::validation::{apply_schema_defaults, validate_doc};
 use garuda_meta::MetadataStore;
-use garuda_segment::{RecordState, SegmentFile, StoredRecord, rebuild_search_resources};
+use garuda_segment::StoredRecord;
 use garuda_types::{Doc, DocId, StatusCode, WriteResult};
 use std::path::PathBuf;
 
@@ -53,19 +53,14 @@ impl CollectionRuntime {
             return WriteResult::err(doc.id, status.code, status.message);
         }
 
-        if !self
-            .segments
-            .update_doc(&doc.id, merged_doc, &self.catalog.schema.vector)
-        {
-            return WriteResult::err(doc.id, StatusCode::NotFound, "document not found");
-        }
-
+        self.delete_existing_if_present(&doc.id);
+        self.append_new_record(merged_doc);
         self.finish_mutation();
         WriteResult::ok(doc.id)
     }
 
     pub(crate) fn delete_doc(&mut self, id: DocId) -> WriteResult {
-        if !self.segments.delete_doc(&id, &self.catalog.schema.vector) {
+        if !self.delete_existing_if_present(&id) {
             return WriteResult::err(id, StatusCode::NotFound, "document not found");
         }
 
@@ -74,25 +69,19 @@ impl CollectionRuntime {
     }
 
     pub(crate) fn rebuild_indexes(&mut self) {
-        self.meta.clear();
-        let vector_field = self.catalog.schema.vector.clone();
-
-        for segment in self.segments.persisted_segments_mut() {
-            rebuild_search_resources(segment, &vector_field);
-            index_segment_meta(segment, &mut self.meta);
-        }
-
-        let writing_segment = self.segments.writing_segment_mut();
-        rebuild_search_resources(writing_segment, &vector_field);
-        index_segment_meta(writing_segment, &mut self.meta);
+        self.segments.rebuild_indexes(&self.catalog.schema.vector);
+        self.refresh_metadata();
     }
 
     pub(crate) fn live_doc_count(&self) -> usize {
-        self.segments.all_live_records().len()
+        self.segments
+            .all_live_records(|doc_id| self.meta.is_deleted(doc_id))
+            .len()
     }
 
     pub(crate) fn all_live_records(&self) -> Vec<StoredRecord> {
-        self.segments.all_live_records()
+        self.segments
+            .all_live_records(|doc_id| self.meta.is_deleted(doc_id))
     }
 
     pub(crate) fn record(&self, id: &DocId) -> Option<&StoredRecord> {
@@ -121,40 +110,31 @@ impl CollectionRuntime {
         self.refresh_metadata();
     }
 
-    fn delete_existing_if_present(&mut self, id: &DocId) {
-        let Some(touched) = self.segments.mark_deleted(id) else {
-            return;
+    fn delete_existing_if_present(&mut self, id: &DocId) -> bool {
+        let Some(doc_id) = self.meta.internal_doc_id(id) else {
+            return false;
         };
-
-        if matches!(touched, TouchedSegment::Writing) {
-            return;
+        if self.meta.is_deleted(doc_id) {
+            return false;
         }
 
-        self.segments
-            .rebuild_touched_segment(touched, &self.catalog.schema.vector);
+        if !self
+            .segments
+            .mark_deleted(doc_id, &self.catalog.schema.vector)
+        {
+            return false;
+        }
+
+        self.meta.mark_deleted(doc_id);
+        true
     }
 }
 
 impl CollectionRuntime {
     fn refresh_metadata(&mut self) {
-        self.meta.clear();
-
-        for segment in self.segments.persisted_segments() {
-            index_segment_meta(segment, &mut self.meta);
-        }
-
-        index_segment_meta(self.segments.writing_segment(), &mut self.meta);
-    }
-}
-
-fn index_segment_meta(segment: &SegmentFile, meta: &mut MetadataStore) {
-    for record in &segment.records {
-        if matches!(record.state, RecordState::Deleted) {
-            meta.mark_deleted(record.doc_id);
-            continue;
-        }
-
-        meta.index_live_doc(record.doc.id.clone(), record.doc_id);
+        let deleted_doc_ids: Vec<_> = self.meta.deleted_doc_ids().copied().collect();
+        self.segments
+            .rebuild_metadata(&mut self.meta, &deleted_doc_ids);
     }
 }
 

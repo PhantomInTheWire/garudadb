@@ -1,6 +1,7 @@
 use garuda_segment::{
-    HnswSegmentSearchRequest, RecordState, SegmentFile, SegmentFilter, SegmentKind, StoredRecord,
-    read_segment, rebuild_search_resources, search_hnsw, segment_meta, write_segment,
+    HnswSegmentSearchRequest, PersistedSegment, RecordState, SearchVisibility, SegmentFilter,
+    StoredRecord, read_persisted_segment, search_persisted_hnsw, segment_meta,
+    write_persisted_segment,
 };
 use garuda_storage::{read_file, segment_hnsw_index_path};
 use garuda_types::{
@@ -17,29 +18,22 @@ static COUNTER: AtomicU64 = AtomicU64::new(0);
 #[test]
 fn persisted_hnsw_sidecar_roundtrips_search() {
     let root = temp_root("segment-hnsw-sidecar");
-    let mut segment = SegmentFile::new(
-        segment_meta(SegmentId::new_unchecked(1)),
-        Vec::new(),
-        SegmentKind::Persisted,
-        &vector_field(VectorIndexState::HnswOnly(HnswIndexParams::default())),
-    );
-    segment
-        .records
-        .push(stored_record(1, "doc-1", "alpha", [1.0, 0.0, 0.0, 0.0]));
-    segment
-        .records
-        .push(stored_record(2, "doc-2", "alpha", [0.9, 0.1, 0.0, 0.0]));
-    segment
-        .records
-        .push(stored_record(3, "doc-3", "beta", [0.0, 1.0, 0.0, 0.0]));
     let vector_field = vector_field(VectorIndexState::HnswOnly(HnswIndexParams::default()));
-    rebuild_search_resources(&mut segment, &vector_field);
-    write_segment(&root, &segment, &vector_field).expect("write segment with hnsw sidecar");
+    let segment = PersistedSegment::new(
+        segment_meta(SegmentId::new_unchecked(1)),
+        vec![
+            stored_record(1, "doc-1", "alpha", [1.0, 0.0, 0.0, 0.0]),
+            stored_record(2, "doc-2", "alpha", [0.9, 0.1, 0.0, 0.0]),
+            stored_record(3, "doc-3", "beta", [0.0, 1.0, 0.0, 0.0]),
+        ],
+        &vector_field,
+    );
+    write_persisted_segment(&root, &segment, &vector_field)
+        .expect("write segment with hnsw sidecar");
+    let reopened = read_persisted_segment(&root, &segment.meta, &vector_field)
+        .expect("read segment with hnsw sidecar");
 
-    let reopened =
-        read_segment(&root, &segment.meta, &vector_field).expect("read segment with hnsw sidecar");
-
-    let hits = search_hnsw(
+    let hits = search_persisted_hnsw(
         &reopened,
         HnswSegmentSearchRequest {
             query_vector: &DenseVector::parse(vec![1.0, 0.0, 0.0, 0.0]).expect("valid vector"),
@@ -47,6 +41,7 @@ fn persisted_hnsw_sidecar_roundtrips_search() {
             ef_search: HnswIndexParams::default().ef_search,
             filter: SegmentFilter::All,
         },
+        SearchVisibility::All,
     )
     .expect("search reopened segment");
 
@@ -65,29 +60,24 @@ fn persisted_hnsw_sidecar_roundtrips_search() {
 #[test]
 fn missing_or_invalid_hnsw_sidecar_fails_reopen_for_persisted_hnsw_segments() {
     let root = temp_root("segment-hnsw-sidecar-invalid");
-    let mut segment = SegmentFile::new(
-        segment_meta(SegmentId::new_unchecked(1)),
-        Vec::new(),
-        SegmentKind::Persisted,
-        &vector_field(VectorIndexState::HnswOnly(HnswIndexParams::default())),
-    );
-    segment
-        .records
-        .push(stored_record(1, "doc-1", "alpha", [1.0, 0.0, 0.0, 0.0]));
     let vector_field = vector_field(VectorIndexState::HnswOnly(HnswIndexParams::default()));
-    rebuild_search_resources(&mut segment, &vector_field);
-    write_segment(&root, &segment, &vector_field).expect("write segment");
+    let segment = PersistedSegment::new(
+        segment_meta(SegmentId::new_unchecked(1)),
+        vec![stored_record(1, "doc-1", "alpha", [1.0, 0.0, 0.0, 0.0])],
+        &vector_field,
+    );
+    write_persisted_segment(&root, &segment, &vector_field).expect("write segment");
 
     std::fs::remove_file(segment_hnsw_index_path(&root, segment.meta.id)).expect("remove sidecar");
-    let missing =
-        read_segment(&root, &segment.meta, &vector_field).expect_err("missing sidecar should fail");
+    let missing = read_persisted_segment(&root, &segment.meta, &vector_field)
+        .expect_err("missing sidecar should fail");
     assert_eq!(missing.code, StatusCode::NotFound);
 
-    write_segment(&root, &segment, &vector_field).expect("rewrite segment");
+    write_persisted_segment(&root, &segment, &vector_field).expect("rewrite segment");
     std::fs::write(segment_hnsw_index_path(&root, segment.meta.id), b"broken")
         .expect("corrupt sidecar");
-    let invalid =
-        read_segment(&root, &segment.meta, &vector_field).expect_err("invalid sidecar should fail");
+    let invalid = read_persisted_segment(&root, &segment.meta, &vector_field)
+        .expect_err("invalid sidecar should fail");
     assert_eq!(invalid.code, StatusCode::Internal);
 
     let sidecar_bytes =
@@ -99,27 +89,23 @@ fn missing_or_invalid_hnsw_sidecar_fails_reopen_for_persisted_hnsw_segments() {
 fn filtered_hnsw_search_does_not_truncate_matching_hits_before_filtering() {
     let root = temp_root("segment-hnsw-filtered");
     let vector_field = vector_field(VectorIndexState::HnswOnly(HnswIndexParams::default()));
-    let mut segment = SegmentFile::new(
+    let segment = PersistedSegment::new(
         segment_meta(SegmentId::new_unchecked(1)),
-        Vec::new(),
-        SegmentKind::Persisted,
+        vec![
+            stored_record(1, "doc-1", "alpha", [1.0, 0.0, 0.0, 0.0]),
+            stored_record(2, "doc-2", "beta", [0.0, 1.0, 0.0, 0.0]),
+        ],
         &vector_field,
     );
-    segment
-        .records
-        .push(stored_record(1, "doc-1", "alpha", [1.0, 0.0, 0.0, 0.0]));
-    segment
-        .records
-        .push(stored_record(2, "doc-2", "beta", [0.0, 1.0, 0.0, 0.0]));
-    rebuild_search_resources(&mut segment, &vector_field);
-    write_segment(&root, &segment, &vector_field).expect("write segment");
-    let reopened = read_segment(&root, &segment.meta, &vector_field).expect("read segment");
+    write_persisted_segment(&root, &segment, &vector_field).expect("write segment");
+    let reopened =
+        read_persisted_segment(&root, &segment.meta, &vector_field).expect("read segment");
 
     let filter = FilterExpr::Eq(
         "category".to_string(),
         ScalarValue::String("beta".to_string()),
     );
-    let hits = search_hnsw(
+    let hits = search_persisted_hnsw(
         &reopened,
         HnswSegmentSearchRequest {
             query_vector: &DenseVector::parse(vec![1.0, 0.0, 0.0, 0.0]).expect("valid vector"),
@@ -127,6 +113,7 @@ fn filtered_hnsw_search_does_not_truncate_matching_hits_before_filtering() {
             ef_search: HnswIndexParams::default().ef_search,
             filter: SegmentFilter::Matching(&filter),
         },
+        SearchVisibility::All,
     )
     .expect("search reopened segment");
 
@@ -141,27 +128,22 @@ fn filtered_hnsw_search_does_not_truncate_matching_hits_before_filtering() {
 fn stale_hnsw_sidecar_fails_reopen_when_live_entries_change() {
     let root = temp_root("segment-hnsw-sidecar-stale");
     let vector_field = vector_field(VectorIndexState::HnswOnly(HnswIndexParams::default()));
-    let mut segment = SegmentFile::new(
+    let mut segment = PersistedSegment::new(
         segment_meta(SegmentId::new_unchecked(1)),
-        Vec::new(),
-        SegmentKind::Persisted,
+        vec![
+            stored_record(1, "doc-1", "alpha", [1.0, 0.0, 0.0, 0.0]),
+            stored_record(2, "doc-2", "beta", [0.0, 1.0, 0.0, 0.0]),
+        ],
         &vector_field,
     );
-    segment
-        .records
-        .push(stored_record(1, "doc-1", "alpha", [1.0, 0.0, 0.0, 0.0]));
-    segment
-        .records
-        .push(stored_record(2, "doc-2", "beta", [0.0, 1.0, 0.0, 0.0]));
-    rebuild_search_resources(&mut segment, &vector_field);
-    write_segment(&root, &segment, &vector_field).expect("write segment");
+    write_persisted_segment(&root, &segment, &vector_field).expect("write segment");
 
     segment.records[1].state = RecordState::Deleted;
     segment.sync_meta();
-    write_segment(&root, &segment, &vector_field).expect("write stale segment");
+    write_persisted_segment(&root, &segment, &vector_field).expect("write stale segment");
 
-    let error =
-        read_segment(&root, &segment.meta, &vector_field).expect_err("stale sidecar should fail");
+    let error = read_persisted_segment(&root, &segment.meta, &vector_field)
+        .expect_err("stale sidecar should fail");
     assert_eq!(error.code, StatusCode::Internal);
 }
 

@@ -4,13 +4,15 @@ use crate::segment_manager::SegmentManager;
 use crate::state::CollectionRuntime;
 use crate::write_service::replay_wal_ops;
 use garuda_meta::{DeleteStore, IdMap, MetadataStore};
-use garuda_segment::{SegmentFile, read_segment, read_wal_ops};
+use garuda_segment::{
+    PersistedSegment, read_persisted_segment, read_wal_ops, read_writing_segment,
+};
 use garuda_storage::{
     VersionManager, WRITING_SEGMENT_ID, read_delete_snapshot, read_id_map_snapshot,
 };
 use garuda_types::{
     CollectionOptions, CollectionSchema, InternalDocId, Manifest, ManifestVersionId, SegmentId,
-    SegmentMeta, SnapshotId, Status, VectorFieldSchema,
+    SnapshotId, Status, VectorFieldSchema,
 };
 use std::path::{Path, PathBuf};
 
@@ -49,7 +51,7 @@ pub(crate) fn load_collection_state(path: PathBuf) -> Result<CollectionRuntime, 
     let manifest = VersionManager::new(&path).read_latest_manifest()?;
     validate_schema(&manifest.schema)?;
     let vector_field = manifest.schema.vector.clone();
-    let writing_segment = load_segment(&path, &manifest.writing_segment, &vector_field)?;
+    let writing_segment = read_writing_segment(&path, &manifest.writing_segment, &vector_field)?;
     let persisted_segments = load_persisted_segments(&path, &manifest, &vector_field)?;
     let id_map = IdMap::from(read_id_map_snapshot(&path, manifest.id_map_snapshot_id)?);
     let delete_store = DeleteStore::from(read_delete_snapshot(&path, manifest.delete_snapshot_id)?);
@@ -71,22 +73,12 @@ fn load_persisted_segments(
     path: &Path,
     manifest: &Manifest,
     vector_field: &VectorFieldSchema,
-) -> Result<Vec<SegmentFile>, Status> {
+) -> Result<Vec<PersistedSegment>, Status> {
     let mut segments = Vec::new();
 
     for meta in &manifest.persisted_segments {
-        segments.push(load_segment(path, meta, vector_field)?);
+        segments.push(read_persisted_segment(path, meta, vector_field)?);
     }
 
     Ok(segments)
-}
-
-fn load_segment(
-    path: &Path,
-    meta: &SegmentMeta,
-    vector_field: &VectorFieldSchema,
-) -> Result<SegmentFile, Status> {
-    let mut segment = read_segment(path, meta, vector_field)?;
-    segment.sync_meta();
-    Ok(segment)
 }

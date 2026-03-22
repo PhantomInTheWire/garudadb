@@ -114,3 +114,22 @@ fn reopened_flat_collection_should_refresh_segment_search_state_after_delete_and
     assert!(!result_ids.contains(&doc_id("doc-2")));
     assert_eq!(results[0].id, doc_id("doc-3"));
 }
+
+#[test]
+fn deleting_already_deleted_persisted_doc_should_return_not_found() {
+    let (_root, db) = database("visibility-delete-twice-persisted");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+    seed_collection(&collection);
+    collection.flush().expect("flush");
+
+    let deleted = collection.delete(vec![doc_id("doc-1")]);
+    assert!(deleted[0].status.is_ok());
+
+    let deleted_again = collection.delete(vec![doc_id("doc-1")]);
+    assert_eq!(
+        deleted_again[0].status.code,
+        garuda_types::StatusCode::NotFound
+    );
+}

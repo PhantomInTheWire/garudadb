@@ -118,6 +118,10 @@ impl MetadataStore {
     pub fn deleted_doc_ids(&self) -> impl Iterator<Item = &InternalDocId> {
         self.delete_store.iter()
     }
+
+    pub fn delete_store(&self) -> &DeleteStore {
+        &self.delete_store
+    }
 }
 
 pub fn evaluate_filter(expr: &FilterExpr, fields: &BTreeMap<String, ScalarValue>) -> bool {

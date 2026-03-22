@@ -1,5 +1,5 @@
 use crate::state::CollectionRuntime;
-use garuda_segment::{reset_wal, write_segment};
+use garuda_segment::{reset_wal, write_persisted_segment, write_writing_segment};
 use garuda_storage::{
     SnapshotKind, VersionManager, WRITING_SEGMENT_ID, delete_snapshot_path, id_map_snapshot_path,
     manifest_path, read_file, remove_old_snapshots, remove_path_if_exists, segment_data_path,
@@ -19,6 +19,12 @@ pub(crate) fn checkpoint_state(state: &mut CollectionRuntime) -> Result<(), Stat
         state.catalog.delete_snapshot_id = state.catalog.delete_snapshot_id.next();
         state.catalog.manifest_version_id = state.catalog.manifest_version_id.next();
     }
+
+    state.segments.seal_writing_segment(
+        &mut state.catalog.next_segment_id,
+        &state.catalog.schema.vector,
+    );
+    state.rebuild_indexes();
 
     let rollback = capture_checkpoint_files(state)?;
     let persist_result = write_checkpoint_files(state, &version_manager);
@@ -77,10 +83,10 @@ fn write_checkpoint_files(
 
 fn write_all_segments(state: &CollectionRuntime) -> Result<(), Status> {
     for segment in state.segments.persisted_segments() {
-        write_segment(&state.path, segment, &state.catalog.schema.vector)?;
+        write_persisted_segment(&state.path, segment, &state.catalog.schema.vector)?;
     }
 
-    write_segment(
+    write_writing_segment(
         &state.path,
         state.segments.writing_segment(),
         &state.catalog.schema.vector,

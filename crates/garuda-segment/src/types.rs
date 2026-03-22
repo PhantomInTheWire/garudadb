@@ -1,6 +1,6 @@
-use crate::index::build_vector_search_state;
-use garuda_index_flat::FlatIndex;
-use garuda_index_hnsw::HnswIndex;
+use crate::index::{build_persisted_search_resources, build_writing_search_resources};
+use garuda_index_flat::{FlatIndex, WritingFlatIndex};
+use garuda_index_hnsw::{HnswIndex, WritingHnswIndex};
 use garuda_types::{
     DenseVector, DistanceMetric, Doc, FilterExpr, HnswEfSearch, InternalDocId, SegmentId,
     SegmentMeta, Status, StatusCode, TopK, VectorFieldSchema,
@@ -40,18 +40,19 @@ pub struct StoredRecord {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct SegmentFile {
-    pub(crate) kind: SegmentKind,
+pub struct WritingSegment {
     pub meta: SegmentMeta,
     pub records: Vec<StoredRecord>,
-    pub(crate) flat_index: Option<FlatIndex>,
-    pub(crate) hnsw_index: Option<HnswIndex>,
+    pub flat_index: Option<WritingFlatIndex>,
+    pub hnsw_index: Option<WritingHnswIndex>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SegmentKind {
-    Writing,
-    Persisted,
+#[derive(Clone, Debug, PartialEq)]
+pub struct PersistedSegment {
+    pub meta: SegmentMeta,
+    pub records: Vec<StoredRecord>,
+    pub flat_index: Option<FlatIndex>,
+    pub hnsw_index: Option<HnswIndex>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -96,19 +97,17 @@ pub fn segment_meta(id: SegmentId) -> SegmentMeta {
     }
 }
 
-impl SegmentFile {
+impl WritingSegment {
     pub fn new(
         meta: SegmentMeta,
         records: Vec<StoredRecord>,
-        kind: SegmentKind,
         vector_field: &VectorFieldSchema,
     ) -> Self {
         let mut meta = meta;
         sync_segment_meta_fields(&mut meta, &records);
-        let (flat_index, hnsw_index) = build_vector_search_state(vector_field, &meta, &records);
+        let (flat_index, hnsw_index) = build_writing_search_resources(vector_field, &records);
 
         Self {
-            kind,
             meta,
             records,
             flat_index,
@@ -116,26 +115,40 @@ impl SegmentFile {
         }
     }
 
-    pub fn is_writing(&self) -> bool {
-        matches!(self.kind, SegmentKind::Writing)
-    }
-
-    pub fn mark_persisted(&mut self) {
-        self.kind = SegmentKind::Persisted;
-    }
-
     pub fn sync_meta(&mut self) {
         sync_segment_meta_fields(&mut self.meta, &self.records);
     }
 }
 
-impl SegmentKind {
-    pub(crate) fn from_segment_id(id: SegmentId) -> Self {
-        if id == garuda_storage::WRITING_SEGMENT_ID {
-            return Self::Writing;
-        }
+impl PersistedSegment {
+    pub fn new(
+        meta: SegmentMeta,
+        records: Vec<StoredRecord>,
+        vector_field: &VectorFieldSchema,
+    ) -> Self {
+        let mut meta = meta;
+        sync_segment_meta_fields(&mut meta, &records);
+        let (flat_index, hnsw_index) =
+            build_persisted_search_resources(vector_field, &meta, &records);
 
-        Self::Persisted
+        Self {
+            meta,
+            records,
+            flat_index,
+            hnsw_index,
+        }
+    }
+
+    pub fn sync_meta(&mut self) {
+        sync_segment_meta_fields(&mut self.meta, &self.records);
+    }
+
+    pub fn rebuild_search_resources(&mut self, vector_field: &VectorFieldSchema) {
+        self.sync_meta();
+        let (flat_index, hnsw_index) =
+            build_persisted_search_resources(vector_field, &self.meta, &self.records);
+        self.flat_index = flat_index;
+        self.hnsw_index = hnsw_index;
     }
 }
 
@@ -146,7 +159,6 @@ pub(crate) fn sync_segment_meta_fields(meta: &mut SegmentMeta, records: &[Stored
 
     for record in records {
         let record_id = record.doc_id;
-
         min_doc_id = Some(min_doc_id.unwrap_or(record_id).min(record_id));
         max_doc_id = Some(max_doc_id.unwrap_or(record_id).max(record_id));
 

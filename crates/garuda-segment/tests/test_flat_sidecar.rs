@@ -1,6 +1,6 @@
 use garuda_segment::{
-    FlatSearchRequest, SegmentFile, SegmentFilter, SegmentKind, StoredRecord, read_segment,
-    rebuild_search_resources, search_flat, segment_meta, write_segment,
+    FlatSearchRequest, PersistedSegment, SearchVisibility, SegmentFilter, StoredRecord,
+    read_persisted_segment, search_persisted_flat, segment_meta, write_persisted_segment,
 };
 use garuda_storage::{read_file, segment_flat_index_path};
 use garuda_types::{
@@ -17,28 +17,22 @@ static COUNTER: AtomicU64 = AtomicU64::new(0);
 #[test]
 fn persisted_flat_sidecar_roundtrips_exact_search() {
     let root = temp_root("segment-flat-sidecar");
-    let mut segment = SegmentFile::new(
-        segment_meta(SegmentId::new_unchecked(1)),
-        Vec::new(),
-        SegmentKind::Persisted,
-        &vector_field(VectorIndexState::DefaultFlat),
-    );
-    segment
-        .records
-        .push(stored_record(1, "doc-1", "alpha", [1.0, 0.0, 0.0, 0.0]));
-    segment
-        .records
-        .push(stored_record(2, "doc-2", "alpha", [0.9, 0.1, 0.0, 0.0]));
-    segment
-        .records
-        .push(stored_record(3, "doc-3", "beta", [0.0, 1.0, 0.0, 0.0]));
     let vector_field = vector_field(VectorIndexState::DefaultFlat);
-    rebuild_search_resources(&mut segment, &vector_field);
-    write_segment(&root, &segment, &vector_field).expect("write segment with flat sidecar");
-    let reopened =
-        read_segment(&root, &segment.meta, &vector_field).expect("read segment with flat sidecar");
+    let segment = PersistedSegment::new(
+        segment_meta(SegmentId::new_unchecked(1)),
+        vec![
+            stored_record(1, "doc-1", "alpha", [1.0, 0.0, 0.0, 0.0]),
+            stored_record(2, "doc-2", "alpha", [0.9, 0.1, 0.0, 0.0]),
+            stored_record(3, "doc-3", "beta", [0.0, 1.0, 0.0, 0.0]),
+        ],
+        &vector_field,
+    );
+    write_persisted_segment(&root, &segment, &vector_field)
+        .expect("write segment with flat sidecar");
+    let reopened = read_persisted_segment(&root, &segment.meta, &vector_field)
+        .expect("read segment with flat sidecar");
 
-    let hits = search_flat(
+    let hits = search_persisted_flat(
         &reopened,
         FlatSearchRequest {
             metric: DistanceMetric::Cosine,
@@ -46,6 +40,7 @@ fn persisted_flat_sidecar_roundtrips_exact_search() {
             top_k: TopK::new(3).expect("valid top_k"),
             filter: SegmentFilter::All,
         },
+        SearchVisibility::All,
     )
     .expect("search reopened segment");
 
@@ -64,29 +59,24 @@ fn persisted_flat_sidecar_roundtrips_exact_search() {
 #[test]
 fn missing_or_invalid_flat_sidecar_fails_reopen_for_persisted_flat_segments() {
     let root = temp_root("segment-flat-sidecar-invalid");
-    let mut segment = SegmentFile::new(
-        segment_meta(SegmentId::new_unchecked(1)),
-        Vec::new(),
-        SegmentKind::Persisted,
-        &vector_field(VectorIndexState::DefaultFlat),
-    );
-    segment
-        .records
-        .push(stored_record(1, "doc-1", "alpha", [1.0, 0.0, 0.0, 0.0]));
     let vector_field = vector_field(VectorIndexState::DefaultFlat);
-    rebuild_search_resources(&mut segment, &vector_field);
-    write_segment(&root, &segment, &vector_field).expect("write segment");
+    let segment = PersistedSegment::new(
+        segment_meta(SegmentId::new_unchecked(1)),
+        vec![stored_record(1, "doc-1", "alpha", [1.0, 0.0, 0.0, 0.0])],
+        &vector_field,
+    );
+    write_persisted_segment(&root, &segment, &vector_field).expect("write segment");
 
     std::fs::remove_file(segment_flat_index_path(&root, segment.meta.id)).expect("remove sidecar");
-    let missing =
-        read_segment(&root, &segment.meta, &vector_field).expect_err("missing sidecar should fail");
+    let missing = read_persisted_segment(&root, &segment.meta, &vector_field)
+        .expect_err("missing sidecar should fail");
     assert_eq!(missing.code, StatusCode::NotFound);
 
-    write_segment(&root, &segment, &vector_field).expect("rewrite segment");
+    write_persisted_segment(&root, &segment, &vector_field).expect("rewrite segment");
     std::fs::write(segment_flat_index_path(&root, segment.meta.id), b"broken")
         .expect("corrupt sidecar");
-    let invalid =
-        read_segment(&root, &segment.meta, &vector_field).expect_err("invalid sidecar should fail");
+    let invalid = read_persisted_segment(&root, &segment.meta, &vector_field)
+        .expect_err("invalid sidecar should fail");
     assert_eq!(invalid.code, StatusCode::Internal);
 
     let sidecar_bytes =
@@ -97,28 +87,24 @@ fn missing_or_invalid_flat_sidecar_fails_reopen_for_persisted_flat_segments() {
 #[test]
 fn filtered_exact_search_does_not_truncate_matching_hits_before_filtering() {
     let root = temp_root("segment-flat-filtered");
-    let mut segment = SegmentFile::new(
-        segment_meta(SegmentId::new_unchecked(1)),
-        Vec::new(),
-        SegmentKind::Persisted,
-        &vector_field(VectorIndexState::DefaultFlat),
-    );
-    segment
-        .records
-        .push(stored_record(1, "doc-1", "alpha", [1.0, 0.0, 0.0, 0.0]));
-    segment
-        .records
-        .push(stored_record(2, "doc-2", "beta", [0.0, 1.0, 0.0, 0.0]));
     let vector_field = vector_field(VectorIndexState::DefaultFlat);
-    rebuild_search_resources(&mut segment, &vector_field);
-    write_segment(&root, &segment, &vector_field).expect("write segment");
-    let reopened = read_segment(&root, &segment.meta, &vector_field).expect("read segment");
+    let segment = PersistedSegment::new(
+        segment_meta(SegmentId::new_unchecked(1)),
+        vec![
+            stored_record(1, "doc-1", "alpha", [1.0, 0.0, 0.0, 0.0]),
+            stored_record(2, "doc-2", "beta", [0.0, 1.0, 0.0, 0.0]),
+        ],
+        &vector_field,
+    );
+    write_persisted_segment(&root, &segment, &vector_field).expect("write segment");
+    let reopened =
+        read_persisted_segment(&root, &segment.meta, &vector_field).expect("read segment");
 
     let filter = garuda_types::FilterExpr::Eq(
         "category".to_string(),
         garuda_types::ScalarValue::String("beta".to_string()),
     );
-    let hits = search_flat(
+    let hits = search_persisted_flat(
         &reopened,
         FlatSearchRequest {
             metric: DistanceMetric::Cosine,
@@ -126,6 +112,7 @@ fn filtered_exact_search_does_not_truncate_matching_hits_before_filtering() {
             top_k: TopK::new(1).expect("valid top_k"),
             filter: SegmentFilter::Matching(&filter),
         },
+        SearchVisibility::All,
     )
     .expect("search reopened segment");
 
