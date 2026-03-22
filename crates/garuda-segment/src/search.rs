@@ -5,7 +5,7 @@ use garuda_meta::evaluate_filter;
 use garuda_types::{DenseVector, HnswEfSearch, InternalDocId, Status, StatusCode, TopK};
 use std::collections::HashMap;
 
-pub fn search_segment_flat(
+pub fn search_flat(
     segment: &crate::SegmentFile,
     request: FlatSearchRequest<'_>,
 ) -> Result<Vec<SegmentSearchHit>, Status> {
@@ -27,7 +27,7 @@ pub fn search_segment_flat(
     )
 }
 
-pub fn search_segment_hnsw(
+pub fn search_hnsw(
     segment: &crate::SegmentFile,
     request: HnswSegmentSearchRequest<'_>,
 ) -> Result<Vec<SegmentSearchHit>, Status> {
@@ -36,7 +36,7 @@ pub fn search_segment_hnsw(
         .as_ref()
         .expect("hnsw segment search requires hnsw segment state");
     let record_indexes = live_record_indexes(segment);
-    let hits = search_hnsw(
+    let hits = run_hnsw_search(
         index,
         request.query_vector,
         request.top_k,
@@ -96,7 +96,7 @@ fn collect_search_hits(
     Ok(search_hits)
 }
 
-fn search_hnsw(
+fn run_hnsw_search(
     index: &HnswIndex,
     query_vector: &DenseVector,
     top_k: TopK,
