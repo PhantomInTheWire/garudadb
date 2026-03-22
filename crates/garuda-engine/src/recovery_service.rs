@@ -1,4 +1,5 @@
 use crate::catalog::CollectionCatalog;
+use crate::schema::validate_schema;
 use crate::segment_manager::SegmentManager;
 use crate::state::CollectionRuntime;
 use crate::write_service::replay_wal_ops;
@@ -46,6 +47,7 @@ pub(crate) fn create_collection_state(
 
 pub(crate) fn load_collection_state(path: PathBuf) -> Result<CollectionRuntime, Status> {
     let manifest = VersionManager::new(&path).read_latest_manifest()?;
+    validate_schema(&manifest.schema)?;
     let vector_field = manifest.schema.vector.clone();
     let writing_segment = load_segment(&path, &manifest.writing_segment, &vector_field)?;
     let persisted_segments = load_persisted_segments(&path, &manifest, &vector_field)?;
