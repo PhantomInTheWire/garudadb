@@ -1,6 +1,7 @@
 mod common;
 
 use common::{collection_name, database, default_options, default_schema};
+use garuda_storage::VersionManager;
 use garuda_types::{
     CollectionName, CollectionOptions, CollectionSchema, HnswIndexParams, StatusCode,
 };
@@ -91,6 +92,31 @@ fn read_only_collection_open_should_preserve_non_mutating_contract() {
 
     let readonly_create = db.create_collection(default_schema("readonly"), read_only_options());
     assert!(readonly_create.is_err());
+}
+
+#[test]
+fn reopen_rejects_invalid_schema_in_persisted_manifest() {
+    let (root, db) = database("create-open-invalid-manifest-schema");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create base collection");
+    collection.flush().expect("flush");
+    drop(collection);
+
+    let collection_path = root.join("docs");
+    let mut manifest = VersionManager::new(&collection_path)
+        .read_latest_manifest()
+        .expect("read manifest");
+    manifest.schema.primary_key = common::field_name("missing_pk");
+    VersionManager::new(&collection_path)
+        .write_manifest(&manifest)
+        .expect("write invalid manifest");
+
+    let reopened = db.open_collection(&collection_name("docs"));
+    match reopened {
+        Ok(_) => panic!("invalid persisted schema should block reopen"),
+        Err(status) => assert_eq!(status.code, StatusCode::InvalidArgument),
+    }
 }
 
 fn schema_with_vector_name(name: &str, vector_name: &str) -> CollectionSchema {
