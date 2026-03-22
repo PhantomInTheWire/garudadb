@@ -123,7 +123,7 @@ impl Collection {
     pub fn create_index(&self, field_name: &FieldName, params: IndexParams) -> Result<(), Status> {
         self.mutate_and_checkpoint(|state| {
             ensure_vector_index_field(&state.catalog.schema, field_name)?;
-            set_vector_index_params(&mut state.catalog.schema, params);
+            set_vector_index_params(&mut state.catalog.schema, params)?;
             state.rebuild_indexes();
 
             Ok(())

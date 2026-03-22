@@ -17,8 +17,16 @@ pub(crate) fn ensure_vector_index_field(
     ))
 }
 
-pub(crate) fn set_vector_index_params(schema: &mut CollectionSchema, params: IndexParams) {
+pub(crate) fn set_vector_index_params(
+    schema: &mut CollectionSchema,
+    params: IndexParams,
+) -> Result<(), Status> {
+    if let IndexParams::Hnsw(params) = &params {
+        params.neighbor_config()?;
+    }
+
     schema.vector.index = params;
+    Ok(())
 }
 
 pub(crate) fn flat_index_params() -> IndexParams {
