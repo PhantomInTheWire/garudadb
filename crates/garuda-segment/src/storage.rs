@@ -12,7 +12,7 @@ use garuda_storage::{
 };
 use garuda_types::{DocId, SegmentId, SegmentMeta, Status, VectorFieldSchema};
 
-pub fn sync_segment(segment: &mut SegmentFile, vector_field: &VectorFieldSchema) {
+pub fn rebuild_search_resources(segment: &mut SegmentFile, vector_field: &VectorFieldSchema) {
     sync_segment_meta_fields(&mut segment.meta, &segment.records);
     let (flat_index, hnsw_index) =
         build_vector_search_state(vector_field, &segment.meta, &segment.records);

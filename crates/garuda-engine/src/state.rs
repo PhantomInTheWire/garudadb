@@ -2,7 +2,7 @@ use crate::catalog::CollectionCatalog;
 use crate::segment_manager::SegmentManager;
 use crate::validation::{apply_schema_defaults, validate_doc};
 use garuda_meta::MetadataStore;
-use garuda_segment::{RecordState, SegmentFile, StoredRecord, sync_segment};
+use garuda_segment::{RecordState, SegmentFile, StoredRecord, rebuild_search_resources};
 use garuda_types::{Doc, DocId, StatusCode, VectorFieldSchema, WriteResult};
 use std::path::PathBuf;
 
@@ -138,7 +138,7 @@ fn index_segment(
     meta: &mut MetadataStore,
     vector_field: &VectorFieldSchema,
 ) {
-    sync_segment(segment, vector_field);
+    rebuild_search_resources(segment, vector_field);
 
     for record in &segment.records {
         if matches!(record.state, RecordState::Deleted) {

@@ -1,6 +1,6 @@
 use garuda_segment::{
     HnswSegmentSearchRequest, SegmentFile, SegmentFilter, SegmentKind, StoredRecord, read_segment,
-    search_hnsw, segment_meta, sync_segment, write_segment,
+    rebuild_search_resources, search_hnsw, segment_meta, write_segment,
 };
 use garuda_storage::{read_file, segment_hnsw_index_path};
 use garuda_types::{
@@ -33,7 +33,7 @@ fn persisted_hnsw_sidecar_roundtrips_search() {
         .records
         .push(stored_record(3, "doc-3", "beta", [0.0, 1.0, 0.0, 0.0]));
     let vector_field = vector_field(IndexParams::Hnsw(HnswIndexParams::default()));
-    sync_segment(&mut segment, &vector_field);
+    rebuild_search_resources(&mut segment, &vector_field);
     write_segment(&root, &segment, &vector_field).expect("write segment with hnsw sidecar");
 
     let reopened =
@@ -75,7 +75,7 @@ fn missing_or_invalid_hnsw_sidecar_fails_reopen_for_persisted_hnsw_segments() {
         .records
         .push(stored_record(1, "doc-1", "alpha", [1.0, 0.0, 0.0, 0.0]));
     let vector_field = vector_field(IndexParams::Hnsw(HnswIndexParams::default()));
-    sync_segment(&mut segment, &vector_field);
+    rebuild_search_resources(&mut segment, &vector_field);
     write_segment(&root, &segment, &vector_field).expect("write segment");
 
     std::fs::remove_file(segment_hnsw_index_path(&root, segment.meta.id)).expect("remove sidecar");

@@ -1,6 +1,6 @@
 use garuda_segment::{
     FlatSearchRequest, SegmentFile, SegmentFilter, SegmentKind, StoredRecord, read_segment,
-    search_flat, segment_meta, sync_segment, write_segment,
+    rebuild_search_resources, search_flat, segment_meta, write_segment,
 };
 use garuda_storage::{read_file, segment_flat_index_path};
 use garuda_types::{
@@ -33,7 +33,7 @@ fn persisted_flat_sidecar_roundtrips_exact_search() {
         .records
         .push(stored_record(3, "doc-3", "beta", [0.0, 1.0, 0.0, 0.0]));
     let vector_field = vector_field(IndexParams::Flat(FlatIndexParams));
-    sync_segment(&mut segment, &vector_field);
+    rebuild_search_resources(&mut segment, &vector_field);
     write_segment(&root, &segment, &vector_field).expect("write segment with flat sidecar");
     let reopened =
         read_segment(&root, &segment.meta, &vector_field).expect("read segment with flat sidecar");
@@ -74,7 +74,7 @@ fn missing_or_invalid_flat_sidecar_fails_reopen_for_persisted_flat_segments() {
         .records
         .push(stored_record(1, "doc-1", "alpha", [1.0, 0.0, 0.0, 0.0]));
     let vector_field = vector_field(IndexParams::Flat(FlatIndexParams));
-    sync_segment(&mut segment, &vector_field);
+    rebuild_search_resources(&mut segment, &vector_field);
     write_segment(&root, &segment, &vector_field).expect("write segment");
 
     std::fs::remove_file(segment_flat_index_path(&root, segment.meta.id)).expect("remove sidecar");
@@ -110,7 +110,7 @@ fn filtered_exact_search_does_not_truncate_matching_hits_before_filtering() {
         .records
         .push(stored_record(2, "doc-2", "beta", [0.0, 1.0, 0.0, 0.0]));
     let vector_field = vector_field(IndexParams::Flat(FlatIndexParams));
-    sync_segment(&mut segment, &vector_field);
+    rebuild_search_resources(&mut segment, &vector_field);
     write_segment(&root, &segment, &vector_field).expect("write segment");
     let reopened = read_segment(&root, &segment.meta, &vector_field).expect("read segment");
 
