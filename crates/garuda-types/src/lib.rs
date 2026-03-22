@@ -372,6 +372,123 @@ impl HnswM {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HnswScalingFactor(NonZeroU32);
+
+impl HnswScalingFactor {
+    const MIN: u32 = 2;
+
+    pub fn new(value: u32) -> Result<Self, Status> {
+        let Some(value) = NonZeroU32::new(value) else {
+            return Err(Status::err(
+                StatusCode::InvalidArgument,
+                "hnsw scaling_factor must be greater than one",
+            ));
+        };
+
+        if value.get() < Self::MIN {
+            return Err(Status::err(
+                StatusCode::InvalidArgument,
+                "hnsw scaling_factor must be greater than one",
+            ));
+        }
+
+        Ok(Self(value))
+    }
+
+    pub fn from_persisted_u64(value: u64) -> Result<Self, Status> {
+        let value = u32::try_from(value).map_err(|_| {
+            Status::err(
+                StatusCode::Internal,
+                "hnsw scaling_factor exceeds u32::MAX in persisted manifest",
+            )
+        })?;
+
+        Self::new(value).map_err(|_| {
+            Status::err(
+                StatusCode::Internal,
+                "hnsw scaling_factor must be greater than one",
+            )
+        })
+    }
+
+    pub fn get(self) -> u32 {
+        self.0.get()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HnswPruneWidth(NonZeroU32);
+
+impl HnswPruneWidth {
+    pub fn new(value: u32) -> Result<Self, Status> {
+        let Some(value) = NonZeroU32::new(value) else {
+            return Err(Status::err(
+                StatusCode::InvalidArgument,
+                "hnsw prune_width must be greater than zero",
+            ));
+        };
+
+        Ok(Self(value))
+    }
+
+    pub fn from_persisted_u64(value: u64) -> Result<Self, Status> {
+        let value = u32::try_from(value).map_err(|_| {
+            Status::err(
+                StatusCode::Internal,
+                "hnsw prune_width exceeds u32::MAX in persisted manifest",
+            )
+        })?;
+
+        Self::new(value).map_err(|_| {
+            Status::err(
+                StatusCode::Internal,
+                "hnsw prune_width must be greater than zero",
+            )
+        })
+    }
+
+    pub fn get(self) -> u32 {
+        self.0.get()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HnswMinNeighborCount(NonZeroU32);
+
+impl HnswMinNeighborCount {
+    pub fn new(value: u32) -> Result<Self, Status> {
+        let Some(value) = NonZeroU32::new(value) else {
+            return Err(Status::err(
+                StatusCode::InvalidArgument,
+                "hnsw min_neighbor_count must be greater than zero",
+            ));
+        };
+
+        Ok(Self(value))
+    }
+
+    pub fn from_persisted_u64(value: u64) -> Result<Self, Status> {
+        let value = u32::try_from(value).map_err(|_| {
+            Status::err(
+                StatusCode::Internal,
+                "hnsw min_neighbor_count exceeds u32::MAX in persisted manifest",
+            )
+        })?;
+
+        Self::new(value).map_err(|_| {
+            Status::err(
+                StatusCode::Internal,
+                "hnsw min_neighbor_count must be greater than zero",
+            )
+        })
+    }
+
+    pub fn get(self) -> u32 {
+        self.0.get()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HnswEfConstruction(NonZeroU32);
 
 impl HnswEfConstruction {
@@ -446,7 +563,10 @@ impl HnswEfSearch {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HnswIndexParams {
     pub m: HnswM,
+    pub scaling_factor: HnswScalingFactor,
     pub ef_construction: HnswEfConstruction,
+    pub prune_width: HnswPruneWidth,
+    pub min_neighbor_count: HnswMinNeighborCount,
     pub ef_search: HnswEfSearch,
 }
 
@@ -454,8 +574,13 @@ impl Default for HnswIndexParams {
     fn default() -> Self {
         Self {
             m: HnswM::new(16).expect("default hnsw m should be valid"),
+            scaling_factor: HnswScalingFactor::new(50)
+                .expect("default hnsw scaling_factor should be valid"),
             ef_construction: HnswEfConstruction::new(200)
                 .expect("default hnsw ef_construction should be valid"),
+            prune_width: HnswPruneWidth::new(16).expect("default hnsw prune_width should be valid"),
+            min_neighbor_count: HnswMinNeighborCount::new(8)
+                .expect("default hnsw min_neighbor_count should be valid"),
             ef_search: HnswEfSearch::new(64).expect("default hnsw ef_search should be valid"),
         }
     }

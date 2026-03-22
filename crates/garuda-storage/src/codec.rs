@@ -1,9 +1,9 @@
 use garuda_types::{
     AccessMode, CollectionName, CollectionOptions, CollectionSchema, DistanceMetric, DocId,
     FieldName, FlatIndexParams, HnswEfConstruction, HnswEfSearch, HnswIndexParams, HnswM,
-    IndexParams, InternalDocId, Manifest, ManifestVersionId, Nullability, ScalarFieldSchema,
-    ScalarType, ScalarValue, SegmentId, SegmentMeta, SnapshotId, Status, StatusCode, StorageAccess,
-    VectorDimension,
+    HnswMinNeighborCount, HnswPruneWidth, HnswScalingFactor, IndexParams, InternalDocId, Manifest,
+    ManifestVersionId, Nullability, ScalarFieldSchema, ScalarType, ScalarValue, SegmentId,
+    SegmentMeta, SnapshotId, Status, StatusCode, StorageAccess, VectorDimension,
 };
 
 const MANIFEST_MAGIC: &[u8; 8] = b"GRDMAN01";
@@ -220,7 +220,10 @@ fn write_index_params(writer: &mut BinaryWriter, index: &IndexParams) -> Result<
         IndexParams::Hnsw(params) => {
             writer.write_u8(1);
             writer.write_u64(params.m.get() as u64);
+            writer.write_u64(params.scaling_factor.get() as u64);
             writer.write_u64(params.ef_construction.get() as u64);
+            writer.write_u64(params.prune_width.get() as u64);
+            writer.write_u64(params.min_neighbor_count.get() as u64);
             writer.write_u64(params.ef_search.get() as u64);
         }
     }
@@ -233,7 +236,10 @@ fn read_index_params(reader: &mut BinaryReader<'_>) -> Result<IndexParams, Statu
         0 => Ok(IndexParams::Flat(FlatIndexParams)),
         1 => Ok(IndexParams::Hnsw(HnswIndexParams {
             m: HnswM::from_persisted_u64(reader.read_u64()?)?,
+            scaling_factor: HnswScalingFactor::from_persisted_u64(reader.read_u64()?)?,
             ef_construction: HnswEfConstruction::from_persisted_u64(reader.read_u64()?)?,
+            prune_width: HnswPruneWidth::from_persisted_u64(reader.read_u64()?)?,
+            min_neighbor_count: HnswMinNeighborCount::from_persisted_u64(reader.read_u64()?)?,
             ef_search: HnswEfSearch::from_persisted_u64(reader.read_u64()?)?,
         })),
         _ => Err(Status::err(
