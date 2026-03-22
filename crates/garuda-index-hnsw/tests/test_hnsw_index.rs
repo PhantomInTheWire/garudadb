@@ -80,7 +80,7 @@ fn search_returns_scored_hits_in_deterministic_order() {
                 HnswMinNeighborCount::new(8).unwrap(),
             )
             .unwrap(),
-            HnswScalingFactor::new(50).unwrap(),
+            HnswScalingFactor::new(2).unwrap(),
             HnswEfConstruction::new(200).unwrap(),
             HnswPruneWidth::new(64).unwrap(),
         ),
@@ -125,7 +125,7 @@ fn build_connects_new_nodes_to_best_previous_neighbors() {
                 HnswMinNeighborCount::new(1).unwrap(),
             )
             .unwrap(),
-            HnswScalingFactor::new(50).unwrap(),
+            HnswScalingFactor::new(2).unwrap(),
             HnswEfConstruction::new(200).unwrap(),
             HnswPruneWidth::new(64).unwrap(),
         ),
@@ -164,5 +164,51 @@ fn build_connects_new_nodes_to_best_previous_neighbors() {
             .graph()
             .neighbors(HnswLevel::new(0), NodeIndex::new(2))[0],
         NodeIndex::new(0)
+    );
+}
+
+#[test]
+fn build_replaces_weaker_reverse_neighbors_when_node_is_full() {
+    let config = HnswIndexConfig::new(
+        VectorDimension::new(2).unwrap(),
+        DistanceMetric::InnerProduct,
+        HnswBuildConfig::new(
+            HnswNeighborConfig::new(
+                HnswM::new(1).unwrap(),
+                HnswMinNeighborCount::new(1).unwrap(),
+            )
+            .unwrap(),
+            HnswScalingFactor::new(2).unwrap(),
+            HnswEfConstruction::new(200).unwrap(),
+            HnswPruneWidth::new(64).unwrap(),
+        ),
+    );
+    let entries = vec![
+        HnswBuildEntry::new(
+            &config,
+            InternalDocId::new(2).unwrap(),
+            DenseVector::parse(vec![1.0, 0.0]).unwrap(),
+        )
+        .unwrap(),
+        HnswBuildEntry::new(
+            &config,
+            InternalDocId::new(1).unwrap(),
+            DenseVector::parse(vec![0.0, 1.0]).unwrap(),
+        )
+        .unwrap(),
+        HnswBuildEntry::new(
+            &config,
+            InternalDocId::new(4).unwrap(),
+            DenseVector::parse(vec![1.0, 0.0]).unwrap(),
+        )
+        .unwrap(),
+    ];
+    let index = HnswIndex::build(config, entries);
+
+    assert_eq!(
+        index
+            .graph()
+            .neighbors(HnswLevel::new(1), NodeIndex::new(0)),
+        &[NodeIndex::new(2)]
     );
 }

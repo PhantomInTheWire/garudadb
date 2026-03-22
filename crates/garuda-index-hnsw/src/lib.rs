@@ -6,6 +6,7 @@ use garuda_types::{
 };
 
 mod build;
+mod compare;
 mod heap;
 mod search;
 

@@ -1,5 +1,6 @@
 use crate::{
     HnswHit, HnswIndex, HnswSearchRequest,
+    compare::{compare_score_then_doc_id},
     heap::{ScoredNode, WorstScoredNode},
 };
 use garuda_types::{DenseVector, HnswLevel, NodeIndex, Status, StatusCode};
@@ -57,12 +58,8 @@ impl HnswIndex {
     fn top_hits(&self, candidates: Vec<ScoredNode>, limit: usize) -> Vec<HnswHit> {
         let mut hits = self.to_hnsw_hits(candidates);
 
-        // sort by score descending, then by doc_id ascending
         hits.sort_by(|left, right| {
-            right
-                .score
-                .total_cmp(&left.score)
-                .then_with(|| left.doc_id.cmp(&right.doc_id))
+            compare_score_then_doc_id(left.score, left.doc_id, right.score, right.doc_id)
         });
         hits.truncate(limit);
         hits
@@ -99,6 +96,7 @@ impl HnswIndex {
                 let neighbor_doc_id = self.entries[neighbor.get()].doc_id();
                 let entry_point_doc_id = self.entries[entry_point.get()].doc_id();
 
+                // either have a better score or same score but lower doc_id
                 let is_better_neighbor = score > best_score
                     || (score == best_score && neighbor_doc_id < entry_point_doc_id);
 

@@ -1,4 +1,6 @@
-use crate::{HnswBuildEntry, HnswIndex, HnswLevel, heap::ScoredNode};
+use crate::{
+    HnswBuildEntry, HnswIndex, HnswLevel, compare::compare_score_then_doc_id, heap::ScoredNode,
+};
 use garuda_types::{InternalDocId, NodeIndex};
 
 impl HnswIndex {
@@ -33,32 +35,60 @@ impl HnswIndex {
             });
         }
 
-        candidates.sort_by(|left, right| {
-            right.score.total_cmp(&left.score).then_with(|| {
-                self.entries[left.index.get()]
-                    .doc_id()
-                    .cmp(&self.entries[right.index.get()].doc_id())
-            })
-        });
-        candidates.truncate(self.config.neighbor_limits().for_level(level));
-
-        candidates
-            .into_iter()
-            .map(|candidate| candidate.index)
-            .collect()
+        self.prune_to_max_neighbors(level, candidates)
     }
 
     fn add_reverse_neighbor(&mut self, level: HnswLevel, node: NodeIndex, neighbor: NodeIndex) {
-        if self.graph.neighbors(level, node).contains(&neighbor) {
+        let neighbors = self.graph.neighbors(level, node);
+        if neighbors.contains(&neighbor) {
             return;
         }
 
-        if self.graph.neighbors(level, node).len() >= self.config.neighbor_limits().for_level(level)
-        {
-            return;
+        let num_of_max_neighbors = self.config.neighbor_limits().for_level(level);
+        let mut candidates = Vec::with_capacity(num_of_max_neighbors + 1);
+
+        let node_vector = self.entries[node.get()].vector();
+        for &existing_neighbor in neighbors {
+            candidates.push(ScoredNode {
+                index: existing_neighbor,
+                score: self.score_node(node_vector, existing_neighbor),
+            });
         }
 
-        self.graph.add_neighbor(level, node, neighbor);
+        candidates.push(ScoredNode {
+            index: neighbor,
+            score: self.score_node(node_vector, neighbor),
+        });
+
+        let neighbors = self.prune_to_max_neighbors(level, candidates);
+        self.graph.replace_neighbors(level, node, neighbors);
+    }
+
+    fn prune_to_max_neighbors(
+        &self,
+        level: HnswLevel,
+        mut candidates: Vec<ScoredNode>,
+    ) -> Vec<NodeIndex> {
+        candidates.sort_by(|left, right| {
+            let left_doc_id = self.entries[left.index.get()].doc_id();
+            let right_doc_id = self.entries[right.index.get()].doc_id();
+
+            compare_score_then_doc_id(
+                left.score,
+                left_doc_id,
+                right.score,
+                right_doc_id,
+            )
+        });
+        
+        let max_neighbors = self.config.neighbor_limits().for_level(level);
+        candidates.truncate(max_neighbors);
+
+        let neighbors: Vec<NodeIndex> = candidates
+            .into_iter()
+            .map(|candidate| candidate.index)
+            .collect();
+        neighbors
     }
 }
 
