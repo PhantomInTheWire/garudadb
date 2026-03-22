@@ -64,6 +64,13 @@ impl HnswIndexConfig {
         HnswNeighborLimits::new(self.max_neighbors())
     }
 
+    fn build_candidate_limit(&self, level: HnswLevel) -> usize {
+        self.neighbor_limits()
+            .for_level(level)
+            .max(self.build.ef_construction.get() as usize)
+            .max(self.build.prune_width.get() as usize)
+    }
+
     fn max_graph_level(&self) -> usize {
         HNSW_MAX_GRAPH_LEVEL
     }
@@ -139,8 +146,22 @@ impl HnswIndex {
             entries,
         };
 
+        if index.entries.is_empty() {
+            return index;
+        }
+
+        let mut entry_point = NodeIndex::new(0);
+        let mut max_level = index.graph.node_level(entry_point);
+
         for raw_index in 1..index.entries.len() {
-            index.connect_new_node(NodeIndex::new(raw_index));
+            let node = NodeIndex::new(raw_index);
+            index.insert_node(node, entry_point, max_level);
+
+            let node_level = index.graph.node_level(node);
+            if node_level > max_level {
+                entry_point = node;
+                max_level = node_level;
+            }
         }
 
         index
