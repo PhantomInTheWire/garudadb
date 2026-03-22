@@ -30,7 +30,7 @@ impl HnswIndex {
                 self.config.build_candidate_limit(level),
             );
 
-            if let Some(best_candidate) = candidates.first() {
+            if let Some(best_candidate) = best_retained_candidate(&candidates) {
                 entry_point = best_candidate.index;
             }
 
@@ -107,7 +107,7 @@ impl HnswIndex {
         for candidate in &candidates {
             let can_add_neighbor = candidate.index != node
                 && !neighbors.contains(&candidate.index)
-                && self.is_distinct_neighbor(node, candidate, &neighbors);
+                && self.is_distinct_neighbor(candidate, &neighbors);
 
             if can_add_neighbor {
                 neighbors.push(candidate.index);
@@ -138,12 +138,7 @@ impl HnswIndex {
         return neighbors;
     }
 
-    fn is_distinct_neighbor(
-        &self,
-        node: NodeIndex,
-        candidate: &ScoredNode,
-        neighbors: &[NodeIndex],
-    ) -> bool {
+    fn is_distinct_neighbor(&self, candidate: &ScoredNode, neighbors: &[NodeIndex]) -> bool {
         let candidate_vector = self.vector(candidate.index);
 
         for &selected_neighbor in neighbors {
@@ -159,15 +154,12 @@ impl HnswIndex {
             }
         }
 
-        let node_vector = self.vector(node);
-        let node_score = score_doc(
-            self.config.metric,
-            candidate_vector.as_slice(),
-            node_vector.as_slice(),
-        );
-
-        return node_score == candidate.score;
+        true
     }
+}
+
+fn best_retained_candidate(candidates: &[ScoredNode]) -> Option<ScoredNode> {
+    candidates.first().copied()
 }
 
 pub(crate) fn sample_node_levels(

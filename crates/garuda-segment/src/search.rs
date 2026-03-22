@@ -17,7 +17,7 @@ pub fn search_flat(
     let hits = index.search(
         request.metric,
         request.query_vector,
-        search_top_k(request, record_indexes.len()),
+        filtered_search_top_k(request.top_k, request.filter, record_indexes.len()),
     )?;
     collect_search_hits(
         segment,
@@ -39,7 +39,7 @@ pub fn search_hnsw(
     let hits = run_hnsw_search(
         index,
         request.query_vector,
-        request.top_k,
+        filtered_search_top_k(request.top_k, request.filter, record_indexes.len()),
         request.ef_search,
     )?;
     collect_search_hits(
@@ -105,9 +105,9 @@ fn run_hnsw_search(
     index.search(HnswSearchRequest::new(query_vector, top_k, ef_search))
 }
 
-fn search_top_k(request: FlatSearchRequest<'_>, live_doc_count: usize) -> TopK {
-    if matches!(request.filter, SegmentFilter::All) {
-        return request.top_k;
+fn filtered_search_top_k(top_k: TopK, filter: SegmentFilter<'_>, live_doc_count: usize) -> TopK {
+    if matches!(filter, SegmentFilter::All) {
+        return top_k;
     }
 
     TopK::new(live_doc_count).expect("queryable segment must have at least one live document")

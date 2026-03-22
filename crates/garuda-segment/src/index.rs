@@ -111,6 +111,13 @@ fn load_hnsw_search_state(
     let config = hnsw_index_config(vector_field, params);
     let entries = hnsw_build_entries(&config, records, meta.doc_count);
 
+    if graph.node_count() != entries.len() {
+        return Err(Status::err(
+            StatusCode::Internal,
+            "persisted hnsw graph does not match rebuilt live entries",
+        ));
+    }
+
     Ok(Some(HnswIndex::from_parts(config, entries, graph)))
 }
 

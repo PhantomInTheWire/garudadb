@@ -82,6 +82,48 @@ fn graph_from_parts_rejects_level_zero_neighbor_count_above_twice_m() {
 }
 
 #[test]
+fn graph_from_parts_rejects_out_of_bounds_neighbor() {
+    let result = HnswGraph::from_parts(
+        vec![HnswLevel::new(0), HnswLevel::new(0)],
+        vec![vec![vec![NodeIndex::new(2)], Vec::new()]],
+        2,
+        HnswNeighborLimits::new(HnswM::new(16).expect("valid hnsw max_neighbors")),
+    );
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn graph_from_parts_rejects_edges_above_node_level() {
+    let result = HnswGraph::from_parts(
+        vec![HnswLevel::new(0), HnswLevel::new(1)],
+        vec![
+            vec![Vec::new(), Vec::new()],
+            vec![vec![NodeIndex::new(1)], Vec::new()],
+        ],
+        2,
+        HnswNeighborLimits::new(HnswM::new(16).expect("valid hnsw max_neighbors")),
+    );
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn graph_from_parts_rejects_neighbor_that_does_not_exist_on_level() {
+    let result = HnswGraph::from_parts(
+        vec![HnswLevel::new(1), HnswLevel::new(0)],
+        vec![
+            vec![Vec::new(), Vec::new()],
+            vec![vec![NodeIndex::new(1)], Vec::new()],
+        ],
+        2,
+        HnswNeighborLimits::new(HnswM::new(16).expect("valid hnsw max_neighbors")),
+    );
+
+    assert!(result.is_err());
+}
+
+#[test]
 fn search_returns_scored_hits_in_deterministic_order() {
     let config = HnswIndexConfig::new(
         VectorDimension::new(2).unwrap(),
@@ -124,6 +166,50 @@ fn search_returns_scored_hits_in_deterministic_order() {
     assert_eq!(hits.len(), 2);
     assert_eq!(hits[0].doc_id, InternalDocId::new(1).unwrap());
     assert_eq!(hits[1].doc_id, InternalDocId::new(2).unwrap());
+}
+
+#[test]
+fn search_keeps_lower_doc_id_when_top_k_and_ef_search_are_one() {
+    let config = HnswIndexConfig::new(
+        VectorDimension::new(2).unwrap(),
+        DistanceMetric::InnerProduct,
+        HnswBuildConfig::new(
+            HnswNeighborConfig::new(
+                HnswM::new(2).unwrap(),
+                HnswMinNeighborCount::new(1).unwrap(),
+            )
+            .unwrap(),
+            HnswScalingFactor::new(2).unwrap(),
+            HnswEfConstruction::new(8).unwrap(),
+            HnswPruneWidth::new(8).unwrap(),
+        ),
+    );
+    let entries = vec![
+        HnswBuildEntry::new(
+            &config,
+            InternalDocId::new(1).unwrap(),
+            DenseVector::parse(vec![1.0, 0.0]).unwrap(),
+        )
+        .unwrap(),
+        HnswBuildEntry::new(
+            &config,
+            InternalDocId::new(2).unwrap(),
+            DenseVector::parse(vec![1.0, 0.0]).unwrap(),
+        )
+        .unwrap(),
+    ];
+    let index = HnswIndex::build(config, entries);
+
+    let hits = index
+        .search(HnswSearchRequest::new(
+            &DenseVector::parse(vec![1.0, 0.0]).unwrap(),
+            TopK::new(1).unwrap(),
+            HnswEfSearch::new(1).unwrap(),
+        ))
+        .unwrap();
+
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].doc_id, InternalDocId::new(1).unwrap());
 }
 
 #[test]
