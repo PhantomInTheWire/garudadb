@@ -1,6 +1,7 @@
 use garuda_types::{
-    DenseVector, DistanceMetric, HnswEfConstruction, HnswEfSearch, HnswGraph, HnswNeighborConfig,
-    HnswPruneWidth, HnswScalingFactor, InternalDocId, Status, StatusCode, TopK, VectorDimension,
+    DenseVector, DistanceMetric, HnswEfConstruction, HnswEfSearch, HnswGraph, HnswM,
+    HnswMinNeighborCount, HnswNeighborConfig, HnswNeighborLimits, HnswPruneWidth,
+    HnswScalingFactor, InternalDocId, Status, StatusCode, TopK, VectorDimension,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -41,6 +42,18 @@ impl HnswIndexConfig {
             metric,
             build,
         }
+    }
+
+    pub fn m(&self) -> HnswM {
+        self.build.neighbors.m()
+    }
+
+    pub fn min_neighbor_count(&self) -> HnswMinNeighborCount {
+        self.build.neighbors.min_neighbor_count()
+    }
+
+    fn neighbor_limits(&self) -> HnswNeighborLimits {
+        HnswNeighborLimits::new(self.m())
     }
 }
 
@@ -118,12 +131,14 @@ impl HnswIndex {
         config: HnswIndexConfig,
         entries: Vec<HnswBuildEntry>,
         graph: HnswGraph,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, Status> {
+        graph.validate(entries.len(), config.neighbor_limits())?;
+
+        Ok(Self {
             config,
             entries,
             graph,
-        }
+        })
     }
 
     pub fn config(&self) -> &HnswIndexConfig {
