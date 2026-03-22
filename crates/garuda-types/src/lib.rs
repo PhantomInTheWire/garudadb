@@ -489,6 +489,36 @@ impl HnswMinNeighborCount {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HnswNeighborConfig {
+    m: HnswM,
+    min_neighbor_count: HnswMinNeighborCount,
+}
+
+impl HnswNeighborConfig {
+    pub fn new(m: HnswM, min_neighbor_count: HnswMinNeighborCount) -> Result<Self, Status> {
+        if min_neighbor_count.get() > m.get() {
+            return Err(Status::err(
+                StatusCode::InvalidArgument,
+                "hnsw min_neighbor_count must not exceed m",
+            ));
+        }
+
+        Ok(Self {
+            m,
+            min_neighbor_count,
+        })
+    }
+
+    pub fn m(self) -> HnswM {
+        self.m
+    }
+
+    pub fn min_neighbor_count(self) -> HnswMinNeighborCount {
+        self.min_neighbor_count
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HnswEfConstruction(NonZeroU32);
 
 impl HnswEfConstruction {
@@ -583,6 +613,12 @@ impl Default for HnswIndexParams {
                 .expect("default hnsw min_neighbor_count should be valid"),
             ef_search: HnswEfSearch::new(64).expect("default hnsw ef_search should be valid"),
         }
+    }
+}
+
+impl HnswIndexParams {
+    pub fn neighbor_config(&self) -> Result<HnswNeighborConfig, Status> {
+        HnswNeighborConfig::new(self.m, self.min_neighbor_count)
     }
 }
 
