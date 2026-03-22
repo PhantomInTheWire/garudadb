@@ -174,11 +174,23 @@ impl HnswIndex {
         &self.graph
     }
 
+    fn entry(&self, node: NodeIndex) -> &HnswBuildEntry {
+        &self.entries[node.get()]
+    }
+
+    fn doc_id(&self, node: NodeIndex) -> InternalDocId {
+        self.entry(node).doc_id()
+    }
+
+    fn vector(&self, node: NodeIndex) -> &DenseVector {
+        self.entry(node).vector()
+    }
+
     fn score_node(&self, query_vector: &DenseVector, node: NodeIndex) -> f32 {
         score_doc(
             self.config.metric,
             query_vector.as_slice(),
-            self.entries[node.get()].vector().as_slice(),
+            self.vector(node).as_slice(),
         )
     }
 }

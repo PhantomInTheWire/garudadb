@@ -69,9 +69,8 @@ impl HnswIndex {
         let mut hits = Vec::with_capacity(candidates.len());
 
         for candidate in candidates {
-            let entry = &self.entries[candidate.index.get()];
             hits.push(HnswHit {
-                doc_id: entry.doc_id(),
+                doc_id: self.doc_id(candidate.index),
                 score: candidate.score,
             });
         }
@@ -93,8 +92,8 @@ impl HnswIndex {
             for &neighbor in self.graph.neighbors(level, entry_point) {
                 let score = self.score_node(query_vector, neighbor);
 
-                let neighbor_doc_id = self.entries[neighbor.get()].doc_id();
-                let entry_point_doc_id = self.entries[entry_point.get()].doc_id();
+                let neighbor_doc_id = self.doc_id(neighbor);
+                let entry_point_doc_id = self.doc_id(entry_point);
 
                 // either have a better score or same score but lower doc_id
                 let is_better_neighbor = score > best_score
