@@ -1,8 +1,8 @@
 use crate::filter::validate_filter;
 use crate::filter_parser::parse_filter;
 use crate::state::CollectionRuntime;
-use garuda_planner::{ExactFlatPlan, QueryPlan, SegmentFilterPlan, build_query_plan};
-use garuda_segment::{ExactSearchRequest, SegmentFilter, exact_search};
+use garuda_planner::{QueryPlan, SegmentFilterPlan, SegmentSearchPlan, build_query_plan};
+use garuda_segment::{ExactSearchRequest, SegmentFilter, SegmentIndexSearch, exact_search};
 use garuda_types::{
     CollectionSchema, DenseVector, Doc, QueryVectorSource, Status, StatusCode, TopK,
     VectorProjection, VectorQuery,
@@ -33,7 +33,7 @@ pub(crate) fn execute_query(
     query: VectorQuery,
 ) -> Result<Vec<Doc>, Status> {
     let filter = parse_query_filter(query.filter.as_deref(), &state.catalog.schema)?;
-    let plan = build_query_plan(query, filter);
+    let plan = build_query_plan(query, filter, &state.catalog.schema.vector.index);
 
     if plan.field_name != state.catalog.schema.vector.name {
         return Err(Status::err(
@@ -65,7 +65,7 @@ fn resolve_query_vector(
     plan: &QueryPlan,
     state: &CollectionRuntime,
 ) -> Result<DenseVector, Status> {
-    match &plan.exact_flat().source {
+    match &plan.source {
         QueryVectorSource::Vector(vector) => {
             if vector.len() != state.catalog.schema.vector.dimension.get() {
                 return Err(Status::err(
@@ -94,7 +94,6 @@ fn collect_matching_docs(
     plan: &QueryPlan,
     query_vector: &DenseVector,
 ) -> Result<Vec<Doc>, Status> {
-    let execution = plan.exact_flat();
     let mut docs = Vec::new();
 
     for segment in state.segments.persisted_segments() {
@@ -105,7 +104,7 @@ fn collect_matching_docs(
         collect_docs_from_segment(
             &mut docs,
             segment,
-            exact_search_request(state, execution, query_vector, segment)?,
+            exact_search_request(state, plan, query_vector, segment)?,
         )?;
     }
 
@@ -116,12 +115,7 @@ fn collect_matching_docs(
     collect_docs_from_segment(
         &mut docs,
         state.segments.writing_segment(),
-        exact_search_request(
-            state,
-            execution,
-            query_vector,
-            state.segments.writing_segment(),
-        )?,
+        exact_search_request(state, plan, query_vector, state.segments.writing_segment())?,
     )?;
 
     Ok(docs)
@@ -150,7 +144,7 @@ fn finalize_docs(mut docs: Vec<Doc>, plan: &QueryPlan) -> Vec<Doc> {
             .total_cmp(&lhs.score.unwrap_or_default())
             .then_with(|| lhs.id.cmp(&rhs.id))
     });
-    docs.truncate(plan.exact_flat().top_k.get());
+    docs.truncate(plan.top_k.get());
 
     for doc in &mut docs {
         apply_query_projection(doc, plan);
@@ -161,15 +155,16 @@ fn finalize_docs(mut docs: Vec<Doc>, plan: &QueryPlan) -> Vec<Doc> {
 
 fn exact_search_request<'a>(
     state: &'a CollectionRuntime,
-    execution: &'a ExactFlatPlan,
+    plan: &'a QueryPlan,
     query_vector: &'a DenseVector,
     segment: &'a garuda_segment::SegmentFile,
 ) -> Result<ExactSearchRequest<'a>, Status> {
     Ok(ExactSearchRequest {
         metric: state.catalog.schema.vector.metric,
         query_vector,
-        top_k: segment_top_k(segment)?,
-        filter: segment_filter(&execution.filter),
+        top_k: segment_top_k(segment, plan)?,
+        index: segment_index_search(plan),
+        filter: segment_filter(&plan.filter),
     })
 }
 
@@ -180,11 +175,21 @@ fn segment_filter(filter: &SegmentFilterPlan) -> SegmentFilter<'_> {
     }
 }
 
-fn segment_top_k(segment: &garuda_segment::SegmentFile) -> Result<TopK, Status> {
-    TopK::new(segment.meta.doc_count).map_err(|_| {
-        Status::err(
-            StatusCode::Internal,
-            "queryable segment must have at least one live document",
-        )
-    })
+fn segment_top_k(segment: &garuda_segment::SegmentFile, plan: &QueryPlan) -> Result<TopK, Status> {
+    match plan.search {
+        SegmentSearchPlan::Flat => TopK::new(segment.meta.doc_count).map_err(|_| {
+            Status::err(
+                StatusCode::Internal,
+                "queryable segment must have at least one live document",
+            )
+        }),
+        SegmentSearchPlan::Hnsw { .. } => Ok(plan.top_k),
+    }
+}
+
+fn segment_index_search(plan: &QueryPlan) -> SegmentIndexSearch {
+    match plan.search {
+        SegmentSearchPlan::Flat => SegmentIndexSearch::Flat,
+        SegmentSearchPlan::Hnsw { ef_search } => SegmentIndexSearch::Hnsw { ef_search },
+    }
 }
