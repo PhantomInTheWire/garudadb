@@ -7,7 +7,8 @@ mod wal;
 
 pub use search::{search_flat, search_hnsw};
 pub use storage::{
-    doc_exists, ensure_segment_files, read_segment, remove_segment, sync_segment, write_segment,
+    doc_exists, ensure_segment_files, read_segment, rebuild_search_resources, remove_segment,
+    write_segment,
 };
 pub use types::{
     FlatSearchRequest, HnswSegmentSearchRequest, RecordState, SegmentFile, SegmentFilter,
