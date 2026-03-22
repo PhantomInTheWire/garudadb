@@ -1,5 +1,5 @@
 use garuda_types::{
-    DenseVector, DistanceMetric, HnswEfConstruction, HnswEfSearch, HnswNeighborConfig,
+    DenseVector, DistanceMetric, HnswEfConstruction, HnswEfSearch, HnswGraph, HnswNeighborConfig,
     HnswPruneWidth, HnswScalingFactor, InternalDocId, Status, StatusCode, TopK, VectorDimension,
 };
 
@@ -102,11 +102,28 @@ pub struct HnswHit {
 pub struct HnswIndex {
     config: HnswIndexConfig,
     entries: Vec<HnswBuildEntry>,
+    graph: HnswGraph,
 }
 
 impl HnswIndex {
     pub fn build(config: HnswIndexConfig, entries: Vec<HnswBuildEntry>) -> Self {
-        Self { config, entries }
+        Self {
+            config,
+            graph: HnswGraph::new(Vec::new()),
+            entries,
+        }
+    }
+
+    pub fn from_parts(
+        config: HnswIndexConfig,
+        entries: Vec<HnswBuildEntry>,
+        graph: HnswGraph,
+    ) -> Self {
+        Self {
+            config,
+            entries,
+            graph,
+        }
     }
 
     pub fn config(&self) -> &HnswIndexConfig {
@@ -115,5 +132,9 @@ impl HnswIndex {
 
     pub fn entries(&self) -> &[HnswBuildEntry] {
         &self.entries
+    }
+
+    pub fn graph(&self) -> &HnswGraph {
+        &self.graph
     }
 }
