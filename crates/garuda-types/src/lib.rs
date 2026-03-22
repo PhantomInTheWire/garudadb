@@ -214,10 +214,13 @@ impl HnswLevel {
 pub const HNSW_LEVEL_ZERO_NEIGHBOR_MULTIPLIER: usize = 2;
 pub const HNSW_MAX_GRAPH_LEVEL: usize = 15;
 
+type NodeNeighbors = Vec<NodeIndex>;
+type HnswLevelAdjacency = Vec<NodeNeighbors>;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HnswGraph {
     node_levels: Vec<HnswLevel>,
-    levels: Vec<Vec<Vec<NodeIndex>>>,
+    levels: Vec<HnswLevelAdjacency>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -560,7 +563,7 @@ impl HnswGraph {
 
     pub fn from_parts(
         node_levels: Vec<HnswLevel>,
-        levels: Vec<Vec<Vec<NodeIndex>>>,
+        levels: Vec<HnswLevelAdjacency>,
         entry_count: usize,
         neighbor_limits: HnswNeighborLimits,
     ) -> Result<Self, Status> {
