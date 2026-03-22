@@ -2,7 +2,9 @@ use crate::filter::validate_filter;
 use crate::filter_parser::parse_filter;
 use crate::state::CollectionRuntime;
 use garuda_planner::{QueryPlan, SegmentFilterPlan, SegmentSearchPlan, build_query_plan};
-use garuda_segment::{ExactSearchRequest, SegmentFilter, SegmentIndexSearch, exact_search};
+use garuda_segment::{
+    FlatSearchRequest, HnswSegmentSearchRequest, SegmentFilter, SegmentSearchRequest, exact_search,
+};
 use garuda_types::{
     CollectionSchema, DenseVector, Doc, QueryVectorSource, Status, StatusCode, TopK,
     VectorProjection, VectorQuery,
@@ -124,7 +126,7 @@ fn collect_matching_docs(
 fn collect_docs_from_segment(
     docs: &mut Vec<Doc>,
     segment: &garuda_segment::SegmentFile,
-    request: ExactSearchRequest<'_>,
+    request: SegmentSearchRequest<'_>,
 ) -> Result<(), Status> {
     let hits = exact_search(segment, request)?;
 
@@ -158,14 +160,25 @@ fn exact_search_request<'a>(
     plan: &'a QueryPlan,
     query_vector: &'a DenseVector,
     segment: &'a garuda_segment::SegmentFile,
-) -> Result<ExactSearchRequest<'a>, Status> {
-    Ok(ExactSearchRequest {
-        metric: state.catalog.schema.vector.metric,
-        query_vector,
-        top_k: segment_top_k(segment, plan)?,
-        index: segment_index_search(plan),
-        filter: segment_filter(&plan.filter),
-    })
+) -> Result<SegmentSearchRequest<'a>, Status> {
+    let filter = segment_filter(&plan.filter);
+
+    match plan.search {
+        SegmentSearchPlan::Flat => Ok(SegmentSearchRequest::Flat(FlatSearchRequest {
+            metric: state.catalog.schema.vector.metric,
+            query_vector,
+            top_k: segment_top_k(segment),
+            filter,
+        })),
+        SegmentSearchPlan::Hnsw { ef_search } => {
+            Ok(SegmentSearchRequest::Hnsw(HnswSegmentSearchRequest {
+                query_vector,
+                top_k: plan.top_k,
+                ef_search,
+                filter,
+            }))
+        }
+    }
 }
 
 fn segment_filter(filter: &SegmentFilterPlan) -> SegmentFilter<'_> {
@@ -175,21 +188,7 @@ fn segment_filter(filter: &SegmentFilterPlan) -> SegmentFilter<'_> {
     }
 }
 
-fn segment_top_k(segment: &garuda_segment::SegmentFile, plan: &QueryPlan) -> Result<TopK, Status> {
-    match plan.search {
-        SegmentSearchPlan::Flat => TopK::new(segment.meta.doc_count).map_err(|_| {
-            Status::err(
-                StatusCode::Internal,
-                "queryable segment must have at least one live document",
-            )
-        }),
-        SegmentSearchPlan::Hnsw { .. } => Ok(plan.top_k),
-    }
-}
-
-fn segment_index_search(plan: &QueryPlan) -> SegmentIndexSearch {
-    match plan.search {
-        SegmentSearchPlan::Flat => SegmentIndexSearch::Flat,
-        SegmentSearchPlan::Hnsw { ef_search } => SegmentIndexSearch::Hnsw { ef_search },
-    }
+fn segment_top_k(segment: &garuda_segment::SegmentFile) -> TopK {
+    TopK::new(segment.meta.doc_count)
+        .expect("queryable segment must have at least one live document")
 }

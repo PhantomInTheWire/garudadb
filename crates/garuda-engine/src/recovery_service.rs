@@ -24,7 +24,7 @@ pub(crate) fn create_collection_state(
     schema: CollectionSchema,
     options: CollectionOptions,
 ) -> CollectionRuntime {
-    let writing_segment = SegmentManager::empty_writing_segment();
+    let writing_segment = SegmentManager::empty_writing_segment(&schema.vector);
     let manifest = Manifest {
         schema,
         options,
