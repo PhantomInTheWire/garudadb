@@ -1,8 +1,8 @@
 use garuda_math::score_doc;
 use garuda_types::{
     DenseVector, DistanceMetric, HNSW_MAX_GRAPH_LEVEL, HnswEfConstruction, HnswEfSearch, HnswGraph,
-    HnswLevel, HnswM, HnswMinNeighborCount, HnswNeighborConfig, HnswPruneWidth, HnswScalingFactor,
-    InternalDocId, NodeIndex, Status, StatusCode, TopK, VectorDimension,
+    HnswLevel, HnswM, HnswMinNeighborCount, HnswNeighborConfig, HnswNeighborLimits, HnswPruneWidth,
+    HnswScalingFactor, InternalDocId, NodeIndex, Status, StatusCode, TopK, VectorDimension,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -45,12 +45,16 @@ impl HnswIndexConfig {
         }
     }
 
-    pub fn m(&self) -> HnswM {
-        self.build.neighbors.m()
+    pub fn max_neighbors(&self) -> HnswM {
+        self.build.neighbors.max_neighbors()
     }
 
     pub fn min_neighbor_count(&self) -> HnswMinNeighborCount {
         self.build.neighbors.min_neighbor_count()
+    }
+
+    fn neighbor_limits(&self) -> HnswNeighborLimits {
+        HnswNeighborLimits::new(self.max_neighbors())
     }
 
     fn max_graph_level(&self) -> usize {
@@ -122,12 +126,17 @@ pub struct HnswIndex {
 impl HnswIndex {
     pub fn build(config: HnswIndexConfig, entries: Vec<HnswBuildEntry>) -> Self {
         let node_levels = sample_node_levels(&config, &entries);
-
-        Self {
+        let mut index = Self {
             config,
             graph: HnswGraph::new(node_levels),
             entries,
+        };
+
+        for raw_index in 1..index.entries.len() {
+            index.connect_new_node(NodeIndex::new(raw_index));
         }
+
+        index
     }
 
     pub fn from_parts(
@@ -185,6 +194,55 @@ impl HnswIndex {
     pub fn graph(&self) -> &HnswGraph {
         &self.graph
     }
+
+    fn connect_new_node(&mut self, node: NodeIndex) {
+        let node_level = self.graph.node_level(node);
+
+        for raw_level in 0..=node_level.get() {
+            let level = HnswLevel::new(raw_level);
+            let neighbors = self.best_previous_neighbors(level, node);
+            self.graph.replace_neighbors(level, node, neighbors);
+        }
+    }
+
+    fn best_previous_neighbors(&self, level: HnswLevel, node: NodeIndex) -> Vec<NodeIndex> {
+        let mut candidates = Vec::with_capacity(node.get());
+
+        for raw_index in 0..node.get() {
+            let candidate = NodeIndex::new(raw_index);
+
+            if self.graph.node_level(candidate) < level {
+                continue;
+            }
+
+            candidates.push(ScoredNode {
+                index: candidate,
+                score: self.score_node(self.entries[node.get()].vector(), candidate),
+            });
+        }
+
+        candidates.sort_by(|left, right| {
+            right.score.total_cmp(&left.score).then_with(|| {
+                self.entries[left.index.get()]
+                    .doc_id()
+                    .cmp(&self.entries[right.index.get()].doc_id())
+            })
+        });
+        candidates.truncate(self.config.neighbor_limits().for_level(level));
+
+        candidates
+            .into_iter()
+            .map(|candidate| candidate.index)
+            .collect()
+    }
+
+    fn score_node(&self, query_vector: &DenseVector, node: NodeIndex) -> f32 {
+        score_doc(
+            self.config.metric,
+            query_vector.as_slice(),
+            self.entries[node.get()].vector().as_slice(),
+        )
+    }
 }
 
 fn sample_node_levels(config: &HnswIndexConfig, entries: &[HnswBuildEntry]) -> Vec<HnswLevel> {
@@ -217,4 +275,10 @@ fn sample_node_level(
     }
 
     HnswLevel::new(level)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ScoredNode {
+    index: NodeIndex,
+    score: f32,
 }

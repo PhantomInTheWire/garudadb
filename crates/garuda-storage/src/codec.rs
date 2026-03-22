@@ -219,7 +219,7 @@ fn write_index_params(writer: &mut BinaryWriter, index: &IndexParams) -> Result<
         }
         IndexParams::Hnsw(params) => {
             writer.write_u8(1);
-            writer.write_u64(params.m.get() as u64);
+            writer.write_u64(params.max_neighbors.get() as u64);
             writer.write_u64(params.scaling_factor.get() as u64);
             writer.write_u64(params.ef_construction.get() as u64);
             writer.write_u64(params.prune_width.get() as u64);
@@ -235,7 +235,7 @@ fn read_index_params(reader: &mut BinaryReader<'_>) -> Result<IndexParams, Statu
     match reader.read_u8()? {
         0 => Ok(IndexParams::Flat(FlatIndexParams)),
         1 => Ok(IndexParams::Hnsw(HnswIndexParams {
-            m: HnswM::from_persisted_u64(reader.read_u64()?)?,
+            max_neighbors: HnswM::from_persisted_u64(reader.read_u64()?)?,
             scaling_factor: HnswScalingFactor::from_persisted_u64(reader.read_u64()?)?,
             ef_construction: HnswEfConstruction::from_persisted_u64(reader.read_u64()?)?,
             prune_width: HnswPruneWidth::from_persisted_u64(reader.read_u64()?)?,

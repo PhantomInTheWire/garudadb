@@ -82,8 +82,13 @@ fn hnsw_index_params_should_roundtrip_through_reopen() {
         .expect("create collection");
 
     let params = HnswIndexParams {
-        m: HnswM::new(32).expect("valid hnsw m"),
+        max_neighbors: HnswM::new(32).expect("valid hnsw max_neighbors"),
+        scaling_factor: garuda_types::HnswScalingFactor::new(50)
+            .expect("valid hnsw scaling_factor"),
         ef_construction: HnswEfConstruction::new(128).expect("valid hnsw ef_construction"),
+        prune_width: garuda_types::HnswPruneWidth::new(16).expect("valid hnsw prune_width"),
+        min_neighbor_count: garuda_types::HnswMinNeighborCount::new(8)
+            .expect("valid hnsw min_neighbor_count"),
         ef_search: HnswEfSearch::new(96).expect("valid hnsw ef_search"),
     };
 
