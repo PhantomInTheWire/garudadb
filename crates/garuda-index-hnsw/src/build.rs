@@ -5,38 +5,55 @@ use garuda_math::score_doc;
 use garuda_types::{InternalDocId, NodeIndex};
 
 impl HnswIndex {
-    pub(crate) fn connect_new_node(&mut self, node: NodeIndex) {
+    pub(crate) fn insert_node(
+        &mut self,
+        node: NodeIndex,
+        mut entry_point: NodeIndex,
+        max_level: HnswLevel,
+    ) {
         let node_level = self.graph.node_level(node);
 
-        for raw_level in 0..=node_level.get() {
-            let level = HnswLevel::new(raw_level);
-            let neighbors = self.best_previous_neighbors(level, node);
+        for level in ((node_level.get() + 1)..=max_level.get()).rev() {
+            entry_point =
+                self.select_entry_point(HnswLevel::new(level), self.vector(node), entry_point);
+        }
 
-            for &neighbor in &neighbors {
-                self.add_reverse_neighbor(level, neighbor, node);
+        let top_level = HnswLevel::new(node_level.get().min(max_level.get()));
+        let mut updates = Vec::with_capacity(top_level.get() + 1);
+
+        for level in (0..=top_level.get()).rev() {
+            let level = HnswLevel::new(level);
+            let candidates = self.search_layer(
+                level,
+                entry_point,
+                self.vector(node),
+                self.config.build_candidate_limit(level),
+            );
+
+            if let Some(best_candidate) = candidates.first() {
+                entry_point = best_candidate.index;
             }
 
-            self.graph.replace_neighbors(level, node, neighbors);
+            let neighbors = self.prune_to_max_neighbors(level, node, candidates);
+            updates.push((level, neighbors));
+        }
+
+        for (level, neighbors) in updates {
+            self.apply_neighbor_update(level, node, neighbors);
         }
     }
 
-    fn best_previous_neighbors(&self, level: HnswLevel, node: NodeIndex) -> Vec<NodeIndex> {
-        let mut candidates = Vec::with_capacity(node.get());
-
-        for raw_index in 0..node.get() {
-            let candidate = NodeIndex::new(raw_index);
-
-            if self.graph.node_level(candidate) < level {
-                continue;
-            }
-
-            candidates.push(ScoredNode {
-                index: candidate,
-                score: self.score_node(self.vector(node), candidate),
-            });
+    fn apply_neighbor_update(
+        &mut self,
+        level: HnswLevel,
+        node: NodeIndex,
+        neighbors: Vec<NodeIndex>,
+    ) {
+        for &neighbor in &neighbors {
+            self.add_reverse_neighbor(level, neighbor, node);
         }
 
-        self.prune_to_max_neighbors(level, node, candidates)
+        self.graph.replace_neighbors(level, node, neighbors);
     }
 
     fn add_reverse_neighbor(&mut self, level: HnswLevel, node: NodeIndex, neighbor: NodeIndex) {
@@ -88,31 +105,32 @@ impl HnswIndex {
         let mut neighbors = Vec::with_capacity(max_neighbors_count);
 
         for candidate in &candidates {
-            if candidate.index == node || neighbors.contains(&candidate.index) {
-                continue;
-            }
+            let can_add_neighbor = candidate.index != node
+                && !neighbors.contains(&candidate.index)
+                && self.is_distinct_neighbor(node, candidate, &neighbors);
 
-            if !self.is_distinct_neighbor(node, candidate, &neighbors) {
-                continue;
-            }
+            if can_add_neighbor {
+                neighbors.push(candidate.index);
 
-            neighbors.push(candidate.index);
-
-            if neighbors.len() >= max_neighbors_count {
-                return neighbors;
+                if neighbors.len() >= max_neighbors_count {
+                    return neighbors;
+                }
             }
         }
 
         if neighbors.len() < min_neighbor_count {
             for candidate in &candidates {
-                if candidate.index == node || neighbors.contains(&candidate.index) {
-                    continue;
-                }
+                let can_backfill_neighbor =
+                    candidate.index != node && !neighbors.contains(&candidate.index);
 
-                neighbors.push(candidate.index);
+                if can_backfill_neighbor {
+                    neighbors.push(candidate.index);
 
-                if neighbors.len() >= min_neighbor_count || neighbors.len() >= max_neighbors_count {
-                    return neighbors;
+                    if neighbors.len() >= min_neighbor_count
+                        || neighbors.len() >= max_neighbors_count
+                    {
+                        return neighbors;
+                    }
                 }
             }
         }

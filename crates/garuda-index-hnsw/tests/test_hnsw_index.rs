@@ -303,3 +303,49 @@ fn build_respects_prune_width_when_selecting_neighbors() {
         &[NodeIndex::new(0)]
     );
 }
+
+#[test]
+fn build_uses_graph_search_to_choose_insertion_neighbors() {
+    let config = HnswIndexConfig::new(
+        VectorDimension::new(2).unwrap(),
+        DistanceMetric::InnerProduct,
+        HnswBuildConfig::new(
+            HnswNeighborConfig::new(
+                HnswM::new(2).unwrap(),
+                HnswMinNeighborCount::new(1).unwrap(),
+            )
+            .unwrap(),
+            HnswScalingFactor::new(2).unwrap(),
+            HnswEfConstruction::new(8).unwrap(),
+            HnswPruneWidth::new(8).unwrap(),
+        ),
+    );
+    let entries = vec![
+        HnswBuildEntry::new(
+            &config,
+            InternalDocId::new(2).unwrap(),
+            DenseVector::parse(vec![1.0, 0.0]).unwrap(),
+        )
+        .unwrap(),
+        HnswBuildEntry::new(
+            &config,
+            InternalDocId::new(1).unwrap(),
+            DenseVector::parse(vec![0.0, 1.0]).unwrap(),
+        )
+        .unwrap(),
+        HnswBuildEntry::new(
+            &config,
+            InternalDocId::new(4).unwrap(),
+            DenseVector::parse(vec![1.0, 0.0]).unwrap(),
+        )
+        .unwrap(),
+    ];
+    let index = HnswIndex::build(config, entries);
+
+    assert_eq!(
+        index
+            .graph()
+            .neighbors(HnswLevel::new(1), NodeIndex::new(2)),
+        &[NodeIndex::new(0)]
+    );
+}
