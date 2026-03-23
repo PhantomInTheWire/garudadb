@@ -4,9 +4,9 @@ use garuda_index_hnsw::{HnswIndex, WritingHnswIndex};
 use garuda_index_scalar::ScalarIndex;
 use garuda_types::{
     CollectionSchema, DenseVector, DistanceMetric, Doc, FieldName, FilterExpr, HnswEfSearch,
-    InternalDocId, ScalarPrefilter, SegmentId, SegmentMeta, Status, StatusCode, TopK,
+    InternalDocId, SegmentId, SegmentMeta, Status, StatusCode, TopK,
 };
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RecordState {
@@ -87,6 +87,12 @@ pub struct HnswSegmentSearchRequest<'a> {
     pub filter: SegmentFilter<'a>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SegmentSearchRequest<'a> {
+    Flat(FlatSearchRequest<'a>),
+    Hnsw(HnswSegmentSearchRequest<'a>),
+}
+
 pub fn segment_file_name(segment_id: SegmentId) -> String {
     segment_id.get().to_string()
 }
@@ -119,8 +125,12 @@ impl WritingSegment {
     pub fn sync_meta(&mut self) {
         sync_segment_meta_fields(&mut self.meta, &self.records);
     }
-    pub fn prefilter_doc_ids(&self, prefilter: &ScalarPrefilter) -> Option<HashSet<InternalDocId>> {
-        prefilter_doc_ids(prefilter, &self.scalar_indexes)
+
+    pub fn seal(self, segment_id: SegmentId, schema: &CollectionSchema) -> PersistedSegment {
+        let mut meta = self.meta;
+        meta.id = segment_id;
+        meta.path = segment_file_name(segment_id);
+        PersistedSegment::new(meta, self.records, schema)
     }
 }
 
@@ -150,10 +160,6 @@ impl PersistedSegment {
         self.hnsw_index = resources.hnsw_index;
         self.scalar_indexes = resources.scalar_indexes;
     }
-
-    pub fn prefilter_doc_ids(&self, prefilter: &ScalarPrefilter) -> Option<HashSet<InternalDocId>> {
-        prefilter_doc_ids(prefilter, &self.scalar_indexes)
-    }
 }
 
 pub(crate) fn sync_segment_meta_fields(meta: &mut SegmentMeta, records: &[StoredRecord]) {
@@ -174,32 +180,4 @@ pub(crate) fn sync_segment_meta_fields(meta: &mut SegmentMeta, records: &[Stored
     meta.min_doc_id = min_doc_id;
     meta.max_doc_id = max_doc_id;
     meta.doc_count = live_doc_count;
-}
-
-fn prefilter_doc_ids(
-    prefilter: &ScalarPrefilter,
-    scalar_indexes: &BTreeMap<FieldName, ScalarIndex>,
-) -> Option<HashSet<InternalDocId>> {
-    let ScalarPrefilter::And(predicates) = prefilter else {
-        return None;
-    };
-
-    let mut doc_ids: Option<HashSet<InternalDocId>> = None;
-
-    for predicate in predicates {
-        let index = scalar_indexes
-            .get(&predicate.field)
-            .expect("planned scalar prefilter should have an index");
-        let matching_doc_ids = index.matching_doc_ids(predicate);
-
-        doc_ids = Some(match doc_ids {
-            None => matching_doc_ids,
-            Some(doc_ids) => doc_ids
-                .into_iter()
-                .filter(|doc_id| matching_doc_ids.contains(doc_id))
-                .collect(),
-        });
-    }
-
-    Some(doc_ids.unwrap_or_default())
 }

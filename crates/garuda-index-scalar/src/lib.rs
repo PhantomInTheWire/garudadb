@@ -1,4 +1,7 @@
-use garuda_types::{InternalDocId, ScalarCompareOp, ScalarPredicate, ScalarType, ScalarValue};
+use garuda_types::{
+    FieldName, InternalDocId, ScalarCompareOp, ScalarPredicate, ScalarPrefilter, ScalarType,
+    ScalarValue,
+};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashSet};
 
@@ -118,6 +121,34 @@ impl ScalarIndex {
             }
         }
     }
+}
+
+pub fn prefilter_doc_ids(
+    prefilter: &ScalarPrefilter,
+    scalar_indexes: &BTreeMap<FieldName, ScalarIndex>,
+) -> Option<HashSet<InternalDocId>> {
+    let ScalarPrefilter::And(predicates) = prefilter else {
+        return None;
+    };
+
+    let mut doc_ids: Option<HashSet<InternalDocId>> = None;
+
+    for predicate in predicates {
+        let index = scalar_indexes
+            .get(&predicate.field)
+            .expect("planned scalar prefilter should have an index");
+        let matching_doc_ids = index.matching_doc_ids(predicate);
+
+        doc_ids = Some(match doc_ids {
+            None => matching_doc_ids,
+            Some(doc_ids) => doc_ids
+                .into_iter()
+                .filter(|doc_id| matching_doc_ids.contains(doc_id))
+                .collect(),
+        });
+    }
+
+    Some(doc_ids.unwrap_or_default())
 }
 
 impl BoolScalarIndex {

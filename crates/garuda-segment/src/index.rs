@@ -1,6 +1,5 @@
 use crate::codec::{decode_flat_index, decode_hnsw_graph, decode_scalar_index};
-use crate::segment_file_name;
-use crate::types::{PersistedSegment, RecordState, StoredRecord, WritingSegment};
+use crate::types::{RecordState, StoredRecord, WritingSegment};
 use garuda_index_flat::{FlatIndex, FlatIndexEntry, WritingFlatIndex};
 use garuda_index_hnsw::{
     HnswBuildConfig, HnswBuildEntry, HnswIndex, HnswIndexConfig, WritingHnswIndex,
@@ -326,15 +325,4 @@ pub(crate) fn persistable_flat_entries_from_writing(
         .as_ref()
         .expect("enabled writing flat state should exist");
     index.entries().to_vec()
-}
-
-pub(crate) fn into_persisted_segment(
-    segment: WritingSegment,
-    segment_id: SegmentId,
-    schema: &CollectionSchema,
-) -> PersistedSegment {
-    let mut meta = segment.meta;
-    meta.id = segment_id;
-    meta.path = segment_file_name(segment_id);
-    PersistedSegment::new(meta, segment.records, schema)
 }
