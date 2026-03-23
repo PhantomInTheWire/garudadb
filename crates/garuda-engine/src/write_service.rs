@@ -1,5 +1,5 @@
 use crate::query::parse_required_filter;
-use crate::state::{CollectionRuntime, WriteMode};
+use crate::state::{CollectionRuntime, WriteMode, merge_docs};
 use garuda_meta::evaluate_filter;
 use garuda_segment::{WalOp, append_wal_ops};
 use garuda_storage::WRITING_SEGMENT_ID;
@@ -198,18 +198,4 @@ fn update_already_applied(state: &CollectionRuntime, doc: &Doc) -> bool {
 
     let merged_doc = merge_docs(&record.doc, doc);
     merged_doc == record.doc
-}
-
-fn merge_docs(existing: &Doc, incoming: &Doc) -> Doc {
-    let mut merged = existing.clone();
-
-    for (key, value) in &incoming.fields {
-        merged.fields.insert(key.clone(), value.clone());
-    }
-
-    if !incoming.vector.is_empty() {
-        merged.vector = incoming.vector.clone();
-    }
-
-    merged
 }

@@ -135,7 +135,7 @@ impl CollectionRuntime {
     }
 }
 
-fn merge_docs(existing: &Doc, incoming: &Doc) -> Doc {
+pub(crate) fn merge_docs(existing: &Doc, incoming: &Doc) -> Doc {
     let mut merged = existing.clone();
 
     for (key, value) in &incoming.fields {
