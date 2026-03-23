@@ -89,8 +89,8 @@ fn or_filter_should_stay_residual() {
         Box::new(FilterExpr::Eq("rank".to_string(), ScalarValue::Int64(2))),
     );
 
-    let plan = build_query_plan(query, Some(filter.clone()), &indexed_schema())
-        .expect("build or plan");
+    let plan =
+        build_query_plan(query, Some(filter.clone()), &indexed_schema()).expect("build or plan");
 
     assert_eq!(plan.filter.scalar_prefilter, ScalarPrefilter::All);
     assert_eq!(plan.filter.residual, SegmentFilterPlan::Matching(filter));
@@ -120,8 +120,8 @@ fn like_contains_and_is_null_stay_residual() {
         )),
     );
 
-    let plan = build_query_plan(query, Some(filter), &indexed_schema())
-        .expect("build residual plan");
+    let plan =
+        build_query_plan(query, Some(filter), &indexed_schema()).expect("build residual plan");
 
     assert_eq!(plan.filter.scalar_prefilter, ScalarPrefilter::All);
     assert_eq!(

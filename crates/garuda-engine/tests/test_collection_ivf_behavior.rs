@@ -4,10 +4,11 @@ use common::{
     collection_name, database, default_options, default_schema, dense_vector, field_name,
     seed_collection, seed_more_collection_docs,
 };
-use garuda_storage::{segment_ivf_index_path, WRITING_SEGMENT_ID};
+use garuda_storage::{WRITING_SEGMENT_ID, segment_ivf_index_path};
 use garuda_types::{IndexKind, IndexParams, IvfIndexParams, VectorIndexState, VectorQuery};
 
-const FIRST_PERSISTED_SEGMENT_ID: garuda_types::SegmentId = garuda_types::SegmentId::new_unchecked(1);
+const FIRST_PERSISTED_SEGMENT_ID: garuda_types::SegmentId =
+    garuda_types::SegmentId::new_unchecked(1);
 
 #[test]
 fn create_index_reopen_and_drop_should_roundtrip_ivf_sidecars() {
@@ -20,7 +21,10 @@ fn create_index_reopen_and_drop_should_roundtrip_ivf_sidecars() {
     collection.flush().expect("flush");
 
     collection
-        .create_index(&field_name("embedding"), IndexParams::Ivf(IvfIndexParams::default()))
+        .create_index(
+            &field_name("embedding"),
+            IndexParams::Ivf(IvfIndexParams::default()),
+        )
         .expect("create ivf");
 
     let collection_root = root.join("docs");
@@ -36,8 +40,13 @@ fn create_index_reopen_and_drop_should_roundtrip_ivf_sidecars() {
         .expect("query before reopen");
     drop(collection);
 
-    let reopened = db.open_collection(&collection_name("docs")).expect("reopen");
-    assert_eq!(reopened.schema().vector.indexes.default_kind(), IndexKind::Ivf);
+    let reopened = db
+        .open_collection(&collection_name("docs"))
+        .expect("reopen");
+    assert_eq!(
+        reopened.schema().vector.indexes.default_kind(),
+        IndexKind::Ivf
+    );
 
     let after = reopened
         .query(VectorQuery::by_vector(
@@ -79,7 +88,10 @@ fn create_flat_index_on_ivf_only_collection_should_preserve_results() {
         .expect("query before create flat");
 
     collection
-        .create_index(&field_name("embedding"), IndexParams::Flat(garuda_types::FlatIndexParams))
+        .create_index(
+            &field_name("embedding"),
+            IndexParams::Flat(garuda_types::FlatIndexParams),
+        )
         .expect("create flat");
 
     assert!(root.join("docs").join("1").exists());

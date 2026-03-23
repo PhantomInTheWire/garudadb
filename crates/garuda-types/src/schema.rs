@@ -1,6 +1,6 @@
 use crate::{
-    CollectionName, DistanceMetric, FieldName, HnswIndexParams, IvfIndexParams, Status,
-    StatusCode, VectorDimension,
+    CollectionName, DistanceMetric, FieldName, HnswIndexParams, IvfIndexParams, Status, StatusCode,
+    VectorDimension,
 };
 use serde::{Deserialize, Serialize};
 

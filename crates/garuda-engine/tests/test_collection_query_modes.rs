@@ -226,6 +226,8 @@ fn mismatched_query_override_should_fail() {
         nprobe: IvfProbeCount::new(1).expect("nprobe"),
     };
 
-    let error = collection.query(query).expect_err("mismatched override should fail");
+    let error = collection
+        .query(query)
+        .expect_err("mismatched override should fail");
     assert_eq!(error.code, garuda_types::StatusCode::InvalidArgument);
 }

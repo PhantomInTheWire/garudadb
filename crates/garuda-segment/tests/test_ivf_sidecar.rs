@@ -5,8 +5,8 @@ use garuda_segment::{
 use garuda_storage::{read_file, segment_ivf_index_path};
 use garuda_types::{
     CollectionName, CollectionSchema, DenseVector, DistanceMetric, Doc, DocId, FieldName,
-    InternalDocId, IvfIndexParams, SegmentId, StatusCode, TopK, VectorDimension,
-    VectorFieldSchema, VectorIndexState,
+    InternalDocId, IvfIndexParams, SegmentId, StatusCode, TopK, VectorDimension, VectorFieldSchema,
+    VectorIndexState,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -51,7 +51,10 @@ fn persisted_ivf_sidecar_roundtrips_search() {
     .expect("search reopened segment");
 
     assert_eq!(hits.len(), 3);
-    assert_eq!(hits[0].record.doc.id, DocId::parse("doc-1").expect("valid doc id"));
+    assert_eq!(
+        hits[0].record.doc.id,
+        DocId::parse("doc-1").expect("valid doc id")
+    );
 }
 
 #[test]
@@ -99,7 +102,10 @@ fn stored_record(internal_doc_id: u64, id: &str, vector: [f32; 4]) -> garuda_seg
         state: garuda_segment::RecordState::Live,
         doc: Doc::new(
             DocId::parse(id).expect("valid doc id"),
-            BTreeMap::from([("pk".to_string(), garuda_types::ScalarValue::String(id.to_string()))]),
+            BTreeMap::from([(
+                "pk".to_string(),
+                garuda_types::ScalarValue::String(id.to_string()),
+            )]),
             DenseVector::parse(vector.to_vec()).expect("valid vector"),
         ),
     }
