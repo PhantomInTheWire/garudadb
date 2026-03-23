@@ -164,15 +164,33 @@ impl IvfIndex {
     }
 
     pub fn insert(&mut self, entry: IvfBuildEntry) {
+        let entry_index = self.entries.len();
         self.entries.push(entry);
-        self.retrain().expect("writing ivf retrain");
-    }
 
-    fn retrain(&mut self) -> Result<(), Status> {
-        let trained = train_lists(&self.config, &self.entries)?;
-        self.centroids = trained.centroids;
-        self.list_entry_indexes = trained.list_entry_indexes;
-        Ok(())
+        if self.centroids.is_empty() {
+            self.centroids.push(self.entries[entry_index].vector.clone());
+            self.list_entry_indexes.push(vec![entry_index]);
+            return;
+        }
+
+        let list_count = self.config.list_count(self.entries.len());
+        if self.centroids.len() < list_count {
+            self.centroids.push(self.entries[entry_index].vector.clone());
+            self.list_entry_indexes.push(vec![entry_index]);
+            return;
+        }
+
+        let list_index = nearest_centroid(
+            self.config.metric,
+            &self.entries[entry_index].vector,
+            &self.centroids,
+        );
+        self.list_entry_indexes[list_index].push(entry_index);
+        self.centroids[list_index] = centroid_for_list(
+            self.config.dimension,
+            &self.entries,
+            &self.list_entry_indexes[list_index],
+        );
     }
 }
 
@@ -276,15 +294,39 @@ fn recompute_centroids(
             continue;
         }
 
-        let scale = counts[list_index] as f32;
-        for value in &mut sums[list_index] {
-            *value /= scale;
-        }
-
-        centroids.push(DenseVector::parse(sums[list_index].clone()).expect("ivf centroid vector"));
+        centroids.push(centroid_from_sums(
+            &mut sums[list_index],
+            counts[list_index],
+        ));
     }
 
     centroids
+}
+
+fn centroid_for_list(
+    dimension: VectorDimension,
+    entries: &[IvfBuildEntry],
+    entry_indexes: &[usize],
+) -> DenseVector {
+    let mut sums = vec![0.0; dimension.get()];
+
+    for &entry_index in entry_indexes {
+        for (sum, value) in sums.iter_mut().zip(entries[entry_index].vector.as_slice()) {
+            *sum += *value;
+        }
+    }
+
+    centroid_from_sums(&mut sums, entry_indexes.len())
+}
+
+fn centroid_from_sums(sums: &mut [f32], count: usize) -> DenseVector {
+    let scale = count as f32;
+
+    for value in sums.iter_mut() {
+        *value /= scale;
+    }
+
+    DenseVector::parse(sums.to_vec()).expect("ivf centroid vector")
 }
 
 fn build_list_entry_indexes(
@@ -494,6 +536,25 @@ mod tests {
 
         assert_eq!(wide[0].doc_id, InternalDocId::new(1).expect("doc_id"));
         assert!(wide.len() >= narrow.len());
+    }
+
+    #[test]
+    fn insert_should_only_update_one_list() {
+        let mut index = IvfIndex::build(config(), vec![entry(1, [1.0, 0.0]), entry(2, [0.0, 1.0])])
+            .expect("build");
+        let before = index.stored_lists();
+
+        index.insert(entry(3, [0.9, 0.1]));
+
+        let after = index.stored_lists();
+        assert_eq!(after.doc_ids_by_list[1], before.doc_ids_by_list[1]);
+        assert_eq!(
+            after.doc_ids_by_list[0],
+            vec![
+                InternalDocId::new(1).expect("doc_id"),
+                InternalDocId::new(3).expect("doc_id"),
+            ]
+        );
     }
 
     #[test]
