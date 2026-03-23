@@ -1,6 +1,7 @@
+use garuda_index_scalar::prefilter_doc_ids;
 use garuda_segment::{
-    FlatSearchRequest, PersistedSegment, SearchScope, SegmentFilter, StoredRecord,
-    read_persisted_segment, search_persisted_flat, segment_meta, write_persisted_segment,
+    FlatSearchRequest, PersistedSegment, SegmentFilter, SegmentSearchRequest, StoredRecord,
+    read_persisted_segment, search_persisted, segment_meta, write_persisted_segment,
 };
 use garuda_storage::{read_file, segment_flat_index_path, segment_scalar_index_path};
 use garuda_types::{
@@ -33,18 +34,16 @@ fn persisted_flat_sidecar_roundtrips_exact_search() {
     let reopened = read_persisted_segment(&root, &segment.meta, &schema)
         .expect("read segment with flat sidecar");
 
-    let hits = search_persisted_flat(
+    let hits = search_persisted(
         &reopened,
-        FlatSearchRequest {
+        SegmentSearchRequest::Flat(FlatSearchRequest {
             metric: DistanceMetric::Cosine,
             query_vector: &DenseVector::parse(vec![1.0, 0.0, 0.0, 0.0]).expect("valid vector"),
             top_k: TopK::new(3).expect("valid top_k"),
             filter: SegmentFilter::All,
-        },
-        SearchScope {
-            allowed_doc_ids: None,
-            delete_store: None,
-        },
+        }),
+        None,
+        &garuda_meta::DeleteStore::new(),
     )
     .expect("search reopened segment");
 
@@ -107,18 +106,16 @@ fn filtered_exact_search_does_not_truncate_matching_hits_before_filtering() {
         "category".to_string(),
         ScalarValue::String("beta".to_string()),
     );
-    let hits = search_persisted_flat(
+    let hits = search_persisted(
         &reopened,
-        FlatSearchRequest {
+        SegmentSearchRequest::Flat(FlatSearchRequest {
             metric: DistanceMetric::Cosine,
             query_vector: &DenseVector::parse(vec![1.0, 0.0, 0.0, 0.0]).expect("valid vector"),
             top_k: TopK::new(1).expect("valid top_k"),
             filter: SegmentFilter::Matching(&filter),
-        },
-        SearchScope {
-            allowed_doc_ids: None,
-            delete_store: None,
-        },
+        }),
+        None,
+        &garuda_meta::DeleteStore::new(),
     )
     .expect("search reopened segment");
 
@@ -145,26 +142,26 @@ fn scalar_prefilter_does_not_drop_farther_allowed_flat_hit() {
     write_persisted_segment(&root, &segment, &schema).expect("write segment");
     let reopened = read_persisted_segment(&root, &segment.meta, &schema).expect("read segment");
 
-    let allowed_doc_ids = reopened
-        .prefilter_doc_ids(&ScalarPrefilter::And(vec![ScalarPredicate {
+    let allowed_doc_ids = prefilter_doc_ids(
+        &ScalarPrefilter::And(vec![ScalarPredicate {
             field: field_name("category"),
             op: ScalarCompareOp::Eq,
             value: ScalarValue::String("alpha".to_string()),
-        }]))
-        .expect("scalar prefilter");
+        }]),
+        &reopened.scalar_indexes,
+    )
+    .expect("scalar prefilter");
 
-    let hits = search_persisted_flat(
+    let hits = search_persisted(
         &reopened,
-        FlatSearchRequest {
+        SegmentSearchRequest::Flat(FlatSearchRequest {
             metric: DistanceMetric::Cosine,
             query_vector: &DenseVector::parse(vec![1.0, 0.0, 0.0, 0.0]).expect("valid vector"),
             top_k: TopK::new(1).expect("valid top_k"),
             filter: SegmentFilter::All,
-        },
-        SearchScope {
-            allowed_doc_ids: Some(&allowed_doc_ids),
-            delete_store: None,
-        },
+        }),
+        Some(&allowed_doc_ids),
+        &garuda_meta::DeleteStore::new(),
     )
     .expect("search reopened segment");
 
@@ -190,13 +187,15 @@ fn persisted_scalar_sidecar_roundtrips() {
     write_persisted_segment(&root, &segment, &schema).expect("write segment");
     let reopened = read_persisted_segment(&root, &segment.meta, &schema).expect("read segment");
 
-    let matching = reopened
-        .prefilter_doc_ids(&ScalarPrefilter::And(vec![ScalarPredicate {
+    let matching = prefilter_doc_ids(
+        &ScalarPrefilter::And(vec![ScalarPredicate {
             field: field_name("category"),
             op: ScalarCompareOp::Eq,
             value: ScalarValue::String("alpha".to_string()),
-        }]))
-        .expect("scalar prefilter");
+        }]),
+        &reopened.scalar_indexes,
+    )
+    .expect("scalar prefilter");
 
     assert_eq!(matching.len(), 1);
     assert!(matching.contains(&InternalDocId::new(1).expect("valid doc id")));

@@ -1,7 +1,7 @@
+use garuda_index_scalar::prefilter_doc_ids;
 use garuda_segment::{
-    HnswSegmentSearchRequest, PersistedSegment, RecordState, SearchScope, SegmentFilter,
-    StoredRecord, read_persisted_segment, search_persisted_hnsw, segment_meta,
-    write_persisted_segment,
+    HnswSegmentSearchRequest, PersistedSegment, RecordState, SegmentFilter, SegmentSearchRequest,
+    StoredRecord, read_persisted_segment, search_persisted, segment_meta, write_persisted_segment,
 };
 use garuda_storage::{read_file, segment_hnsw_index_path};
 use garuda_types::{
@@ -34,18 +34,16 @@ fn persisted_hnsw_sidecar_roundtrips_search() {
     let reopened = read_persisted_segment(&root, &segment.meta, &schema)
         .expect("read segment with hnsw sidecar");
 
-    let hits = search_persisted_hnsw(
+    let hits = search_persisted(
         &reopened,
-        HnswSegmentSearchRequest {
+        SegmentSearchRequest::Hnsw(HnswSegmentSearchRequest {
             query_vector: &DenseVector::parse(vec![1.0, 0.0, 0.0, 0.0]).expect("valid vector"),
             top_k: TopK::new(3).expect("valid top_k"),
             ef_search: HnswIndexParams::default().ef_search,
             filter: SegmentFilter::All,
-        },
-        SearchScope {
-            allowed_doc_ids: None,
-            delete_store: None,
-        },
+        }),
+        None,
+        &garuda_meta::DeleteStore::new(),
     )
     .expect("search reopened segment");
 
@@ -108,18 +106,16 @@ fn filtered_hnsw_search_does_not_truncate_matching_hits_before_filtering() {
         "category".to_string(),
         ScalarValue::String("beta".to_string()),
     );
-    let hits = search_persisted_hnsw(
+    let hits = search_persisted(
         &reopened,
-        HnswSegmentSearchRequest {
+        SegmentSearchRequest::Hnsw(HnswSegmentSearchRequest {
             query_vector: &DenseVector::parse(vec![1.0, 0.0, 0.0, 0.0]).expect("valid vector"),
             top_k: TopK::new(1).expect("valid top_k"),
             ef_search: HnswIndexParams::default().ef_search,
             filter: SegmentFilter::Matching(&filter),
-        },
-        SearchScope {
-            allowed_doc_ids: None,
-            delete_store: None,
-        },
+        }),
+        None,
+        &garuda_meta::DeleteStore::new(),
     )
     .expect("search reopened segment");
 
@@ -170,26 +166,26 @@ fn scalar_prefilter_does_not_drop_farther_allowed_hnsw_hit() {
     );
     write_persisted_segment(&root, &segment, &schema).expect("write segment");
     let reopened = read_persisted_segment(&root, &segment.meta, &schema).expect("read segment");
-    let allowed_doc_ids = reopened
-        .prefilter_doc_ids(&ScalarPrefilter::And(vec![ScalarPredicate {
+    let allowed_doc_ids = prefilter_doc_ids(
+        &ScalarPrefilter::And(vec![ScalarPredicate {
             field: field_name("category"),
             op: ScalarCompareOp::Eq,
             value: ScalarValue::String("alpha".to_string()),
-        }]))
-        .expect("scalar prefilter");
+        }]),
+        &reopened.scalar_indexes,
+    )
+    .expect("scalar prefilter");
 
-    let hits = search_persisted_hnsw(
+    let hits = search_persisted(
         &reopened,
-        HnswSegmentSearchRequest {
+        SegmentSearchRequest::Hnsw(HnswSegmentSearchRequest {
             query_vector: &DenseVector::parse(vec![1.0, 0.0, 0.0, 0.0]).expect("valid vector"),
             top_k: TopK::new(1).expect("valid top_k"),
             ef_search: HnswIndexParams::default().ef_search,
             filter: SegmentFilter::All,
-        },
-        SearchScope {
-            allowed_doc_ids: Some(&allowed_doc_ids),
-            delete_store: None,
-        },
+        }),
+        Some(&allowed_doc_ids),
+        &garuda_meta::DeleteStore::new(),
     )
     .expect("search reopened segment");
 

@@ -8,6 +8,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+garuda-index-scalar = { path = "../garuda-index-scalar" }
 garuda-math = { path = "../garuda-math" }
 garuda-meta = { path = "../garuda-meta" }
 garuda-planner = { path = "../garuda-planner" }

@@ -3,9 +3,8 @@ use crate::codec::{
     encode_scalar_index, encode_segment,
 };
 use crate::index::{
-    flat_index_entries, indexed_scalar_fields, into_persisted_segment,
-    load_persisted_search_resources, persistable_flat_entries_from_writing, should_persist_flat,
-    should_persist_hnsw,
+    flat_index_entries, indexed_scalar_fields, load_persisted_search_resources,
+    persistable_flat_entries_from_writing, should_persist_flat, should_persist_hnsw,
 };
 use crate::types::{PersistedSegment, StoredRecord, WritingSegment, sync_segment_meta_fields};
 use crate::{RecordState, reset_wal, segment_meta};
@@ -147,14 +146,6 @@ pub fn read_persisted_segment(
         hnsw_index: resources.hnsw_index,
         scalar_indexes: resources.scalar_indexes,
     })
-}
-
-pub fn seal_writing_segment(
-    segment: WritingSegment,
-    segment_id: SegmentId,
-    schema: &CollectionSchema,
-) -> PersistedSegment {
-    into_persisted_segment(segment, segment_id, schema)
 }
 
 pub fn remove_segment(root: &std::path::Path, segment_id: SegmentId) -> Result<(), Status> {

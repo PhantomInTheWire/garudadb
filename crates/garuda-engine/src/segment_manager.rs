@@ -1,7 +1,6 @@
 use garuda_meta::MetadataStore;
 use garuda_segment::{
-    PersistedSegment, RecordState, StoredRecord, WritingSegment, seal_writing_segment,
-    segment_file_name, segment_meta,
+    PersistedSegment, RecordState, StoredRecord, WritingSegment, segment_file_name, segment_meta,
 };
 use garuda_storage::WRITING_SEGMENT_ID;
 use garuda_types::{CollectionSchema, Doc, InternalDocId, SegmentId};
@@ -261,7 +260,7 @@ impl SegmentManager {
             Self::empty_writing_segment(schema),
         );
         self.persisted_segments
-            .push(seal_writing_segment(writing, segment_id, schema));
+            .push(writing.seal(segment_id, schema));
     }
 
     fn rotate_writing_segment_if_needed(
@@ -335,7 +334,7 @@ fn seal_segment(
 ) {
     let new_id = *next_segment_id;
     *next_segment_id = next_segment_id.next();
-    let mut segment = seal_writing_segment(current_segment, new_id, schema);
+    let mut segment = current_segment.seal(new_id, schema);
     segment.meta.path = segment_file_name(new_id);
     rebuilt_segments.push(segment);
 }
