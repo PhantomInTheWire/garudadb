@@ -15,8 +15,8 @@ pub(crate) struct CollectionCatalog {
     pub(crate) manifest_version_id: ManifestVersionId,
 }
 
-impl CollectionCatalog {
-    pub(crate) fn from_manifest(manifest: Manifest) -> Self {
+impl From<Manifest> for CollectionCatalog {
+    fn from(manifest: Manifest) -> Self {
         Self {
             schema: manifest.schema,
             options: manifest.options,
@@ -27,7 +27,9 @@ impl CollectionCatalog {
             manifest_version_id: manifest.manifest_version_id,
         }
     }
+}
 
+impl CollectionCatalog {
     pub(crate) fn to_manifest(
         &self,
         writing_segment: &WritingSegment,

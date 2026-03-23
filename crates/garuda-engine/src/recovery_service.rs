@@ -27,21 +27,18 @@ pub(crate) fn create_collection_state(
     options: CollectionOptions,
 ) -> CollectionRuntime {
     let writing_segment = SegmentManager::empty_writing_segment(&schema);
-    let manifest = Manifest {
-        schema,
-        options,
-        next_doc_id: INITIAL_DOC_ID,
-        next_segment_id: INITIAL_SEGMENT_ID,
-        id_map_snapshot_id: SnapshotId::new(INITIAL_SNAPSHOT_ID),
-        delete_snapshot_id: SnapshotId::new(INITIAL_SNAPSHOT_ID),
-        manifest_version_id: ManifestVersionId::new(INITIAL_MANIFEST_VERSION_ID),
-        writing_segment: writing_segment.meta.clone(),
-        persisted_segments: Vec::new(),
-    };
 
     CollectionRuntime {
         path,
-        catalog: CollectionCatalog::from_manifest(manifest),
+        catalog: CollectionCatalog {
+            schema,
+            options,
+            next_doc_id: INITIAL_DOC_ID,
+            next_segment_id: INITIAL_SEGMENT_ID,
+            id_map_snapshot_id: SnapshotId::new(INITIAL_SNAPSHOT_ID),
+            delete_snapshot_id: SnapshotId::new(INITIAL_SNAPSHOT_ID),
+            manifest_version_id: ManifestVersionId::new(INITIAL_MANIFEST_VERSION_ID),
+        },
         segments: SegmentManager::new(Vec::new(), writing_segment),
         meta: MetadataStore::new(),
     }
@@ -57,7 +54,7 @@ pub(crate) fn load_collection_state(path: PathBuf) -> Result<CollectionRuntime, 
 
     let mut state = CollectionRuntime {
         path,
-        catalog: CollectionCatalog::from_manifest(manifest),
+        catalog: CollectionCatalog::from(manifest),
         segments: SegmentManager::new(persisted_segments, writing_segment),
         meta: MetadataStore::from_parts(id_map, delete_store),
     };
