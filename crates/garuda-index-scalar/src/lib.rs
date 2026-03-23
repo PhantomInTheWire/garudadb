@@ -35,7 +35,7 @@ pub struct OrderedScalarIndex<K> {
     postings: BTreeMap<K, Vec<InternalDocId>>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 pub struct FloatKey(f64);
 
 impl ScalarIndex {
@@ -257,6 +257,12 @@ impl FloatKey {
 
     fn get(self) -> f64 {
         self.0
+    }
+}
+
+impl PartialEq for FloatKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.total_cmp(&other.0) == Ordering::Equal
     }
 }
 
