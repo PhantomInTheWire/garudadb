@@ -1,26 +1,47 @@
-use crate::codec::{decode_flat_index, decode_hnsw_graph};
+use crate::codec::{decode_flat_index, decode_hnsw_graph, decode_scalar_index};
 use crate::segment_file_name;
 use crate::types::{PersistedSegment, RecordState, StoredRecord, WritingSegment};
 use garuda_index_flat::{FlatIndex, FlatIndexEntry, WritingFlatIndex};
 use garuda_index_hnsw::{
     HnswBuildConfig, HnswBuildEntry, HnswIndex, HnswIndexConfig, WritingHnswIndex,
 };
-use garuda_storage::{read_file, segment_flat_index_path, segment_hnsw_index_path};
-use garuda_types::{SegmentId, SegmentMeta, Status, StatusCode, VectorFieldSchema};
+use garuda_index_scalar::ScalarIndex;
+use garuda_storage::{
+    read_file, segment_flat_index_path, segment_hnsw_index_path, segment_scalar_index_path,
+};
+use garuda_types::{
+    CollectionSchema, FieldName, HnswIndexParams, ScalarFieldSchema, SegmentId, SegmentMeta,
+    Status, StatusCode,
+};
+use std::collections::BTreeMap;
+
+pub(crate) struct WritingSearchResources {
+    pub flat_index: Option<WritingFlatIndex>,
+    pub hnsw_index: Option<WritingHnswIndex>,
+    pub scalar_indexes: BTreeMap<FieldName, ScalarIndex>,
+}
+
+pub(crate) struct PersistedSearchResources {
+    pub flat_index: Option<FlatIndex>,
+    pub hnsw_index: Option<HnswIndex>,
+    pub scalar_indexes: BTreeMap<FieldName, ScalarIndex>,
+}
 
 pub(crate) fn build_writing_search_resources(
-    vector_field: &VectorFieldSchema,
+    schema: &CollectionSchema,
     records: &[StoredRecord],
-) -> (Option<WritingFlatIndex>, Option<WritingHnswIndex>) {
-    let mut flat_index = if vector_field.indexes.has_flat() {
-        Some(WritingFlatIndex::new(vector_field.dimension))
+) -> WritingSearchResources {
+    let mut flat_index = if schema.vector.indexes.has_flat() {
+        Some(WritingFlatIndex::new(schema.vector.dimension))
     } else {
         None
     };
-    let mut hnsw_index = vector_field
+    let mut hnsw_index = schema
+        .vector
         .indexes
         .hnsw_params()
-        .map(|params| WritingHnswIndex::new(hnsw_index_config(vector_field, params)));
+        .map(|params| WritingHnswIndex::new(hnsw_index_config(schema, params)));
+    let mut scalar_indexes = build_scalar_indexes(&schema.fields);
 
     for record in records {
         if matches!(record.state, RecordState::Deleted) {
@@ -34,40 +55,50 @@ pub(crate) fn build_writing_search_resources(
         if let Some(index) = &mut hnsw_index {
             index.insert(record.doc_id, record.doc.vector.clone());
         }
+
+        index_scalar_fields(&mut scalar_indexes, &schema.fields, record);
     }
 
-    (flat_index, hnsw_index)
+    WritingSearchResources {
+        flat_index,
+        hnsw_index,
+        scalar_indexes,
+    }
 }
 
 pub(crate) fn build_persisted_search_resources(
-    vector_field: &VectorFieldSchema,
+    schema: &CollectionSchema,
     meta: &SegmentMeta,
     records: &[StoredRecord],
-) -> (Option<FlatIndex>, Option<HnswIndex>) {
-    let flat_index = build_flat_index(vector_field, meta, records);
-    let hnsw_index = build_hnsw_index(vector_field, meta, records);
-    (flat_index, hnsw_index)
+) -> PersistedSearchResources {
+    PersistedSearchResources {
+        flat_index: build_flat_index(schema, meta, records),
+        hnsw_index: build_hnsw_index(schema, meta, records),
+        scalar_indexes: build_persisted_scalar_indexes(&schema.fields, records),
+    }
 }
 
 pub(crate) fn load_persisted_search_resources(
     root: &std::path::Path,
     segment_id: SegmentId,
+    schema: &CollectionSchema,
     meta: &SegmentMeta,
     records: &[StoredRecord],
-    vector_field: &VectorFieldSchema,
-) -> Result<(Option<FlatIndex>, Option<HnswIndex>), Status> {
-    let flat_index = load_flat_index(root, segment_id, meta, vector_field)?;
-    let hnsw_index = load_hnsw_index(root, segment_id, meta, records, vector_field)?;
-    Ok((flat_index, hnsw_index))
+) -> Result<PersistedSearchResources, Status> {
+    Ok(PersistedSearchResources {
+        flat_index: load_flat_index(root, segment_id, meta, schema)?,
+        hnsw_index: load_hnsw_index(root, segment_id, meta, records, schema)?,
+        scalar_indexes: load_scalar_indexes(root, segment_id, &schema.fields, meta.doc_count)?,
+    })
 }
 
 pub(crate) fn hnsw_index_config(
-    vector_field: &VectorFieldSchema,
-    params: &garuda_types::HnswIndexParams,
+    schema: &CollectionSchema,
+    params: &HnswIndexParams,
 ) -> HnswIndexConfig {
     HnswIndexConfig::new(
-        vector_field.dimension,
-        vector_field.metric,
+        schema.vector.dimension,
+        schema.vector.metric,
         HnswBuildConfig::new(
             params.neighbor_config().expect("validated hnsw params"),
             params.scaling_factor,
@@ -78,28 +109,28 @@ pub(crate) fn hnsw_index_config(
 }
 
 fn build_flat_index(
-    vector_field: &VectorFieldSchema,
+    schema: &CollectionSchema,
     meta: &SegmentMeta,
     records: &[StoredRecord],
 ) -> Option<FlatIndex> {
-    if !vector_field.indexes.has_flat() {
+    if !schema.vector.indexes.has_flat() {
         return None;
     }
 
     let entries = flat_index_entries(records, meta.doc_count);
-    let index = FlatIndex::build(vector_field.dimension, entries)
+    let index = FlatIndex::build(schema.vector.dimension, entries)
         .expect("validated segment records should match the vector field dimension");
     Some(index)
 }
 
 fn build_hnsw_index(
-    vector_field: &VectorFieldSchema,
+    schema: &CollectionSchema,
     meta: &SegmentMeta,
     records: &[StoredRecord],
 ) -> Option<HnswIndex> {
-    let params = vector_field.indexes.hnsw_params()?;
+    let params = schema.vector.indexes.hnsw_params()?;
 
-    let config = hnsw_index_config(vector_field, params);
+    let config = hnsw_index_config(schema, params);
     let entries = hnsw_build_entries(&config, records, meta.doc_count);
     Some(HnswIndex::build(config, entries))
 }
@@ -108,14 +139,14 @@ fn load_flat_index(
     root: &std::path::Path,
     segment_id: SegmentId,
     meta: &SegmentMeta,
-    vector_field: &VectorFieldSchema,
+    schema: &CollectionSchema,
 ) -> Result<Option<FlatIndex>, Status> {
-    if !vector_field.indexes.has_flat() {
+    if !schema.vector.indexes.has_flat() {
         return Ok(None);
     }
 
     let bytes = read_file(&segment_flat_index_path(root, segment_id))?;
-    let flat_index = decode_flat_index(&bytes, vector_field)?;
+    let flat_index = decode_flat_index(&bytes, &schema.vector)?;
 
     if flat_index.len() != meta.doc_count {
         return Err(Status::err(
@@ -132,15 +163,15 @@ fn load_hnsw_index(
     segment_id: SegmentId,
     meta: &SegmentMeta,
     records: &[StoredRecord],
-    vector_field: &VectorFieldSchema,
+    schema: &CollectionSchema,
 ) -> Result<Option<HnswIndex>, Status> {
-    let Some(params) = vector_field.indexes.hnsw_params() else {
+    let Some(params) = schema.vector.indexes.hnsw_params() else {
         return Ok(None);
     };
 
     let bytes = read_file(&segment_hnsw_index_path(root, segment_id))?;
-    let graph = decode_hnsw_graph(&bytes, vector_field, meta.doc_count)?;
-    let config = hnsw_index_config(vector_field, params);
+    let graph = decode_hnsw_graph(&bytes, &schema.vector, meta.doc_count)?;
+    let config = hnsw_index_config(schema, params);
     let entries = hnsw_build_entries(&config, records, meta.doc_count);
 
     if graph.node_count() != entries.len() {
@@ -151,6 +182,85 @@ fn load_hnsw_index(
     }
 
     Ok(Some(HnswIndex::from_parts(config, entries, graph)))
+}
+
+fn build_scalar_indexes(fields: &[ScalarFieldSchema]) -> BTreeMap<FieldName, ScalarIndex> {
+    let mut indexes = BTreeMap::new();
+
+    for field in fields {
+        if !field.is_indexed() {
+            continue;
+        }
+
+        indexes.insert(field.name.clone(), ScalarIndex::new(field.field_type));
+    }
+
+    indexes
+}
+
+fn build_persisted_scalar_indexes(
+    fields: &[ScalarFieldSchema],
+    records: &[StoredRecord],
+) -> BTreeMap<FieldName, ScalarIndex> {
+    let mut indexes = build_scalar_indexes(fields);
+
+    for record in records {
+        if matches!(record.state, RecordState::Deleted) {
+            continue;
+        }
+
+        index_scalar_fields(&mut indexes, fields, record);
+    }
+
+    indexes
+}
+
+fn load_scalar_indexes(
+    root: &std::path::Path,
+    segment_id: SegmentId,
+    fields: &[ScalarFieldSchema],
+    live_doc_count: usize,
+) -> Result<BTreeMap<FieldName, ScalarIndex>, Status> {
+    let mut indexes = BTreeMap::new();
+
+    for field in fields {
+        if !field.is_indexed() {
+            continue;
+        }
+
+        if live_doc_count == 0 {
+            indexes.insert(field.name.clone(), ScalarIndex::new(field.field_type));
+            continue;
+        }
+
+        let bytes = read_file(&segment_scalar_index_path(root, segment_id, &field.name))?;
+        let index = decode_scalar_index(&bytes, field, live_doc_count)?;
+        indexes.insert(field.name.clone(), index);
+    }
+
+    Ok(indexes)
+}
+
+fn index_scalar_fields(
+    indexes: &mut BTreeMap<FieldName, ScalarIndex>,
+    fields: &[ScalarFieldSchema],
+    record: &StoredRecord,
+) {
+    for field in fields {
+        if !field.is_indexed() {
+            continue;
+        }
+
+        let value = record
+            .doc
+            .fields
+            .get(field.name.as_str())
+            .expect("validated scalar field should exist");
+        let index = indexes
+            .get_mut(&field.name)
+            .expect("enabled scalar index should exist");
+        index.insert(record.doc_id, value);
+    }
 }
 
 pub(crate) fn flat_index_entries(
@@ -194,12 +304,18 @@ pub(crate) fn hnsw_build_entries(
     entries
 }
 
-pub(crate) fn should_persist_flat(vector_field: &VectorFieldSchema, live_doc_count: usize) -> bool {
-    vector_field.indexes.has_flat() && live_doc_count != 0
+pub(crate) fn should_persist_flat(schema: &CollectionSchema, live_doc_count: usize) -> bool {
+    schema.vector.indexes.has_flat() && live_doc_count != 0
 }
 
-pub(crate) fn should_persist_hnsw(vector_field: &VectorFieldSchema, live_doc_count: usize) -> bool {
-    vector_field.indexes.has_hnsw() && live_doc_count != 0
+pub(crate) fn should_persist_hnsw(schema: &CollectionSchema, live_doc_count: usize) -> bool {
+    schema.vector.indexes.has_hnsw() && live_doc_count != 0
+}
+
+pub(crate) fn indexed_scalar_fields(
+    schema: &CollectionSchema,
+) -> impl Iterator<Item = &ScalarFieldSchema> {
+    schema.fields.iter().filter(|field| field.is_indexed())
 }
 
 pub(crate) fn persistable_flat_entries_from_writing(
@@ -215,10 +331,10 @@ pub(crate) fn persistable_flat_entries_from_writing(
 pub(crate) fn into_persisted_segment(
     segment: WritingSegment,
     segment_id: SegmentId,
-    vector_field: &VectorFieldSchema,
+    schema: &CollectionSchema,
 ) -> PersistedSegment {
     let mut meta = segment.meta;
     meta.id = segment_id;
     meta.path = segment_file_name(segment_id);
-    PersistedSegment::new(meta, segment.records, vector_field)
+    PersistedSegment::new(meta, segment.records, schema)
 }

@@ -1,15 +1,17 @@
 use crate::doc_codec::{read_doc, write_doc};
 use crate::{RecordState, StoredRecord};
 use garuda_index_flat::{FlatIndex, FlatIndexEntry};
+use garuda_index_scalar::{ScalarIndex, ScalarIndexData};
 use garuda_storage::{BinaryReader, BinaryWriter, read_segment_meta, write_segment_meta};
 use garuda_types::{
-    DenseVector, DistanceMetric, InternalDocId, SegmentMeta, Status, StatusCode, VectorDimension,
-    VectorFieldSchema,
+    DenseVector, DistanceMetric, InternalDocId, NodeIndex, ScalarFieldSchema, SegmentMeta, Status,
+    StatusCode, VectorDimension, VectorFieldSchema,
 };
 use garuda_types::{HnswGraph, HnswLevel, HnswNeighborLimits};
 const SEGMENT_MAGIC: &[u8; 8] = b"GRDSEG01";
 const FLAT_INDEX_MAGIC: &[u8; 8] = b"GRDFLT01";
 const HNSW_INDEX_MAGIC: &[u8; 8] = b"GRDHNS01";
+const SCALAR_INDEX_MAGIC: &[u8; 8] = b"GRDSCL01";
 const FORMAT_VERSION: u16 = 1;
 pub fn encode_segment(meta: &SegmentMeta, records: &[StoredRecord]) -> Result<Vec<u8>, Status> {
     let mut writer = BinaryWriter::new(SEGMENT_MAGIC);
@@ -143,7 +145,7 @@ pub fn encode_hnsw_graph(graph: &HnswGraph) -> Result<Vec<u8>, Status> {
         let level = HnswLevel::new(raw_level);
 
         for raw_node in 0..graph.node_count() {
-            let node = garuda_types::NodeIndex::new(raw_node);
+            let node = NodeIndex::new(raw_node);
             let neighbors = graph.neighbors(level, node);
             writer.write_len(neighbors.len())?;
 
@@ -189,7 +191,7 @@ pub fn decode_hnsw_graph(
             let mut neighbors = Vec::with_capacity(neighbor_count);
 
             for _ in 0..neighbor_count {
-                neighbors.push(garuda_types::NodeIndex::new(reader.read_len()?));
+                neighbors.push(NodeIndex::new(reader.read_len()?));
             }
 
             nodes.push(neighbors);
@@ -211,4 +213,161 @@ pub fn decode_hnsw_graph(
         entry_count,
         HnswNeighborLimits::new(params.max_neighbors),
     )
+}
+
+pub fn encode_scalar_index(index: &ScalarIndex, entry_count: usize) -> Result<Vec<u8>, Status> {
+    let mut writer = BinaryWriter::new(SCALAR_INDEX_MAGIC);
+    writer.write_u16(FORMAT_VERSION);
+    writer.write_len(entry_count)?;
+
+    match index.data() {
+        ScalarIndexData::Bool {
+            false_doc_ids,
+            true_doc_ids,
+        } => {
+            writer.write_u8(0);
+            writer.write_len(false_doc_ids.len())?;
+            for doc_id in false_doc_ids {
+                writer.write_u64(doc_id.get());
+            }
+
+            writer.write_len(true_doc_ids.len())?;
+            for doc_id in true_doc_ids {
+                writer.write_u64(doc_id.get());
+            }
+        }
+        ScalarIndexData::Int64(postings) => {
+            writer.write_u8(1);
+            writer.write_len(postings.len())?;
+
+            for (value, doc_ids) in postings {
+                writer.write_i64(value);
+                write_posting_list(&mut writer, &doc_ids)?;
+            }
+        }
+        ScalarIndexData::Float64(postings) => {
+            writer.write_u8(2);
+            writer.write_len(postings.len())?;
+
+            for (value, doc_ids) in postings {
+                writer.write_f64(value);
+                write_posting_list(&mut writer, &doc_ids)?;
+            }
+        }
+        ScalarIndexData::String(postings) => {
+            writer.write_u8(3);
+            writer.write_len(postings.len())?;
+
+            for (value, doc_ids) in postings {
+                writer.write_string(&value)?;
+                write_posting_list(&mut writer, &doc_ids)?;
+            }
+        }
+    }
+
+    Ok(writer.finish())
+}
+
+pub fn decode_scalar_index(
+    bytes: &[u8],
+    field: &ScalarFieldSchema,
+    entry_count: usize,
+) -> Result<ScalarIndex, Status> {
+    let mut reader = BinaryReader::new(bytes, SCALAR_INDEX_MAGIC, "segment")?;
+    reader.expect_u16(FORMAT_VERSION)?;
+
+    if reader.read_len()? != entry_count {
+        return Err(Status::err(
+            StatusCode::Internal,
+            "persisted scalar index does not match segment live doc count",
+        ));
+    }
+
+    let index = match reader.read_u8()? {
+        0 => ScalarIndex::from_data(ScalarIndexData::Bool {
+            false_doc_ids: read_posting_list(&mut reader)?,
+            true_doc_ids: read_posting_list(&mut reader)?,
+        }),
+        1 => ScalarIndex::from_data(ScalarIndexData::Int64(read_i64_postings(&mut reader)?)),
+        2 => ScalarIndex::from_data(ScalarIndexData::Float64(read_f64_postings(&mut reader)?)),
+        3 => ScalarIndex::from_data(ScalarIndexData::String(read_string_postings(&mut reader)?)),
+        _ => {
+            return Err(Status::err(
+                StatusCode::Internal,
+                "unrecognized scalar index tag",
+            ));
+        }
+    };
+
+    reader.finish()?;
+
+    let expected = ScalarIndex::new(field.field_type);
+    if std::mem::discriminant(&index) == std::mem::discriminant(&expected) {
+        return Ok(index);
+    }
+
+    Err(Status::err(
+        StatusCode::Internal,
+        "persisted scalar index type does not match schema",
+    ))
+}
+
+fn write_posting_list(writer: &mut BinaryWriter, doc_ids: &[InternalDocId]) -> Result<(), Status> {
+    writer.write_len(doc_ids.len())?;
+
+    for doc_id in doc_ids {
+        writer.write_u64(doc_id.get());
+    }
+
+    Ok(())
+}
+
+fn read_posting_list(reader: &mut BinaryReader<'_>) -> Result<Vec<InternalDocId>, Status> {
+    let posting_count = reader.read_len()?;
+    let mut doc_ids = Vec::with_capacity(posting_count);
+
+    for _ in 0..posting_count {
+        doc_ids.push(InternalDocId::new(reader.read_u64()?)?);
+    }
+
+    Ok(doc_ids)
+}
+
+fn read_i64_postings(
+    reader: &mut BinaryReader<'_>,
+) -> Result<Vec<(i64, Vec<InternalDocId>)>, Status> {
+    let posting_count = reader.read_len()?;
+    let mut postings = Vec::with_capacity(posting_count);
+
+    for _ in 0..posting_count {
+        postings.push((reader.read_i64()?, read_posting_list(reader)?));
+    }
+
+    Ok(postings)
+}
+
+fn read_f64_postings(
+    reader: &mut BinaryReader<'_>,
+) -> Result<Vec<(f64, Vec<InternalDocId>)>, Status> {
+    let posting_count = reader.read_len()?;
+    let mut postings = Vec::with_capacity(posting_count);
+
+    for _ in 0..posting_count {
+        postings.push((reader.read_f64()?, read_posting_list(reader)?));
+    }
+
+    Ok(postings)
+}
+
+fn read_string_postings(
+    reader: &mut BinaryReader<'_>,
+) -> Result<Vec<(String, Vec<InternalDocId>)>, Status> {
+    let posting_count = reader.read_len()?;
+    let mut postings = Vec::with_capacity(posting_count);
+
+    for _ in 0..posting_count {
+        postings.push((reader.read_string()?, read_posting_list(reader)?));
+    }
+
+    Ok(postings)
 }

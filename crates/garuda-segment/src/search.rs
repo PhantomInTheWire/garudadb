@@ -9,37 +9,47 @@ use garuda_types::{HnswEfSearch, InternalDocId, Status, TopK};
 use std::collections::HashMap;
 
 #[derive(Clone, Copy)]
-pub enum SearchVisibility<'a> {
-    All,
-    HideDeleted(&'a DeleteStore),
+pub struct SearchScope<'a> {
+    pub allowed_doc_ids: Option<&'a std::collections::HashSet<InternalDocId>>,
+    pub delete_store: Option<&'a DeleteStore>,
 }
 
-impl SearchVisibility<'_> {
-    fn is_visible(self, doc_id: InternalDocId) -> bool {
-        match self {
-            Self::All => true,
-            Self::HideDeleted(delete_store) => !delete_store.contains(doc_id),
+impl SearchScope<'_> {
+    fn contains(self, doc_id: InternalDocId) -> bool {
+        if let Some(doc_ids) = self.allowed_doc_ids {
+            if !doc_ids.contains(&doc_id) {
+                return false;
+            }
         }
+
+        if let Some(delete_store) = self.delete_store {
+            if delete_store.contains(doc_id) {
+                return false;
+            }
+        }
+
+        true
     }
 }
 
 pub fn search_writing_flat(
     segment: &WritingSegment,
     request: FlatSearchRequest<'_>,
+    scope: SearchScope<'_>,
 ) -> Result<Vec<SegmentSearchHit>, Status> {
     let index = segment
         .flat_index
         .as_ref()
         .expect("writing flat segment state");
-    let record_indexes = live_record_indexes(&segment.records, SearchVisibility::All);
+    let record_indexes = live_record_indexes(&segment.records, scope);
     let hits = index.search(
         request.metric,
         request.query_vector,
         search_candidate_top_k(
             request.top_k,
             request.filter,
-            segment.records.len(),
-            record_indexes.len(),
+            &segment.records,
+            &record_indexes,
         ),
     )?;
     Ok(collect_search_hits(
@@ -53,19 +63,20 @@ pub fn search_writing_flat(
 pub fn search_writing_hnsw(
     segment: &WritingSegment,
     request: HnswSegmentSearchRequest<'_>,
+    scope: SearchScope<'_>,
 ) -> Result<Vec<SegmentSearchHit>, Status> {
     let index = segment
         .hnsw_index
         .as_ref()
         .expect("writing hnsw segment state");
-    let record_indexes = live_record_indexes(&segment.records, SearchVisibility::All);
+    let record_indexes = live_record_indexes(&segment.records, scope);
     let hits = index.search(
         request.query_vector,
         search_candidate_top_k(
             request.top_k,
             request.filter,
-            segment.records.len(),
-            record_indexes.len(),
+            &segment.records,
+            &record_indexes,
         ),
         request.ef_search,
     )?;
@@ -80,21 +91,21 @@ pub fn search_writing_hnsw(
 pub fn search_persisted_flat(
     segment: &PersistedSegment,
     request: FlatSearchRequest<'_>,
-    visibility: SearchVisibility<'_>,
+    scope: SearchScope<'_>,
 ) -> Result<Vec<SegmentSearchHit>, Status> {
     let index = segment
         .flat_index
         .as_ref()
         .expect("persisted flat segment state");
-    let record_indexes = live_record_indexes(&segment.records, visibility);
+    let record_indexes = live_record_indexes(&segment.records, scope);
     let hits = index.search(
         request.metric,
         request.query_vector,
         search_candidate_top_k(
             request.top_k,
             request.filter,
-            segment.records.len(),
-            record_indexes.len(),
+            &segment.records,
+            &record_indexes,
         ),
     )?;
     Ok(collect_search_hits(
@@ -108,18 +119,18 @@ pub fn search_persisted_flat(
 pub fn search_persisted_hnsw(
     segment: &PersistedSegment,
     request: HnswSegmentSearchRequest<'_>,
-    visibility: SearchVisibility<'_>,
+    scope: SearchScope<'_>,
 ) -> Result<Vec<SegmentSearchHit>, Status> {
     let index = segment
         .hnsw_index
         .as_ref()
         .expect("persisted hnsw segment state");
-    let record_indexes = live_record_indexes(&segment.records, visibility);
+    let record_indexes = live_record_indexes(&segment.records, scope);
     let candidate_top_k = search_candidate_top_k(
         request.top_k,
         request.filter,
-        segment.records.len(),
-        record_indexes.len(),
+        &segment.records,
+        &record_indexes,
     );
     let hits = index.search(garuda_index_hnsw::HnswSearchRequest::new(
         request.query_vector,
@@ -136,12 +147,12 @@ pub fn search_persisted_hnsw(
 
 fn live_record_indexes(
     records: &[StoredRecord],
-    visibility: SearchVisibility<'_>,
+    scope: SearchScope<'_>,
 ) -> HashMap<InternalDocId, usize> {
     let mut record_indexes = HashMap::new();
 
     for (record_index, record) in records.iter().enumerate() {
-        if matches!(record.state, RecordState::Deleted) || !visibility.is_visible(record.doc_id) {
+        if matches!(record.state, RecordState::Deleted) || !scope.contains(record.doc_id) {
             continue;
         }
 
@@ -181,14 +192,14 @@ fn collect_search_hits(
 fn search_candidate_top_k(
     top_k: TopK,
     filter: SegmentFilter<'_>,
-    indexed_doc_count: usize,
-    visible_doc_count: usize,
+    records: &[StoredRecord],
+    record_indexes: &HashMap<InternalDocId, usize>,
 ) -> TopK {
-    if matches!(filter, SegmentFilter::All) && visible_doc_count == indexed_doc_count {
+    if matches!(filter, SegmentFilter::All) && record_indexes.len() == records.len() {
         return top_k;
     }
 
-    TopK::new(indexed_doc_count.max(top_k.get())).expect("indexed docs or requested top_k")
+    TopK::new(records.len().max(top_k.get())).expect("indexed docs or requested top_k")
 }
 
 fn search_candidate_ef_search(ef_search: HnswEfSearch, candidate_top_k: TopK) -> HnswEfSearch {

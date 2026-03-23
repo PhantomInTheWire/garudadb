@@ -6,8 +6,8 @@ use garuda_types::{
     AccessMode, CollectionName, CollectionOptions, CollectionSchema, DistanceMetric, DocId,
     FieldName, HnswEfConstruction, HnswEfSearch, HnswIndexParams, HnswM, HnswMinNeighborCount,
     HnswPruneWidth, HnswScalingFactor, IndexKind, InternalDocId, Manifest, ManifestVersionId,
-    Nullability, ScalarFieldSchema, ScalarType, ScalarValue, SegmentId, SnapshotId, Status,
-    StatusCode, StorageAccess, VectorDimension, VectorIndexState,
+    Nullability, ScalarFieldSchema, ScalarIndexState, ScalarType, ScalarValue, SegmentId,
+    SnapshotId, Status, StatusCode, StorageAccess, VectorDimension, VectorIndexState,
 };
 
 const MANIFEST_MAGIC: &[u8; 8] = b"GRDMAN01";
@@ -197,6 +197,7 @@ fn write_scalar_field_schema(
 ) -> Result<(), Status> {
     writer.write_string(field.name.as_str())?;
     writer.write_u8(field.field_type.to_tag());
+    writer.write_u8(write_scalar_index_state(field.index));
     writer.write_u8(field.nullability.to_tag());
     write_optional_scalar_value(writer, field.default_value.as_ref())?;
     Ok(())
@@ -205,12 +206,14 @@ fn write_scalar_field_schema(
 fn read_scalar_field_schema(reader: &mut BinaryReader<'_>) -> Result<ScalarFieldSchema, Status> {
     let name = FieldName::parse(reader.read_string()?)?;
     let field_type = ScalarType::from_tag(reader.read_u8()?)?;
+    let index = read_scalar_index_state(reader.read_u8()?)?;
     let nullability = Nullability::from_tag(reader.read_u8()?)?;
     let default_value = read_optional_scalar_value(reader)?;
 
     Ok(ScalarFieldSchema {
         name,
         field_type,
+        index,
         nullability,
         default_value,
     })
@@ -277,6 +280,7 @@ fn write_index_kind(kind: IndexKind) -> u8 {
     match kind {
         IndexKind::Flat => 0,
         IndexKind::Hnsw => 1,
+        IndexKind::Scalar => 2,
     }
 }
 
@@ -284,9 +288,28 @@ fn read_index_kind(tag: u8) -> Result<IndexKind, Status> {
     match tag {
         0 => Ok(IndexKind::Flat),
         1 => Ok(IndexKind::Hnsw),
+        2 => Ok(IndexKind::Scalar),
         _ => Err(Status::err(
             StatusCode::Internal,
-            "unrecognized vector index kind tag",
+            "unrecognized index kind tag",
+        )),
+    }
+}
+
+fn write_scalar_index_state(state: ScalarIndexState) -> u8 {
+    match state {
+        ScalarIndexState::None => 0,
+        ScalarIndexState::Indexed => 1,
+    }
+}
+
+fn read_scalar_index_state(tag: u8) -> Result<ScalarIndexState, Status> {
+    match tag {
+        0 => Ok(ScalarIndexState::None),
+        1 => Ok(ScalarIndexState::Indexed),
+        _ => Err(Status::err(
+            StatusCode::Internal,
+            "unrecognized scalar index state tag",
         )),
     }
 }
