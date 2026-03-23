@@ -1,7 +1,7 @@
 use crate::index::{build_persisted_search_resources, build_writing_search_resources};
 use garuda_index_flat::{FlatIndex, WritingFlatIndex};
 use garuda_index_hnsw::{HnswIndex, WritingHnswIndex};
-use garuda_index_ivf::{IvfIndex, WritingIvfIndex};
+use garuda_index_ivf::IvfIndex;
 use garuda_index_scalar::ScalarIndex;
 use garuda_types::{
     CollectionSchema, DenseVector, DistanceMetric, Doc, FieldName, FilterExpr, HnswEfSearch,
@@ -48,7 +48,7 @@ pub struct WritingSegment {
     pub records: Vec<StoredRecord>,
     pub flat_index: Option<WritingFlatIndex>,
     pub hnsw_index: Option<WritingHnswIndex>,
-    pub ivf_index: Option<WritingIvfIndex>,
+    pub ivf_index: Option<IvfIndex>,
     pub scalar_indexes: BTreeMap<FieldName, ScalarIndex>,
 }
 

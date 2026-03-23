@@ -2,6 +2,7 @@ use garuda_meta::MetadataStore;
 use garuda_segment::{
     PersistedSegment, RecordState, StoredRecord, WritingSegment, segment_file_name, segment_meta,
 };
+use garuda_index_ivf::IvfBuildEntry;
 use garuda_storage::WRITING_SEGMENT_ID;
 use garuda_types::{CollectionSchema, Doc, InternalDocId, SegmentId};
 
@@ -142,8 +143,13 @@ impl SegmentManager {
 
         if let Some(index) = &mut self.writing_segment.hnsw_index {
             index.insert(doc_id, doc.vector.clone());
-        } else if let Some(index) = &mut self.writing_segment.ivf_index {
-            index.insert(doc_id, doc.vector.clone());
+        }
+
+        if let Some(index) = &mut self.writing_segment.ivf_index {
+            index.insert(
+                IvfBuildEntry::new(schema.vector.dimension, doc_id, doc.vector.clone())
+                    .expect("validated ivf writing records"),
+            );
         }
 
         for field in &schema.fields {
