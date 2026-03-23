@@ -175,13 +175,13 @@ fn supports_pushdown(field: &ScalarFieldSchema, op: ScalarCompareOp, value: &Sca
         return false;
     }
 
-    match (field.field_type, op, value) {
-        (ScalarType::Bool, ScalarCompareOp::Eq, ScalarValue::Bool(_)) => true,
-        (ScalarType::Int64, _, ScalarValue::Int64(_)) => true,
-        (ScalarType::Float64, _, ScalarValue::Float64(_)) => true,
-        (ScalarType::String, _, ScalarValue::String(_)) => true,
-        _ => false,
-    }
+    matches!(
+        (field.field_type, op, value),
+        (ScalarType::Bool, ScalarCompareOp::Eq, ScalarValue::Bool(_))
+            | (ScalarType::Int64, _, ScalarValue::Int64(_))
+            | (ScalarType::Float64, _, ScalarValue::Float64(_))
+            | (ScalarType::String, _, ScalarValue::String(_))
+    )
 }
 
 fn and_expr(mut filters: Vec<FilterExpr>) -> FilterExpr {

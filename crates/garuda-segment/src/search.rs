@@ -16,16 +16,16 @@ struct SearchScope<'a> {
 
 impl SearchScope<'_> {
     fn contains(self, doc_id: InternalDocId) -> bool {
-        if let Some(doc_ids) = self.allowed_doc_ids {
-            if !doc_ids.contains(&doc_id) {
-                return false;
-            }
+        if let Some(doc_ids) = self.allowed_doc_ids
+            && !doc_ids.contains(&doc_id)
+        {
+            return false;
         }
 
-        if let Some(delete_store) = self.delete_store {
-            if delete_store.contains(doc_id) {
-                return false;
-            }
+        if let Some(delete_store) = self.delete_store
+            && delete_store.contains(doc_id)
+        {
+            return false;
         }
 
         true
