@@ -30,29 +30,6 @@ fn negative_l2_distance(lhs: &[f32], rhs: &[f32]) -> f32 {
     -simd::squared_l2(lhs, rhs).sqrt()
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-fn cosine_similarity_scalar(lhs: &[f32], rhs: &[f32]) -> f32 {
-    let dot = dot_scalar(lhs, rhs);
-    let lhs_norm = dot_scalar(lhs, lhs);
-    let rhs_norm = dot_scalar(rhs, rhs);
-
-    if lhs_norm == 0.0 || rhs_norm == 0.0 {
-        return 0.0;
-    }
-
-    dot / (lhs_norm.sqrt() * rhs_norm.sqrt())
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-fn inner_product_scalar(lhs: &[f32], rhs: &[f32]) -> f32 {
-    dot_scalar(lhs, rhs)
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-fn negative_l2_distance_scalar(lhs: &[f32], rhs: &[f32]) -> f32 {
-    -squared_l2_scalar(lhs, rhs).sqrt()
-}
-
 pub(crate) fn dot_scalar(lhs: &[f32], rhs: &[f32]) -> f32 {
     let mut sum = 0.0f32;
 

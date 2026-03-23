@@ -1,25 +1,24 @@
 pub(crate) fn dot(lhs: &[f32], rhs: &[f32]) -> f32 {
-    dispatch::dot(lhs, rhs)
+    implementation::dot(lhs, rhs)
 }
 
 pub(crate) fn squared_l2(lhs: &[f32], rhs: &[f32]) -> f32 {
-    dispatch::squared_l2(lhs, rhs)
+    implementation::squared_l2(lhs, rhs)
 }
 
-mod scalar {
-    #[cfg_attr(target_arch = "aarch64", allow(dead_code))]
+#[cfg(not(target_arch = "aarch64"))]
+mod implementation {
     pub(super) fn dot(lhs: &[f32], rhs: &[f32]) -> f32 {
         crate::dot_scalar(lhs, rhs)
     }
 
-    #[cfg_attr(target_arch = "aarch64", allow(dead_code))]
     pub(super) fn squared_l2(lhs: &[f32], rhs: &[f32]) -> f32 {
         crate::squared_l2_scalar(lhs, rhs)
     }
 }
 
 #[cfg(target_arch = "aarch64")]
-mod aarch64 {
+mod implementation {
     use std::arch::aarch64::*;
 
     pub(super) fn dot(lhs: &[f32], rhs: &[f32]) -> f32 {
@@ -80,50 +79,5 @@ mod aarch64 {
         }
 
         sum
-    }
-}
-
-#[cfg(target_arch = "x86_64")]
-mod x86_64 {
-    use super::scalar;
-
-    pub(super) fn dot(lhs: &[f32], rhs: &[f32]) -> f32 {
-        scalar::dot(lhs, rhs)
-    }
-
-    pub(super) fn squared_l2(lhs: &[f32], rhs: &[f32]) -> f32 {
-        scalar::squared_l2(lhs, rhs)
-    }
-}
-
-mod dispatch {
-    #[cfg(target_arch = "aarch64")]
-    pub(super) fn dot(lhs: &[f32], rhs: &[f32]) -> f32 {
-        super::aarch64::dot(lhs, rhs)
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    pub(super) fn squared_l2(lhs: &[f32], rhs: &[f32]) -> f32 {
-        super::aarch64::squared_l2(lhs, rhs)
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    pub(super) fn dot(lhs: &[f32], rhs: &[f32]) -> f32 {
-        super::x86_64::dot(lhs, rhs)
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    pub(super) fn squared_l2(lhs: &[f32], rhs: &[f32]) -> f32 {
-        super::x86_64::squared_l2(lhs, rhs)
-    }
-
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
-    pub(super) fn dot(lhs: &[f32], rhs: &[f32]) -> f32 {
-        super::scalar::dot(lhs, rhs)
-    }
-
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
-    pub(super) fn squared_l2(lhs: &[f32], rhs: &[f32]) -> f32 {
-        super::scalar::squared_l2(lhs, rhs)
     }
 }
