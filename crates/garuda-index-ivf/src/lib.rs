@@ -82,11 +82,6 @@ pub struct IvfIndex {
     list_entry_indexes: Vec<Vec<usize>>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct WritingIvfIndex {
-    index: IvfIndex,
-}
-
 impl IvfIndex {
     pub fn empty(config: IvfIndexConfig) -> Self {
         Self {
@@ -177,38 +172,6 @@ impl IvfIndex {
         self.centroids = trained.centroids;
         self.list_entry_indexes = trained.list_entry_indexes;
         Ok(())
-    }
-}
-
-impl WritingIvfIndex {
-    pub fn new(config: IvfIndexConfig) -> Self {
-        Self {
-            index: IvfIndex::empty(config),
-        }
-    }
-
-    pub fn build(config: IvfIndexConfig, entries: Vec<IvfBuildEntry>) -> Result<Self, Status> {
-        Ok(Self {
-            index: IvfIndex::build(config, entries)?,
-        })
-    }
-
-    pub fn insert(&mut self, doc_id: InternalDocId, vector: DenseVector) {
-        let entry = IvfBuildEntry::new(self.index.config.dimension, doc_id, vector)
-            .expect("writing ivf index entry dimension");
-        self.index.insert(entry);
-    }
-
-    pub fn search(&self, request: IvfSearchRequest<'_>) -> Result<Vec<IvfSearchHit>, Status> {
-        self.index.search(request)
-    }
-
-    pub fn list_count(&self) -> usize {
-        self.index.list_count()
-    }
-
-    pub fn stored_lists(&self) -> IvfStoredLists {
-        self.index.stored_lists()
     }
 }
 
