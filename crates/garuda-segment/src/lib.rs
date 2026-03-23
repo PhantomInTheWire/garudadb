@@ -9,7 +9,7 @@ mod wal;
 pub use garuda_index_flat::WritingFlatIndex;
 pub use garuda_index_hnsw::WritingHnswIndex;
 pub use search::{
-    SearchVisibility, search_persisted_flat, search_persisted_hnsw, search_writing_flat,
+    SearchScope, search_persisted_flat, search_persisted_hnsw, search_writing_flat,
     search_writing_hnsw,
 };
 pub use storage::{

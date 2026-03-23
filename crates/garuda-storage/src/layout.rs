@@ -1,5 +1,7 @@
 use crate::io::{create_dir_all, create_empty_file, remove_file, sync_directory};
-use garuda_types::{CollectionName, ManifestVersionId, SegmentId, SnapshotId, Status, StatusCode};
+use garuda_types::{
+    CollectionName, FieldName, ManifestVersionId, SegmentId, SnapshotId, Status, StatusCode,
+};
 use std::path::{Path, PathBuf};
 
 pub const LOCK_FILE_NAME: &str = "LOCK";
@@ -10,6 +12,8 @@ pub const DATA_SEG_FILE_NAME: &str = "data.seg";
 pub const DATA_WAL_FILE_NAME: &str = "data.wal";
 pub const FLAT_INDEX_FILE_NAME: &str = "flat.idx";
 pub const HNSW_INDEX_FILE_NAME: &str = "hnsw.idx";
+pub const SCALAR_INDEX_DIR_NAME: &str = "scalar";
+pub const SCALAR_INDEX_FILE_SUFFIX: &str = ".sidx";
 pub const WRITING_SEGMENT_ID: SegmentId = SegmentId::new_unchecked(0);
 
 pub fn ensure_database_root(path: &Path) -> Result<(), Status> {
@@ -92,6 +96,22 @@ pub fn segment_flat_index_path(root: &Path, segment_id: SegmentId) -> PathBuf {
 
 pub fn segment_hnsw_index_path(root: &Path, segment_id: SegmentId) -> PathBuf {
     segment_dir(root, segment_id).join(HNSW_INDEX_FILE_NAME)
+}
+
+pub fn segment_scalar_index_dir(root: &Path, segment_id: SegmentId) -> PathBuf {
+    segment_dir(root, segment_id).join(SCALAR_INDEX_DIR_NAME)
+}
+
+pub fn segment_scalar_index_path(
+    root: &Path,
+    segment_id: SegmentId,
+    field_name: &FieldName,
+) -> PathBuf {
+    segment_scalar_index_dir(root, segment_id).join(format!(
+        "{}{}",
+        field_name.as_str(),
+        SCALAR_INDEX_FILE_SUFFIX
+    ))
 }
 
 pub fn manifest_paths(root: &Path) -> Result<Vec<(ManifestVersionId, PathBuf)>, Status> {
