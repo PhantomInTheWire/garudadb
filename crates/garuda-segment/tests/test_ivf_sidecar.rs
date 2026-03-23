@@ -96,8 +96,8 @@ fn writing_ivf_index_should_contain_each_live_record_once() {
     let segment = WritingSegment::new(segment_meta(SegmentId::new_unchecked(0)), records, &schema);
 
     let index = segment.ivf_index.expect("ivf index");
-    assert_eq!(index.len(), 3);
-    assert_eq!(index.list_count(), 3);
+    assert_eq!(segment.meta.doc_count, 3);
+    assert_eq!(index.active_list_count(), 3);
 }
 
 fn temp_root(prefix: &str) -> PathBuf {

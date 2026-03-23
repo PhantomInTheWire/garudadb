@@ -4,9 +4,9 @@ use crate::{
 };
 use garuda_types::{
     AccessMode, CollectionName, CollectionOptions, CollectionSchema, DistanceMetric, DocId,
-    FieldName, HnswEfConstruction, HnswEfSearch, HnswIndexParams, HnswM, HnswMinNeighborCount,
-    HnswPruneWidth, HnswScalingFactor, IndexKind, InternalDocId, IvfIndexParams, IvfListCount,
-    IvfProbeCount, IvfTrainingIterations, Manifest, ManifestVersionId, Nullability,
+    FieldName, FlatHnswDefault, FlatIvfDefault, HnswEfConstruction, HnswEfSearch, HnswIndexParams,
+    HnswM, HnswMinNeighborCount, HnswPruneWidth, HnswScalingFactor, InternalDocId, IvfIndexParams,
+    IvfListCount, IvfProbeCount, IvfTrainingIterations, Manifest, ManifestVersionId, Nullability,
     ScalarFieldSchema, ScalarIndexState, ScalarType, ScalarValue, SegmentId, SnapshotId, Status,
     StatusCode, StorageAccess, VectorDimension, VectorIndexState,
 };
@@ -234,7 +234,7 @@ fn write_vector_index_state(
         }
         VectorIndexState::FlatAndHnsw { default, hnsw } => {
             writer.write_u8(2);
-            writer.write_u8(write_index_kind(*default));
+            writer.write_u8(write_flat_hnsw_default(*default));
             write_hnsw_index_params(writer, hnsw);
         }
         VectorIndexState::IvfOnly(params) => {
@@ -243,7 +243,7 @@ fn write_vector_index_state(
         }
         VectorIndexState::FlatAndIvf { default, ivf } => {
             writer.write_u8(4);
-            writer.write_u8(write_index_kind(*default));
+            writer.write_u8(write_flat_ivf_default(*default));
             write_ivf_index_params(writer, ivf);
         }
     }
@@ -256,12 +256,12 @@ fn read_vector_index_state(reader: &mut BinaryReader<'_>) -> Result<VectorIndexS
         0 => Ok(VectorIndexState::DefaultFlat),
         1 => Ok(VectorIndexState::HnswOnly(read_hnsw_index_params(reader)?)),
         2 => Ok(VectorIndexState::FlatAndHnsw {
-            default: read_index_kind(reader.read_u8()?)?,
+            default: read_flat_hnsw_default(reader.read_u8()?)?,
             hnsw: read_hnsw_index_params(reader)?,
         }),
         3 => Ok(VectorIndexState::IvfOnly(read_ivf_index_params(reader)?)),
         4 => Ok(VectorIndexState::FlatAndIvf {
-            default: read_index_kind(reader.read_u8()?)?,
+            default: read_flat_ivf_default(reader.read_u8()?)?,
             ivf: read_ivf_index_params(reader)?,
         }),
         _ => Err(Status::err(
@@ -305,24 +305,38 @@ fn read_ivf_index_params(reader: &mut BinaryReader<'_>) -> Result<IvfIndexParams
     })
 }
 
-fn write_index_kind(kind: IndexKind) -> u8 {
-    match kind {
-        IndexKind::Flat => 0,
-        IndexKind::Hnsw => 1,
-        IndexKind::Ivf => 2,
-        IndexKind::Scalar => 3,
+fn write_flat_hnsw_default(default: FlatHnswDefault) -> u8 {
+    match default {
+        FlatHnswDefault::Flat => 0,
+        FlatHnswDefault::Hnsw => 1,
     }
 }
 
-fn read_index_kind(tag: u8) -> Result<IndexKind, Status> {
+fn read_flat_hnsw_default(tag: u8) -> Result<FlatHnswDefault, Status> {
     match tag {
-        0 => Ok(IndexKind::Flat),
-        1 => Ok(IndexKind::Hnsw),
-        2 => Ok(IndexKind::Ivf),
-        3 => Ok(IndexKind::Scalar),
+        0 => Ok(FlatHnswDefault::Flat),
+        1 => Ok(FlatHnswDefault::Hnsw),
         _ => Err(Status::err(
             StatusCode::Internal,
-            "unrecognized index kind tag",
+            "unrecognized flat+hnsw default tag",
+        )),
+    }
+}
+
+fn write_flat_ivf_default(default: FlatIvfDefault) -> u8 {
+    match default {
+        FlatIvfDefault::Flat => 0,
+        FlatIvfDefault::Ivf => 1,
+    }
+}
+
+fn read_flat_ivf_default(tag: u8) -> Result<FlatIvfDefault, Status> {
+    match tag {
+        0 => Ok(FlatIvfDefault::Flat),
+        1 => Ok(FlatIvfDefault::Ivf),
+        _ => Err(Status::err(
+            StatusCode::Internal,
+            "unrecognized flat+ivf default tag",
         )),
     }
 }

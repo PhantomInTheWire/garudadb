@@ -156,6 +156,11 @@ fn drop_index_should_fail_when_kind_is_not_enabled() {
         .drop_index(&field_name("embedding"), IndexKind::Hnsw)
         .expect_err("dropping missing hnsw should fail");
     assert_eq!(error.code, garuda_types::StatusCode::InvalidArgument);
+
+    let error = collection
+        .drop_index(&field_name("embedding"), IndexKind::Flat)
+        .expect_err("dropping missing flat should fail");
+    assert_eq!(error.code, garuda_types::StatusCode::InvalidArgument);
 }
 
 #[test]

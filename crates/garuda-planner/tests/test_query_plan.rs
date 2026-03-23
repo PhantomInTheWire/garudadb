@@ -1,10 +1,11 @@
 use garuda_planner::{SegmentFilterPlan, SegmentSearchPlan, build_query_plan};
 use garuda_types::{
     CollectionName, CollectionSchema, DenseVector, DistanceMetric, FieldName, FilterExpr,
-    HnswEfSearch, HnswIndexParams, IndexKind, IvfIndexParams, IvfProbeCount, LikePattern,
-    Nullability, ScalarCompareOp, ScalarFieldSchema, ScalarIndexState, ScalarPredicate,
-    ScalarPrefilter, ScalarType, ScalarValue, StringMatchExpr, TopK, VectorDimension,
-    VectorFieldSchema, VectorIndexState, VectorProjection, VectorQuery, VectorSearch,
+    FlatHnswDefault, FlatIvfDefault, HnswEfSearch, HnswIndexParams, IvfIndexParams, IvfProbeCount,
+    LikePattern, Nullability, ScalarCompareOp, ScalarFieldSchema, ScalarIndexState,
+    ScalarPredicate, ScalarPrefilter, ScalarType, ScalarValue, StringMatchExpr, TopK,
+    VectorDimension, VectorFieldSchema, VectorIndexState, VectorProjection, VectorQuery,
+    VectorSearch,
 };
 
 #[test]
@@ -25,7 +26,7 @@ fn hnsw_query_plan_should_use_public_ef_search_override() {
             ScalarValue::String("alpha".to_string()),
         )),
         &schema(VectorIndexState::FlatAndHnsw {
-            default: IndexKind::Hnsw,
+            default: FlatHnswDefault::Hnsw,
             hnsw: HnswIndexParams::default(),
         }),
     )
@@ -160,7 +161,7 @@ fn ivf_query_plan_should_use_public_nprobe_override() {
         query,
         None,
         &schema(VectorIndexState::FlatAndIvf {
-            default: IndexKind::Ivf,
+            default: FlatIvfDefault::Ivf,
             ivf: IvfIndexParams::default(),
         }),
     )
