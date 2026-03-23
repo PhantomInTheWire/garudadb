@@ -7,7 +7,6 @@ use crate::index::{
 };
 use crate::types::{PersistedSegment, StoredRecord, WritingSegment};
 use crate::{RecordState, reset_wal, segment_meta};
-use garuda_index_flat::FlatIndexEntry;
 use garuda_index_scalar::ScalarIndex;
 use garuda_storage::{
     create_dir_all, read_file, remove_path_if_exists, segment_data_path, segment_dir,
@@ -44,12 +43,14 @@ pub fn write_persisted_segment(
     write_segment_sidecars(
         root,
         segment.meta.id,
-        schema
-            .vector
-            .indexes
-            .has_flat()
-            .then(|| flat_index_entries(&segment.records, segment.meta.doc_count)),
-        segment.hnsw_index.as_ref().map(|index| index.graph()),
+        || flat_index_entries(&segment.records, segment.meta.doc_count),
+        || {
+            segment
+                .hnsw_index
+                .as_ref()
+                .expect("enabled persisted hnsw state should exist")
+                .graph()
+        },
         &segment.scalar_indexes,
         schema,
         segment.meta.doc_count,
@@ -67,12 +68,14 @@ pub fn write_writing_segment(
     write_segment_sidecars(
         root,
         segment.meta.id,
-        schema
-            .vector
-            .indexes
-            .has_flat()
-            .then(|| persistable_flat_entries_from_writing(segment)),
-        segment.hnsw_index.as_ref().map(|index| index.graph()),
+        || persistable_flat_entries_from_writing(segment),
+        || {
+            segment
+                .hnsw_index
+                .as_ref()
+                .expect("enabled writing hnsw state should exist")
+                .graph()
+        },
         &segment.scalar_indexes,
         schema,
         segment.meta.doc_count,
@@ -152,29 +155,24 @@ fn write_scalar_indexes(
     Ok(())
 }
 
-fn write_segment_sidecars(
+fn write_segment_sidecars<'a>(
     root: &std::path::Path,
     segment_id: SegmentId,
-    flat_entries: Option<Vec<FlatIndexEntry>>,
-    hnsw_graph: Option<&HnswGraph>,
+    flat_entries: impl FnOnce() -> Vec<garuda_index_flat::FlatIndexEntry>,
+    hnsw_graph: impl FnOnce() -> &'a HnswGraph,
     scalar_indexes: &BTreeMap<FieldName, ScalarIndex>,
     schema: &CollectionSchema,
     live_doc_count: usize,
 ) -> Result<(), Status> {
     if schema.vector.indexes.has_flat() && live_doc_count != 0 {
-        let sidecar = encode_flat_index(
-            flat_entries.expect("enabled segment flat state should exist when persisting sidecars"),
-            &schema.vector,
-        )?;
+        let sidecar = encode_flat_index(flat_entries(), &schema.vector)?;
         write_file_atomically(&segment_flat_index_path(root, segment_id), &sidecar)?;
     } else {
         remove_path_if_exists(&segment_flat_index_path(root, segment_id))?;
     }
 
     if schema.vector.indexes.has_hnsw() && live_doc_count != 0 {
-        let sidecar = encode_hnsw_graph(
-            hnsw_graph.expect("enabled segment hnsw state should exist when persisting sidecars"),
-        )?;
+        let sidecar = encode_hnsw_graph(hnsw_graph())?;
         write_file_atomically(&segment_hnsw_index_path(root, segment_id), &sidecar)?;
     } else {
         remove_path_if_exists(&segment_hnsw_index_path(root, segment_id))?;
