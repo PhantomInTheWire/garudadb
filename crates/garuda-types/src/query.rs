@@ -1,4 +1,4 @@
-use crate::{DocId, FieldName, HnswEfSearch, Status, StatusCode, TopK};
+use crate::{DocId, FieldName, HnswEfSearch, IvfProbeCount, Status, StatusCode, TopK};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -141,6 +141,13 @@ pub enum VectorProjection {
     Exclude,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VectorSearch {
+    Default,
+    Hnsw { ef_search: HnswEfSearch },
+    Ivf { nprobe: IvfProbeCount },
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VectorQuery {
     pub field_name: FieldName,
@@ -149,7 +156,7 @@ pub struct VectorQuery {
     pub filter: Option<String>,
     pub vector_projection: VectorProjection,
     pub output_fields: Option<Vec<String>>,
-    pub ef_search: Option<HnswEfSearch>,
+    pub search: VectorSearch,
 }
 
 impl VectorQuery {
@@ -161,7 +168,7 @@ impl VectorQuery {
             filter: None,
             vector_projection: VectorProjection::Exclude,
             output_fields: None,
-            ef_search: None,
+            search: VectorSearch::Default,
         }
     }
 
@@ -173,7 +180,7 @@ impl VectorQuery {
             filter: None,
             vector_projection: VectorProjection::Exclude,
             output_fields: None,
-            ef_search: None,
+            search: VectorSearch::Default,
         }
     }
 }

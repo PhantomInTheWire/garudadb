@@ -2,8 +2,8 @@ mod common;
 
 use common::{database, default_options, default_schema, doc_id, field_name, seed_collection};
 use garuda_types::{
-    DenseVector, Doc, HnswIndexParams, IndexKind, IndexParams, ScalarFieldSchema, ScalarIndexState,
-    ScalarType, ScalarValue, VectorIndexState,
+    DenseVector, Doc, HnswIndexParams, IndexKind, IndexParams, IvfIndexParams,
+    ScalarFieldSchema, ScalarIndexState, ScalarType, ScalarValue, VectorIndexState,
 };
 use std::collections::BTreeMap;
 
@@ -143,6 +143,24 @@ fn invalid_drop_index_leaves_vector_state_unchanged() {
         collection.schema().vector.indexes.default_kind(),
         IndexKind::Hnsw
     );
+}
+
+#[test]
+fn create_and_drop_ivf_index_roundtrips_vector_state() {
+    let (_root, db) = database("ddl-ivf-index");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+
+    collection
+        .create_index(&field_name("embedding"), IndexParams::Ivf(IvfIndexParams::default()))
+        .expect("create ivf index");
+    assert_eq!(collection.schema().vector.indexes.default_kind(), IndexKind::Ivf);
+
+    collection
+        .drop_index(&field_name("embedding"), IndexKind::Ivf)
+        .expect("drop ivf index");
+    assert_eq!(collection.schema().vector.indexes, VectorIndexState::DefaultFlat);
 }
 
 #[test]

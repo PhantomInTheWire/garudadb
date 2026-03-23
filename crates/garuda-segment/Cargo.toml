@@ -10,6 +10,7 @@ workspace = true
 [dependencies]
 garuda-index-flat = { path = "../garuda-index-flat" }
 garuda-index-hnsw = { path = "../garuda-index-hnsw" }
+garuda-index-ivf = { path = "../garuda-index-ivf" }
 garuda-index-scalar = { path = "../garuda-index-scalar" }
 garuda-meta = { path = "../garuda-meta" }
 garuda-storage = { path = "../garuda-storage" }

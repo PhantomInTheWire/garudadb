@@ -1,10 +1,10 @@
 use garuda_planner::{SegmentFilterPlan, SegmentSearchPlan, build_query_plan};
 use garuda_types::{
     CollectionName, CollectionSchema, DenseVector, DistanceMetric, FieldName, FilterExpr,
-    HnswEfSearch, HnswIndexParams, IndexKind, LikePattern, Nullability, ScalarCompareOp,
-    ScalarFieldSchema, ScalarIndexState, ScalarPredicate, ScalarPrefilter, ScalarType, ScalarValue,
-    StringMatchExpr, TopK, VectorDimension, VectorFieldSchema, VectorIndexState, VectorProjection,
-    VectorQuery,
+    HnswEfSearch, HnswIndexParams, IndexKind, IvfIndexParams, IvfProbeCount, LikePattern,
+    Nullability, ScalarCompareOp, ScalarFieldSchema, ScalarIndexState, ScalarPredicate,
+    ScalarPrefilter, ScalarType, ScalarValue, StringMatchExpr, TopK, VectorDimension,
+    VectorFieldSchema, VectorIndexState, VectorProjection, VectorQuery, VectorSearch,
 };
 
 #[test]
@@ -14,7 +14,9 @@ fn hnsw_query_plan_should_use_public_ef_search_override() {
         DenseVector::parse(vec![1.0, 0.0, 0.0, 0.0]).expect("valid vector"),
         TopK::new(3).expect("valid top_k"),
     );
-    query.ef_search = Some(HnswEfSearch::new(8).expect("valid ef_search"));
+    query.search = VectorSearch::Hnsw {
+        ef_search: HnswEfSearch::new(8).expect("valid ef_search"),
+    };
 
     let plan = build_query_plan(
         query,
@@ -26,7 +28,8 @@ fn hnsw_query_plan_should_use_public_ef_search_override() {
             default: IndexKind::Hnsw,
             hnsw: HnswIndexParams::default(),
         }),
-    );
+    )
+    .expect("build query plan");
 
     assert_eq!(
         plan.search,
@@ -54,7 +57,8 @@ fn indexed_and_filter_should_split_prefilter_and_residual() {
         Box::new(FilterExpr::Ne("rank".to_string(), ScalarValue::Int64(2))),
     );
 
-    let plan = build_query_plan(query, Some(filter.clone()), &indexed_schema());
+    let plan = build_query_plan(query, Some(filter.clone()), &indexed_schema())
+        .expect("build filter plan");
 
     assert_eq!(
         plan.filter.scalar_prefilter,
@@ -85,7 +89,8 @@ fn or_filter_should_stay_residual() {
         Box::new(FilterExpr::Eq("rank".to_string(), ScalarValue::Int64(2))),
     );
 
-    let plan = build_query_plan(query, Some(filter.clone()), &indexed_schema());
+    let plan = build_query_plan(query, Some(filter.clone()), &indexed_schema())
+        .expect("build or plan");
 
     assert_eq!(plan.filter.scalar_prefilter, ScalarPrefilter::All);
     assert_eq!(plan.filter.residual, SegmentFilterPlan::Matching(filter));
@@ -115,7 +120,8 @@ fn like_contains_and_is_null_stay_residual() {
         )),
     );
 
-    let plan = build_query_plan(query, Some(filter), &indexed_schema());
+    let plan = build_query_plan(query, Some(filter), &indexed_schema())
+        .expect("build residual plan");
 
     assert_eq!(plan.filter.scalar_prefilter, ScalarPrefilter::All);
     assert_eq!(
@@ -136,6 +142,35 @@ fn like_contains_and_is_null_stay_residual() {
             )),
             Box::new(FilterExpr::IsNull("nickname".to_string())),
         ))
+    );
+}
+
+#[test]
+fn ivf_query_plan_should_use_public_nprobe_override() {
+    let mut query = VectorQuery::by_vector(
+        field_name("embedding"),
+        DenseVector::parse(vec![1.0, 0.0, 0.0, 0.0]).expect("valid vector"),
+        TopK::new(3).expect("valid top_k"),
+    );
+    query.search = VectorSearch::Ivf {
+        nprobe: IvfProbeCount::new(5).expect("valid nprobe"),
+    };
+
+    let plan = build_query_plan(
+        query,
+        None,
+        &schema(VectorIndexState::FlatAndIvf {
+            default: IndexKind::Ivf,
+            ivf: IvfIndexParams::default(),
+        }),
+    )
+    .expect("build ivf plan");
+
+    assert_eq!(
+        plan.search,
+        SegmentSearchPlan::Ivf {
+            nprobe: IvfProbeCount::new(5).expect("valid nprobe"),
+        }
     );
 }
 

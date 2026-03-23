@@ -4,25 +4,29 @@ use garuda_index_flat::{FlatIndex, FlatIndexEntry, WritingFlatIndex};
 use garuda_index_hnsw::{
     HnswBuildConfig, HnswBuildEntry, HnswIndex, HnswIndexConfig, WritingHnswIndex,
 };
+use garuda_index_ivf::{IvfBuildEntry, IvfIndex, IvfIndexConfig, WritingIvfIndex};
 use garuda_index_scalar::ScalarIndex;
 use garuda_storage::{
-    read_file, segment_flat_index_path, segment_hnsw_index_path, segment_scalar_index_path,
+    read_file, segment_flat_index_path, segment_hnsw_index_path, segment_ivf_index_path,
+    segment_scalar_index_path,
 };
 use garuda_types::{
-    CollectionSchema, FieldName, HnswIndexParams, ScalarFieldSchema, SegmentId, SegmentMeta,
-    Status, StatusCode,
+    CollectionSchema, FieldName, HnswIndexParams, IvfIndexParams, ScalarFieldSchema, SegmentId,
+    SegmentMeta, Status, StatusCode,
 };
 use std::collections::BTreeMap;
 
 pub(crate) struct WritingSearchResources {
     pub flat_index: Option<WritingFlatIndex>,
     pub hnsw_index: Option<WritingHnswIndex>,
+    pub ivf_index: Option<WritingIvfIndex>,
     pub scalar_indexes: BTreeMap<FieldName, ScalarIndex>,
 }
 
 pub(crate) struct PersistedSearchResources {
     pub flat_index: Option<FlatIndex>,
     pub hnsw_index: Option<HnswIndex>,
+    pub ivf_index: Option<IvfIndex>,
     pub scalar_indexes: BTreeMap<FieldName, ScalarIndex>,
 }
 
@@ -40,6 +44,12 @@ pub(crate) fn build_writing_search_resources(
         .indexes
         .hnsw_params()
         .map(|params| WritingHnswIndex::new(hnsw_index_config(schema, params)));
+    let ivf_index = schema
+        .vector
+        .indexes
+        .ivf_params()
+        .cloned()
+        .map(|_| build_writing_ivf_index(schema, records));
     let mut scalar_indexes = build_scalar_indexes(&schema.fields);
 
     for record in records {
@@ -61,6 +71,7 @@ pub(crate) fn build_writing_search_resources(
     WritingSearchResources {
         flat_index,
         hnsw_index,
+        ivf_index,
         scalar_indexes,
     }
 }
@@ -73,6 +84,7 @@ pub(crate) fn build_persisted_search_resources(
     PersistedSearchResources {
         flat_index: build_flat_index(schema, meta, records),
         hnsw_index: build_hnsw_index(schema, meta, records),
+        ivf_index: build_ivf_index(schema, meta, records),
         scalar_indexes: build_persisted_scalar_indexes(&schema.fields, records),
     }
 }
@@ -87,6 +99,7 @@ pub(crate) fn load_persisted_search_resources(
     Ok(PersistedSearchResources {
         flat_index: load_flat_index(root, segment_id, meta, schema)?,
         hnsw_index: load_hnsw_index(root, segment_id, meta, records, schema)?,
+        ivf_index: load_ivf_index(root, segment_id, meta, records, schema)?,
         scalar_indexes: load_scalar_indexes(root, segment_id, &schema.fields, meta.doc_count)?,
     })
 }
@@ -105,6 +118,13 @@ pub(crate) fn hnsw_index_config(
             params.prune_width,
         ),
     )
+}
+
+pub(crate) fn ivf_index_config(
+    schema: &CollectionSchema,
+    params: IvfIndexParams,
+) -> IvfIndexConfig {
+    IvfIndexConfig::new(schema.vector.dimension, schema.vector.metric, params)
 }
 
 fn build_flat_index(
@@ -132,6 +152,18 @@ fn build_hnsw_index(
     let config = hnsw_index_config(schema, params);
     let entries = hnsw_build_entries(&config, records, meta.doc_count);
     Some(HnswIndex::build(config, entries))
+}
+
+fn build_writing_ivf_index(schema: &CollectionSchema, records: &[StoredRecord]) -> WritingIvfIndex {
+    let params = schema
+        .vector
+        .indexes
+        .ivf_params()
+        .cloned()
+        .expect("ivf index must be enabled");
+    let config = ivf_index_config(schema, params);
+    let entries = ivf_build_entries(schema, records, live_doc_count(records));
+    WritingIvfIndex::from_entries_incremental(config, entries)
 }
 
 fn load_flat_index(
@@ -181,6 +213,32 @@ fn load_hnsw_index(
     }
 
     Ok(Some(HnswIndex::from_parts(config, entries, graph)))
+}
+
+fn load_ivf_index(
+    root: &std::path::Path,
+    segment_id: SegmentId,
+    meta: &SegmentMeta,
+    records: &[StoredRecord],
+    schema: &CollectionSchema,
+) -> Result<Option<IvfIndex>, Status> {
+    let Some(params) = schema.vector.indexes.ivf_params().cloned() else {
+        return Ok(None);
+    };
+
+    let bytes = read_file(&segment_ivf_index_path(root, segment_id))?;
+    let stored = crate::codec::decode_ivf_index(&bytes, &schema.vector)?;
+    let config = ivf_index_config(schema, params);
+    let entries = ivf_build_entries(schema, records, meta.doc_count);
+
+    if entries.len() != meta.doc_count {
+        return Err(Status::err(
+            StatusCode::Internal,
+            "persisted ivf index does not match segment live doc count",
+        ));
+    }
+
+    Ok(Some(IvfIndex::from_parts(config, entries, stored)?))
 }
 
 fn build_scalar_indexes(fields: &[ScalarFieldSchema]) -> BTreeMap<FieldName, ScalarIndex> {
@@ -266,9 +324,20 @@ pub(crate) fn flat_index_entries(
     records: &[StoredRecord],
     live_doc_count: usize,
 ) -> Vec<FlatIndexEntry> {
-    live_record_entries(records, live_doc_count, |record| {
-        FlatIndexEntry::new(record.doc_id, record.doc.vector.clone())
-    })
+    let mut entries = Vec::with_capacity(live_doc_count);
+
+    for record in records {
+        if matches!(record.state, RecordState::Deleted) {
+            continue;
+        }
+
+        entries.push(FlatIndexEntry::new(
+            record.doc_id,
+            record.doc.vector.clone(),
+        ));
+    }
+
+    entries
 }
 
 pub(crate) fn hnsw_build_entries(
@@ -276,28 +345,57 @@ pub(crate) fn hnsw_build_entries(
     records: &[StoredRecord],
     live_doc_count: usize,
 ) -> Vec<HnswBuildEntry> {
-    live_record_entries(records, live_doc_count, |record| {
-        HnswBuildEntry::new(config, record.doc_id, record.doc.vector.clone())
-            .expect("validated segment records should match the vector field dimension")
-    })
-}
-
-fn live_record_entries<T>(
-    records: &[StoredRecord],
-    live_doc_count: usize,
-    build_entry: impl FnMut(&StoredRecord) -> T,
-) -> Vec<T> {
-    let mut build_entry = build_entry;
     let mut entries = Vec::with_capacity(live_doc_count);
 
-    for record in records
-        .iter()
-        .filter(|record| matches!(record.state, RecordState::Live))
-    {
-        entries.push(build_entry(record));
+    for record in records {
+        if matches!(record.state, RecordState::Deleted) {
+            continue;
+        }
+
+        entries.push(
+            HnswBuildEntry::new(config, record.doc_id, record.doc.vector.clone())
+                .expect("validated segment records should match the vector field dimension"),
+        );
     }
 
     entries
+}
+
+pub(crate) fn ivf_build_entries(
+    schema: &CollectionSchema,
+    records: &[StoredRecord],
+    live_doc_count: usize,
+) -> Vec<IvfBuildEntry> {
+    let mut entries = Vec::with_capacity(live_doc_count);
+
+    for record in records {
+        if matches!(record.state, RecordState::Deleted) {
+            continue;
+        }
+
+        entries.push(
+            IvfBuildEntry::new(
+                schema.vector.dimension,
+                record.doc_id,
+                record.doc.vector.clone(),
+            )
+            .expect("validated segment records should match the vector field dimension"),
+        );
+    }
+
+    entries
+}
+
+pub(crate) fn should_persist_flat(schema: &CollectionSchema, live_doc_count: usize) -> bool {
+    schema.vector.indexes.has_flat() && live_doc_count != 0
+}
+
+pub(crate) fn should_persist_hnsw(schema: &CollectionSchema, live_doc_count: usize) -> bool {
+    schema.vector.indexes.has_hnsw() && live_doc_count != 0
+}
+
+pub(crate) fn should_persist_ivf(schema: &CollectionSchema, live_doc_count: usize) -> bool {
+    schema.vector.indexes.has_ivf() && live_doc_count != 0
 }
 
 pub(crate) fn indexed_scalar_fields(
@@ -314,4 +412,26 @@ pub(crate) fn persistable_flat_entries_from_writing(
         .as_ref()
         .expect("enabled writing flat state should exist");
     index.entries().to_vec()
+}
+
+fn build_ivf_index(
+    schema: &CollectionSchema,
+    meta: &SegmentMeta,
+    records: &[StoredRecord],
+) -> Option<IvfIndex> {
+    let params = schema.vector.indexes.ivf_params().cloned()?;
+    Some(
+        IvfIndex::build(
+            ivf_index_config(schema, params),
+            ivf_build_entries(schema, records, meta.doc_count),
+        )
+        .expect("validated ivf segment records"),
+    )
+}
+
+fn live_doc_count(records: &[StoredRecord]) -> usize {
+    records
+        .iter()
+        .filter(|record| matches!(record.state, RecordState::Live))
+        .count()
 }

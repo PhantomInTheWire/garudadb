@@ -193,7 +193,9 @@ fn delete_on_persisted_segment_with_small_ef_search_still_returns_live_hit() {
         dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
         top_k(1),
     );
-    query.ef_search = Some(HnswEfSearch::new(1).expect("valid ef_search"));
+    query.search = garuda_types::VectorSearch::Hnsw {
+        ef_search: HnswEfSearch::new(1).expect("valid ef_search"),
+    };
 
     let results = collection.query(query).expect("query after delete");
     assert_eq!(results[0].id.as_str(), "doc-2");
@@ -229,7 +231,9 @@ fn update_on_persisted_segment_with_small_ef_search_removes_old_vector() {
         dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
         top_k(1),
     );
-    query.ef_search = Some(HnswEfSearch::new(1).expect("valid ef_search"));
+    query.search = garuda_types::VectorSearch::Hnsw {
+        ef_search: HnswEfSearch::new(1).expect("valid ef_search"),
+    };
 
     let results = collection.query(query).expect("query after update");
     assert_eq!(results[0].id.as_str(), "doc-2");

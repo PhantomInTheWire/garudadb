@@ -54,7 +54,7 @@ fn rejects_duplicate_ids_wrong_dimensions_invalid_filters_and_wrong_index_target
         filter: Some("category = ".to_string()),
         vector_projection: garuda_types::VectorProjection::Exclude,
         output_fields: None,
-        ef_search: None,
+        search: garuda_types::VectorSearch::Default,
     });
     assert!(query.is_err());
 

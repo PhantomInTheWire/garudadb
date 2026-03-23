@@ -1,7 +1,7 @@
 use garuda_types::{
-    CollectionSchema, FieldName, FilterExpr, HnswEfSearch, IndexKind, QueryVectorSource,
-    ScalarCompareOp, ScalarFieldSchema, ScalarPredicate, ScalarPrefilter, ScalarType, ScalarValue,
-    TopK, VectorProjection, VectorQuery,
+    CollectionSchema, FieldName, FilterExpr, HnswEfSearch, IndexKind, IvfProbeCount,
+    QueryVectorSource, ScalarCompareOp, ScalarFieldSchema, ScalarPredicate, ScalarPrefilter,
+    ScalarType, ScalarValue, TopK, VectorProjection, VectorQuery, VectorSearch,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -20,6 +20,7 @@ pub struct FilterPlan {
 pub enum SegmentSearchPlan {
     Flat,
     Hnsw { ef_search: HnswEfSearch },
+    Ivf { nprobe: IvfProbeCount },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -37,35 +38,57 @@ pub fn build_query_plan(
     query: VectorQuery,
     filter: Option<FilterExpr>,
     schema: &CollectionSchema,
-) -> QueryPlan {
-    QueryPlan {
+) -> Result<QueryPlan, garuda_types::Status> {
+    Ok(QueryPlan {
         field_name: query.field_name,
         source: query.source,
         filter: build_filter_plan(filter, schema),
         top_k: query.top_k,
-        search: search_plan(query.ef_search, schema),
+        search: search_plan(query.search, schema)?,
         vector_projection: query.vector_projection,
         output_fields: query.output_fields,
-    }
+    })
 }
 
 fn search_plan(
-    query_ef_search: Option<HnswEfSearch>,
+    search: VectorSearch,
     schema: &CollectionSchema,
-) -> SegmentSearchPlan {
-    match schema.vector.indexes.default_kind() {
-        IndexKind::Flat => SegmentSearchPlan::Flat,
-        IndexKind::Hnsw => SegmentSearchPlan::Hnsw {
-            ef_search: query_ef_search.unwrap_or(
-                schema
-                    .vector
-                    .indexes
-                    .hnsw_params()
-                    .expect("hnsw default requires hnsw params")
-                    .ef_search,
-            ),
-        },
-        IndexKind::Scalar => panic!("vector index default cannot be scalar"),
+) -> Result<SegmentSearchPlan, garuda_types::Status> {
+    match (schema.vector.indexes.default_kind(), search) {
+        (IndexKind::Flat, VectorSearch::Default) => Ok(SegmentSearchPlan::Flat),
+        (IndexKind::Flat, _) => Err(garuda_types::Status::err(
+            garuda_types::StatusCode::InvalidArgument,
+            "query search override does not match the default index",
+        )),
+        (IndexKind::Hnsw, VectorSearch::Default) => Ok(SegmentSearchPlan::Hnsw {
+            ef_search: schema
+                .vector
+                .indexes
+                .hnsw_params()
+                .expect("hnsw default requires hnsw params")
+                .ef_search,
+        }),
+        (IndexKind::Hnsw, VectorSearch::Hnsw { ef_search }) => {
+            Ok(SegmentSearchPlan::Hnsw { ef_search })
+        }
+        (IndexKind::Hnsw, VectorSearch::Ivf { .. }) => Err(garuda_types::Status::err(
+            garuda_types::StatusCode::InvalidArgument,
+            "query search override does not match the default index",
+        )),
+        (IndexKind::Ivf, VectorSearch::Default) => Ok(SegmentSearchPlan::Ivf {
+            nprobe: schema
+                .vector
+                .indexes
+                .ivf_params()
+                .expect("ivf default requires ivf params")
+                .n_probe,
+        }),
+        (IndexKind::Ivf, VectorSearch::Ivf { nprobe }) => Ok(SegmentSearchPlan::Ivf { nprobe }),
+        (IndexKind::Ivf, VectorSearch::Hnsw { .. }) => Err(garuda_types::Status::err(
+            garuda_types::StatusCode::InvalidArgument,
+            "query search override does not match the default index",
+        )),
+        (IndexKind::Scalar, _) => panic!("vector index default cannot be scalar"),
     }
 }
 

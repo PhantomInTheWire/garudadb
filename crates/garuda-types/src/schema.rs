@@ -1,5 +1,6 @@
 use crate::{
-    CollectionName, DistanceMetric, FieldName, HnswIndexParams, Status, StatusCode, VectorDimension,
+    CollectionName, DistanceMetric, FieldName, HnswIndexParams, IvfIndexParams, Status,
+    StatusCode, VectorDimension,
 };
 use serde::{Deserialize, Serialize};
 
@@ -39,6 +40,7 @@ impl ScalarType {
 pub enum IndexKind {
     Flat,
     Hnsw,
+    Ivf,
     Scalar,
 }
 
@@ -64,6 +66,7 @@ impl ScalarIndexState {
 pub enum IndexParams {
     Flat(FlatIndexParams),
     Hnsw(HnswIndexParams),
+    Ivf(IvfIndexParams),
     Scalar(ScalarIndexParams),
 }
 
@@ -71,9 +74,14 @@ pub enum IndexParams {
 pub enum VectorIndexState {
     DefaultFlat,
     HnswOnly(HnswIndexParams),
+    IvfOnly(IvfIndexParams),
     FlatAndHnsw {
         default: IndexKind,
         hnsw: HnswIndexParams,
+    },
+    FlatAndIvf {
+        default: IndexKind,
+        ivf: IvfIndexParams,
     },
 }
 
@@ -82,14 +90,16 @@ impl VectorIndexState {
         match self {
             Self::DefaultFlat => IndexKind::Flat,
             Self::HnswOnly(_) => IndexKind::Hnsw,
+            Self::IvfOnly(_) => IndexKind::Ivf,
             Self::FlatAndHnsw { default, .. } => *default,
+            Self::FlatAndIvf { default, .. } => *default,
         }
     }
 
     pub fn has_flat(&self) -> bool {
         match self {
-            Self::DefaultFlat | Self::FlatAndHnsw { .. } => true,
-            Self::HnswOnly(_) => false,
+            Self::DefaultFlat | Self::FlatAndHnsw { .. } | Self::FlatAndIvf { .. } => true,
+            Self::HnswOnly(_) | Self::IvfOnly(_) => false,
         }
     }
 
@@ -97,6 +107,14 @@ impl VectorIndexState {
         match self {
             Self::DefaultFlat => false,
             Self::HnswOnly(_) | Self::FlatAndHnsw { .. } => true,
+            Self::IvfOnly(_) | Self::FlatAndIvf { .. } => false,
+        }
+    }
+
+    pub fn has_ivf(&self) -> bool {
+        match self {
+            Self::DefaultFlat | Self::HnswOnly(_) | Self::FlatAndHnsw { .. } => false,
+            Self::IvfOnly(_) | Self::FlatAndIvf { .. } => true,
         }
     }
 
@@ -105,42 +123,121 @@ impl VectorIndexState {
             Self::DefaultFlat => None,
             Self::HnswOnly(params) => Some(params),
             Self::FlatAndHnsw { hnsw, .. } => Some(hnsw),
+            Self::IvfOnly(_) | Self::FlatAndIvf { .. } => None,
         }
     }
 
-    pub fn enable_flat(self) -> Self {
+    pub fn ivf_params(&self) -> Option<&IvfIndexParams> {
         match self {
-            Self::DefaultFlat => Self::DefaultFlat,
-            Self::HnswOnly(hnsw) => Self::FlatAndHnsw {
-                default: IndexKind::Hnsw,
-                hnsw,
-            },
-            Self::FlatAndHnsw { default, hnsw } => Self::FlatAndHnsw { default, hnsw },
+            Self::DefaultFlat | Self::HnswOnly(_) | Self::FlatAndHnsw { .. } => None,
+            Self::IvfOnly(params) => Some(params),
+            Self::FlatAndIvf { ivf, .. } => Some(ivf),
         }
     }
 
-    pub fn enable_hnsw(self, hnsw: HnswIndexParams) -> Self {
-        match self {
-            Self::DefaultFlat => Self::FlatAndHnsw {
-                default: IndexKind::Hnsw,
-                hnsw,
-            },
-            Self::HnswOnly(_) => Self::HnswOnly(hnsw),
-            Self::FlatAndHnsw { .. } => Self::FlatAndHnsw {
-                default: IndexKind::Hnsw,
-                hnsw,
-            },
+    pub fn enable(self, params: IndexParams) -> Result<Self, Status> {
+        match params {
+            IndexParams::Flat(_) => Ok(match self {
+                Self::DefaultFlat => Self::DefaultFlat,
+                Self::HnswOnly(hnsw) => Self::FlatAndHnsw {
+                    default: IndexKind::Hnsw,
+                    hnsw,
+                },
+                Self::IvfOnly(ivf) => Self::FlatAndIvf {
+                    default: IndexKind::Ivf,
+                    ivf,
+                },
+                Self::FlatAndHnsw { default, hnsw } => Self::FlatAndHnsw { default, hnsw },
+                Self::FlatAndIvf { default, ivf } => Self::FlatAndIvf { default, ivf },
+            }),
+            IndexParams::Hnsw(hnsw) => Ok(match self {
+                Self::DefaultFlat => Self::FlatAndHnsw {
+                    default: IndexKind::Hnsw,
+                    hnsw,
+                },
+                Self::HnswOnly(_) => Self::HnswOnly(hnsw),
+                Self::FlatAndHnsw { .. } => Self::FlatAndHnsw {
+                    default: IndexKind::Hnsw,
+                    hnsw,
+                },
+                Self::IvfOnly(_) | Self::FlatAndIvf { .. } => {
+                    return Err(Status::err(
+                        StatusCode::InvalidArgument,
+                        "cannot enable hnsw while ivf is enabled",
+                    ));
+                }
+            }),
+            IndexParams::Ivf(ivf) => Ok(match self {
+                Self::DefaultFlat => Self::FlatAndIvf {
+                    default: IndexKind::Ivf,
+                    ivf,
+                },
+                Self::IvfOnly(_) => Self::IvfOnly(ivf),
+                Self::FlatAndIvf { .. } => Self::FlatAndIvf {
+                    default: IndexKind::Ivf,
+                    ivf,
+                },
+                Self::HnswOnly(_) | Self::FlatAndHnsw { .. } => {
+                    return Err(Status::err(
+                        StatusCode::InvalidArgument,
+                        "cannot enable ivf while hnsw is enabled",
+                    ));
+                }
+            }),
+            IndexParams::Scalar(_) => Err(Status::err(
+                StatusCode::InvalidArgument,
+                "cannot create a scalar index on the vector field",
+            )),
         }
     }
 
-    pub fn drop(self, kind: IndexKind) -> Self {
+    pub fn drop(self, kind: IndexKind) -> Result<Self, Status> {
         match (self, kind) {
-            (Self::DefaultFlat, _) => Self::DefaultFlat,
-            (Self::HnswOnly(hnsw), IndexKind::Flat) => Self::HnswOnly(hnsw),
-            (Self::HnswOnly(_), IndexKind::Hnsw) => Self::DefaultFlat,
-            (Self::FlatAndHnsw { hnsw, .. }, IndexKind::Flat) => Self::HnswOnly(hnsw),
-            (Self::FlatAndHnsw { .. }, IndexKind::Hnsw) => Self::DefaultFlat,
-            (_, IndexKind::Scalar) => panic!("vector index state cannot drop a scalar index"),
+            (Self::DefaultFlat, IndexKind::Flat) => Ok(Self::DefaultFlat),
+            (Self::DefaultFlat, _) => Err(Status::err(
+                StatusCode::InvalidArgument,
+                "index kind is not enabled",
+            )),
+            (Self::HnswOnly(hnsw), IndexKind::Flat) => Ok(Self::HnswOnly(hnsw)),
+            (Self::HnswOnly(_), IndexKind::Hnsw) => Ok(Self::DefaultFlat),
+            (Self::HnswOnly(_), IndexKind::Ivf) => Err(Status::err(
+                StatusCode::InvalidArgument,
+                "index kind is not enabled",
+            )),
+            (Self::HnswOnly(_), IndexKind::Scalar) => Err(Status::err(
+                StatusCode::InvalidArgument,
+                "cannot drop a scalar index from the vector field",
+            )),
+            (Self::IvfOnly(ivf), IndexKind::Flat) => Ok(Self::IvfOnly(ivf)),
+            (Self::IvfOnly(_), IndexKind::Ivf) => Ok(Self::DefaultFlat),
+            (Self::IvfOnly(_), IndexKind::Hnsw) => Err(Status::err(
+                StatusCode::InvalidArgument,
+                "index kind is not enabled",
+            )),
+            (Self::IvfOnly(_), IndexKind::Scalar) => Err(Status::err(
+                StatusCode::InvalidArgument,
+                "cannot drop a scalar index from the vector field",
+            )),
+            (Self::FlatAndHnsw { hnsw, .. }, IndexKind::Flat) => Ok(Self::HnswOnly(hnsw)),
+            (Self::FlatAndHnsw { .. }, IndexKind::Hnsw) => Ok(Self::DefaultFlat),
+            (Self::FlatAndHnsw { .. }, IndexKind::Ivf) => Err(Status::err(
+                StatusCode::InvalidArgument,
+                "index kind is not enabled",
+            )),
+            (Self::FlatAndHnsw { .. }, IndexKind::Scalar) => Err(Status::err(
+                StatusCode::InvalidArgument,
+                "cannot drop a scalar index from the vector field",
+            )),
+            (Self::FlatAndIvf { ivf, .. }, IndexKind::Flat) => Ok(Self::IvfOnly(ivf)),
+            (Self::FlatAndIvf { .. }, IndexKind::Ivf) => Ok(Self::DefaultFlat),
+            (Self::FlatAndIvf { .. }, IndexKind::Hnsw) => Err(Status::err(
+                StatusCode::InvalidArgument,
+                "index kind is not enabled",
+            )),
+            (Self::FlatAndIvf { .. }, IndexKind::Scalar) => Err(Status::err(
+                StatusCode::InvalidArgument,
+                "cannot drop a scalar index from the vector field",
+            )),
         }
     }
 }

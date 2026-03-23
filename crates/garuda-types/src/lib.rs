@@ -1,11 +1,13 @@
 mod hnsw;
 mod ids;
+mod ivf;
 mod query;
 mod schema;
 mod status;
 
 pub use hnsw::*;
 pub use ids::*;
+pub use ivf::*;
 pub use query::*;
 pub use schema::*;
 pub use status::*;
