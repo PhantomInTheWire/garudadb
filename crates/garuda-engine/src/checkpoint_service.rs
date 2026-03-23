@@ -33,16 +33,8 @@ pub(crate) fn checkpoint_state(state: &mut CollectionRuntime) -> Result<(), Stat
         return Err(status);
     }
 
-    let _ = remove_old_snapshots(
-        &state.path,
-        SnapshotKind::IdMap,
-        state.id_map_snapshot_id,
-    );
-    let _ = remove_old_snapshots(
-        &state.path,
-        SnapshotKind::Delete,
-        state.delete_snapshot_id,
-    );
+    let _ = remove_old_snapshots(&state.path, SnapshotKind::IdMap, state.id_map_snapshot_id);
+    let _ = remove_old_snapshots(&state.path, SnapshotKind::Delete, state.delete_snapshot_id);
 
     let _ = remove_stale_segment_dirs(state);
 
@@ -97,11 +89,7 @@ fn write_all_segments(state: &CollectionRuntime) -> Result<(), Status> {
         write_persisted_segment(&state.path, segment, &state.schema)?;
     }
 
-    write_writing_segment(
-        &state.path,
-        state.segments.writing_segment(),
-        &state.schema,
-    )
+    write_writing_segment(&state.path, state.segments.writing_segment(), &state.schema)
 }
 
 fn remove_stale_segment_dirs(state: &CollectionRuntime) -> Result<(), Status> {

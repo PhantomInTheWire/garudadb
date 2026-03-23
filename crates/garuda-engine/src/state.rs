@@ -3,8 +3,8 @@ use crate::validation::{apply_schema_defaults, validate_doc};
 use garuda_meta::MetadataStore;
 use garuda_segment::StoredRecord;
 use garuda_types::{
-    CollectionOptions, CollectionSchema, Doc, DocId, InternalDocId, ManifestVersionId,
-    SegmentId, SnapshotId, StatusCode, WriteResult,
+    CollectionOptions, CollectionSchema, Doc, DocId, InternalDocId, ManifestVersionId, SegmentId,
+    SnapshotId, StatusCode, WriteResult,
 };
 use std::path::PathBuf;
 
