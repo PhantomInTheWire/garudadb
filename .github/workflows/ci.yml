@@ -24,9 +24,9 @@ jobs:
           - name: Formatting
             command: cargo fmt --all --check
           - name: Clippy
-            command: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+            command: cargo clippy --workspace --all-targets --all-features -- -D warnings
           - name: Test suite
-            command: cargo test --workspace --all-targets --all-features --locked
+            command: cargo test --workspace --all-targets --all-features
 
     steps:
       - name: Check out repository
