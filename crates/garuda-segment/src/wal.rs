@@ -1,5 +1,5 @@
 use crate::doc_codec::{decode_doc_payload, encode_doc_payload};
-use garuda_storage::{checksum, read_file, segment_wal_path, write_file_atomically};
+use garuda_storage::{BinaryWriter, checksum, read_file, segment_wal_path, write_file_atomically};
 use garuda_types::{Doc, DocId, SegmentId, Status, StatusCode};
 
 const WAL_MAGIC: &[u8; 8] = b"GRDWAL01";
@@ -97,7 +97,11 @@ pub fn read_wal_ops(root: &std::path::Path, segment_id: SegmentId) -> Result<Vec
             INSERT_OP_TAG => WalOp::Insert(decode_doc_payload(payload)?),
             UPSERT_OP_TAG => WalOp::Upsert(decode_doc_payload(payload)?),
             UPDATE_OP_TAG => WalOp::Update(decode_doc_payload(payload)?),
-            DELETE_OP_TAG => WalOp::Delete(DocId::parse(read_string_payload(payload)?)?),
+            DELETE_OP_TAG => WalOp::Delete(DocId::parse(
+                String::from_utf8(payload.to_vec()).map_err(|error| {
+                    Status::err(StatusCode::Internal, format!("invalid utf-8: {error}"))
+                })?,
+            )?),
             _ => {
                 return Err(Status::err(
                     StatusCode::Internal,
@@ -132,14 +136,9 @@ fn append_payload(bytes: &mut Vec<u8>, tag: u8, payload: &[u8]) {
 }
 
 fn new_wal_bytes() -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(
-        WAL_MAGIC.len() + std::mem::size_of::<u16>() + std::mem::size_of::<u32>(),
-    );
-    bytes.extend_from_slice(WAL_MAGIC);
-    bytes.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
-    let checksum = checksum(&bytes);
-    bytes.extend_from_slice(&checksum.to_le_bytes());
-    bytes
+    let mut writer = BinaryWriter::new(WAL_MAGIC);
+    writer.write_u16(FORMAT_VERSION);
+    writer.finish()
 }
 
 fn validate_header(bytes: &[u8]) -> Result<(), Status> {
@@ -182,9 +181,4 @@ fn validate_header(bytes: &[u8]) -> Result<(), Status> {
     }
 
     Err(Status::err(StatusCode::Internal, "wal checksum mismatch"))
-}
-
-fn read_string_payload(payload: &[u8]) -> Result<String, Status> {
-    String::from_utf8(payload.to_vec())
-        .map_err(|error| Status::err(StatusCode::Internal, format!("invalid utf-8: {error}")))
 }
