@@ -142,7 +142,7 @@ impl IvfIndex {
 }
 
 impl WritingIvfIndex {
-    pub fn new(config: IvfIndexConfig) -> Self {
+    fn new(config: IvfIndexConfig) -> Self {
         Self {
             config,
             state: IvfState::empty(),
@@ -167,7 +167,7 @@ impl WritingIvfIndex {
         self.state.search(&self.config, request)
     }
 
-    pub fn active_list_count(&self) -> usize {
+    pub fn list_count(&self) -> usize {
         self.state.list_count()
     }
 
