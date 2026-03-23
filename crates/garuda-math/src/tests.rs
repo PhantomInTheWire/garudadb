@@ -1,7 +1,4 @@
-use super::{
-    cosine_similarity_scalar, dot_scalar, inner_product_scalar, negative_l2_distance_scalar,
-    score_doc, squared_l2_scalar,
-};
+use super::{dot_scalar, score_doc, squared_l2_scalar};
 use crate::simd;
 use garuda_types::DistanceMetric;
 
@@ -129,7 +126,7 @@ enum CaseKind {
 }
 
 fn assert_metric_matches_oracle(lhs: &[f32], rhs: &[f32], dim: usize, label: &str) {
-    let inner_expected = inner_product_scalar(lhs, rhs);
+    let inner_expected = dot_scalar(lhs, rhs);
     let inner_actual = score_doc(DistanceMetric::InnerProduct, lhs, rhs);
     assert_close(inner_actual, inner_expected, dim, label);
 
@@ -140,6 +137,22 @@ fn assert_metric_matches_oracle(lhs: &[f32], rhs: &[f32], dim: usize, label: &st
     let cosine_expected = cosine_similarity_scalar(lhs, rhs);
     let cosine_actual = score_doc(DistanceMetric::Cosine, lhs, rhs);
     assert_close(cosine_actual, cosine_expected, dim, label);
+}
+
+fn cosine_similarity_scalar(lhs: &[f32], rhs: &[f32]) -> f32 {
+    let dot = dot_scalar(lhs, rhs);
+    let lhs_norm = dot_scalar(lhs, lhs);
+    let rhs_norm = dot_scalar(rhs, rhs);
+
+    if lhs_norm == 0.0 || rhs_norm == 0.0 {
+        return 0.0;
+    }
+
+    dot / (lhs_norm.sqrt() * rhs_norm.sqrt())
+}
+
+fn negative_l2_distance_scalar(lhs: &[f32], rhs: &[f32]) -> f32 {
+    -squared_l2_scalar(lhs, rhs).sqrt()
 }
 
 fn cases(dim: usize) -> Vec<TestCase> {
