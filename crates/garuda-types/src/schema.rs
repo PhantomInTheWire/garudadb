@@ -270,7 +270,9 @@ impl CollectionSchema {
     }
 
     pub fn scalar_field_mut(&mut self, field_name: &FieldName) -> Option<&mut ScalarFieldSchema> {
-        self.fields.iter_mut().find(|field| field.name == *field_name)
+        self.fields
+            .iter_mut()
+            .find(|field| field.name == *field_name)
     }
 }
 

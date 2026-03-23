@@ -97,11 +97,11 @@ pub fn read_wal_ops(root: &std::path::Path, segment_id: SegmentId) -> Result<Vec
             INSERT_OP_TAG => WalOp::Insert(decode_doc_payload(payload)?),
             UPSERT_OP_TAG => WalOp::Upsert(decode_doc_payload(payload)?),
             UPDATE_OP_TAG => WalOp::Update(decode_doc_payload(payload)?),
-            DELETE_OP_TAG => WalOp::Delete(DocId::parse(
-                String::from_utf8(payload.to_vec()).map_err(|error| {
-                    Status::err(StatusCode::Internal, format!("invalid utf-8: {error}"))
-                })?,
-            )?),
+            DELETE_OP_TAG => {
+                WalOp::Delete(DocId::parse(String::from_utf8(payload.to_vec()).map_err(
+                    |error| Status::err(StatusCode::Internal, format!("invalid utf-8: {error}")),
+                )?)?)
+            }
             _ => {
                 return Err(Status::err(
                     StatusCode::Internal,
