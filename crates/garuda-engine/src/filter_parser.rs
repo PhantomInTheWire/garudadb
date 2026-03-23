@@ -1,4 +1,4 @@
-use garuda_types::{FilterExpr, ScalarValue, Status, StatusCode};
+use garuda_types::{FilterExpr, LikePattern, ScalarValue, Status, StatusCode, StringMatchExpr};
 
 #[derive(Clone, Debug, PartialEq)]
 enum Token {
@@ -6,12 +6,16 @@ enum Token {
     Number(String),
     Str(String),
     Bool(bool),
+    Null,
     Eq,
     Ne,
     Gt,
     Gte,
     Lt,
     Lte,
+    Like,
+    Contains,
+    Is,
     And,
     Or,
     LParen,
@@ -149,6 +153,10 @@ fn read_identifier_token(chars: &[char], pos: &mut usize) -> Token {
     let value: String = chars[start..*pos].iter().collect();
     match value.to_ascii_lowercase().as_str() {
         "and" => Token::And,
+        "contains" => Token::Contains,
+        "is" => Token::Is,
+        "like" => Token::Like,
+        "null" => Token::Null,
         "or" => Token::Or,
         "true" => Token::Bool(true),
         "false" => Token::Bool(false),
@@ -212,8 +220,31 @@ impl Parser {
     fn parse_comparison(&mut self) -> Result<FilterExpr, Status> {
         let field = self.parse_field_name()?;
         let operator = self.parse_operator()?;
-        let value = self.parse_literal()?;
-        build_comparison(field, operator, value)
+
+        match operator {
+            Token::Like => {
+                let pattern = self.parse_string_literal()?;
+                Ok(FilterExpr::StringMatch(
+                    field,
+                    StringMatchExpr::Like(parse_like_pattern(&pattern)?),
+                ))
+            }
+            Token::Contains => {
+                let needle = self.parse_string_literal()?;
+                Ok(FilterExpr::StringMatch(
+                    field,
+                    StringMatchExpr::Contains(needle),
+                ))
+            }
+            Token::Is => {
+                self.expect(Token::Null)?;
+                Ok(FilterExpr::IsNull(field))
+            }
+            _ => {
+                let value = self.parse_literal()?;
+                build_comparison(field, operator, value)
+            }
+        }
     }
 
     fn parse_field_name(&mut self) -> Result<String, Status> {
@@ -248,6 +279,7 @@ impl Parser {
 
         match token {
             Token::Bool(value) => Ok(ScalarValue::Bool(value)),
+            Token::Null => Ok(ScalarValue::Null),
             Token::Str(value) => Ok(ScalarValue::String(value)),
             Token::Number(value) => parse_number_literal(&value),
             _ => Err(Status::err(
@@ -255,6 +287,17 @@ impl Parser {
                 "expected filter literal",
             )),
         }
+    }
+
+    fn parse_string_literal(&mut self) -> Result<String, Status> {
+        let Some(Token::Str(value)) = self.next() else {
+            return Err(Status::err(
+                StatusCode::InvalidArgument,
+                "expected string literal",
+            ));
+        };
+
+        Ok(value)
     }
 
     fn peek(&self) -> Option<&Token> {
@@ -321,4 +364,23 @@ fn build_comparison(
             "expected comparison operator",
         )),
     }
+}
+
+fn parse_like_pattern(pattern: &str) -> Result<LikePattern, Status> {
+    let wildcard_count = pattern.chars().filter(|ch| *ch == '%').count();
+    if wildcard_count > 1 {
+        return Err(Status::err(
+            StatusCode::InvalidArgument,
+            "LIKE supports at most one '%' wildcard",
+        ));
+    }
+
+    let Some((prefix, suffix)) = pattern.split_once('%') else {
+        return Ok(LikePattern::Exact(pattern.to_string()));
+    };
+
+    Ok(LikePattern::PrefixSuffix {
+        prefix: prefix.to_string(),
+        suffix: suffix.to_string(),
+    })
 }
