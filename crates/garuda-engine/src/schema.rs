@@ -66,11 +66,7 @@ fn validate_vector_dimension(schema: &CollectionSchema) -> Result<(), Status> {
 }
 
 fn validate_primary_key(schema: &CollectionSchema) -> Result<(), Status> {
-    let Some(field) = schema
-        .fields
-        .iter()
-        .find(|field| field.name == schema.primary_key)
-    else {
+    let Some(field) = schema.scalar_field(&schema.primary_key) else {
         return Err(Status::err(
             StatusCode::InvalidArgument,
             "primary key must reference an existing scalar field",

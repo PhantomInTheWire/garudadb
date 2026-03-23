@@ -64,7 +64,9 @@ fn create_scalar_index(
     field_name: &FieldName,
     params: IndexParams,
 ) -> Result<(), Status> {
-    let field = scalar_field_mut(schema, field_name)?;
+    let Some(field) = schema.scalar_field_mut(field_name) else {
+        return Err(Status::err(StatusCode::NotFound, "field not found"));
+    };
 
     match params {
         IndexParams::Scalar(_) => {
@@ -102,24 +104,11 @@ fn drop_scalar_index(
         ));
     }
 
-    let field = scalar_field_mut(schema, field_name)?;
-    field.index = ScalarIndexState::None;
-    Ok(())
-}
-
-fn scalar_field_mut<'a>(
-    schema: &'a mut CollectionSchema,
-    field_name: &FieldName,
-) -> Result<&'a mut ScalarFieldSchema, Status> {
-    let Some(field) = schema
-        .fields
-        .iter_mut()
-        .find(|field| field.name == *field_name)
-    else {
+    let Some(field) = schema.scalar_field_mut(field_name) else {
         return Err(Status::err(StatusCode::NotFound, "field not found"));
     };
-
-    Ok(field)
+    field.index = ScalarIndexState::None;
+    Ok(())
 }
 
 pub(crate) fn ensure_column_can_be_added(
@@ -173,7 +162,9 @@ pub(crate) fn rename_column(
         ));
     }
 
-    let field = scalar_field_mut(schema, old_name)?;
+    let Some(field) = schema.scalar_field_mut(old_name) else {
+        return Err(Status::err(StatusCode::NotFound, "field not found"));
+    };
     field.name = new_name.clone();
     Ok(())
 }

@@ -154,10 +154,7 @@ fn scalar_predicate(
     op: ScalarCompareOp,
     value: &ScalarValue,
 ) -> Option<ScalarPredicate> {
-    let field_schema = schema
-        .fields
-        .iter()
-        .find(|candidate| candidate.name.as_str() == field)?;
+    let field_schema = schema.scalar_field_by_name(field)?;
 
     if !supports_pushdown(field_schema, op, value) {
         return None;
