@@ -77,7 +77,7 @@ impl SegmentManager {
         }
 
         for segment in &self.persisted_segments {
-            if !segment_contains_doc_id(&segment.meta, doc_id) {
+            if !segment.meta.contains_doc_id(doc_id) {
                 continue;
             }
 
@@ -165,28 +165,20 @@ impl SegmentManager {
         self.rotate_writing_segment_if_needed(next_segment_id, segment_max_docs, schema);
     }
 
-    pub(crate) fn mark_writing_deleted(&mut self, doc_id: InternalDocId) -> bool {
-        let Some(record) = live_record_by_internal_id(&mut self.writing_segment.records, doc_id)
-        else {
-            return false;
-        };
-
-        record.state = RecordState::Deleted;
-        self.writing_segment.sync_meta();
-        true
-    }
-
     pub(crate) fn mark_deleted(
         &mut self,
         doc_id: InternalDocId,
         schema: &CollectionSchema,
     ) -> bool {
-        if self.mark_writing_deleted(doc_id) {
+        if let Some(record) = live_record_by_internal_id(&mut self.writing_segment.records, doc_id)
+        {
+            record.state = RecordState::Deleted;
+            self.writing_segment.sync_meta();
             return true;
         }
 
         for index in 0..self.persisted_segments.len() {
-            if !segment_contains_doc_id(&self.persisted_segments[index].meta, doc_id) {
+            if !self.persisted_segments[index].meta.contains_doc_id(doc_id) {
                 continue;
             }
 
@@ -289,17 +281,6 @@ fn collect_visible_records(
 
         out.push(record.clone());
     }
-}
-
-fn segment_contains_doc_id(meta: &garuda_types::SegmentMeta, doc_id: InternalDocId) -> bool {
-    let Some(min_doc_id) = meta.min_doc_id else {
-        return false;
-    };
-    let Some(max_doc_id) = meta.max_doc_id else {
-        return false;
-    };
-
-    min_doc_id <= doc_id && doc_id <= max_doc_id
 }
 
 fn record_in_segment_by_internal_id(
