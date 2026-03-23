@@ -12,7 +12,7 @@ use garuda_storage::{
 };
 use garuda_types::{
     CollectionOptions, CollectionSchema, InternalDocId, Manifest, ManifestVersionId, SegmentId,
-    SnapshotId, Status, VectorFieldSchema,
+    SnapshotId, Status,
 };
 use std::path::{Path, PathBuf};
 
@@ -26,7 +26,7 @@ pub(crate) fn create_collection_state(
     schema: CollectionSchema,
     options: CollectionOptions,
 ) -> CollectionRuntime {
-    let writing_segment = SegmentManager::empty_writing_segment(&schema.vector);
+    let writing_segment = SegmentManager::empty_writing_segment(&schema);
     let manifest = Manifest {
         schema,
         options,
@@ -50,9 +50,8 @@ pub(crate) fn create_collection_state(
 pub(crate) fn load_collection_state(path: PathBuf) -> Result<CollectionRuntime, Status> {
     let manifest = VersionManager::new(&path).read_latest_manifest()?;
     validate_schema(&manifest.schema)?;
-    let vector_field = manifest.schema.vector.clone();
-    let writing_segment = read_writing_segment(&path, &manifest.writing_segment, &vector_field)?;
-    let persisted_segments = load_persisted_segments(&path, &manifest, &vector_field)?;
+    let writing_segment = read_writing_segment(&path, &manifest.writing_segment, &manifest.schema)?;
+    let persisted_segments = load_persisted_segments(&path, &manifest)?;
     let id_map = IdMap::from(read_id_map_snapshot(&path, manifest.id_map_snapshot_id)?);
     let delete_store = DeleteStore::from(read_delete_snapshot(&path, manifest.delete_snapshot_id)?);
 
@@ -72,12 +71,11 @@ pub(crate) fn load_collection_state(path: PathBuf) -> Result<CollectionRuntime, 
 fn load_persisted_segments(
     path: &Path,
     manifest: &Manifest,
-    vector_field: &VectorFieldSchema,
 ) -> Result<Vec<PersistedSegment>, Status> {
     let mut segments = Vec::new();
 
     for meta in &manifest.persisted_segments {
-        segments.push(read_persisted_segment(path, meta, vector_field)?);
+        segments.push(read_persisted_segment(path, meta, &manifest.schema)?);
     }
 
     Ok(segments)

@@ -1,16 +1,18 @@
 use crate::filter::validate_filter;
 use crate::filter_parser::parse_filter;
 use crate::state::CollectionRuntime;
+use garuda_meta::DeleteStore;
 use garuda_planner::{QueryPlan, SegmentFilterPlan, SegmentSearchPlan, build_query_plan};
 use garuda_segment::{
-    FlatSearchRequest, HnswSegmentSearchRequest, PersistedSegment, SearchVisibility, SegmentFilter,
-    WritingSegment, search_persisted_flat, search_persisted_hnsw, search_writing_flat,
-    search_writing_hnsw,
+    FlatSearchRequest, HnswSegmentSearchRequest, PersistedSegment, SearchScope, SegmentFilter,
+    SegmentSearchHit, WritingSegment, search_persisted_flat, search_persisted_hnsw,
+    search_writing_flat, search_writing_hnsw,
 };
 use garuda_types::{
-    CollectionSchema, DenseVector, Doc, QueryVectorSource, Status, StatusCode, TopK,
-    VectorProjection, VectorQuery,
+    CollectionSchema, DenseVector, Doc, FilterExpr, InternalDocId, QueryVectorSource, Status,
+    StatusCode, TopK, VectorProjection, VectorQuery,
 };
+use std::collections::HashSet;
 
 pub(crate) fn parse_query_filter(
     raw_filter: Option<&str>,
@@ -26,7 +28,7 @@ pub(crate) fn parse_query_filter(
 pub(crate) fn parse_required_filter(
     raw_filter: &str,
     schema: &CollectionSchema,
-) -> Result<garuda_types::FilterExpr, Status> {
+) -> Result<FilterExpr, Status> {
     let expr = parse_filter(raw_filter)?;
     validate_filter(&expr, schema)?;
     Ok(expr)
@@ -37,7 +39,7 @@ pub(crate) fn execute_query(
     query: VectorQuery,
 ) -> Result<Vec<Doc>, Status> {
     let filter = parse_query_filter(query.filter.as_deref(), &state.catalog.schema)?;
-    let plan = build_query_plan(query, filter, &state.catalog.schema.vector.indexes);
+    let plan = build_query_plan(query, filter, &state.catalog.schema);
 
     if plan.field_name != state.catalog.schema.vector.name {
         return Err(Status::err(
@@ -129,32 +131,38 @@ fn collect_docs_from_persisted_segment(
     query_vector: &DenseVector,
     segment: &PersistedSegment,
 ) -> Result<(), Status> {
-    let filter = segment_filter(&plan.filter);
-    let hits = match plan.search {
-        SegmentSearchPlan::Flat => search_persisted_flat(
-            segment,
-            FlatSearchRequest {
-                metric: state.catalog.schema.vector.metric,
-                query_vector,
-                top_k: segment_top_k(segment.meta.doc_count),
-                filter,
-            },
-            SearchVisibility::HideDeleted(state.meta.delete_store()),
-        )?,
-        SegmentSearchPlan::Hnsw { ef_search } => search_persisted_hnsw(
-            segment,
-            HnswSegmentSearchRequest {
-                query_vector,
-                top_k: plan.top_k,
-                ef_search,
-                filter,
-            },
-            SearchVisibility::HideDeleted(state.meta.delete_store()),
-        )?,
-    };
-
-    collect_docs_from_hits(docs, hits);
-    Ok(())
+    let allowed_doc_ids = segment.prefilter_doc_ids(&plan.scalar_prefilter);
+    collect_segment_hits(
+        docs,
+        &allowed_doc_ids,
+        Some(state.meta.delete_store()),
+        match &plan.residual_filter {
+            SegmentFilterPlan::All => SegmentFilter::All,
+            SegmentFilterPlan::Matching(filter) => SegmentFilter::Matching(filter),
+        },
+        |scope, filter| match plan.search {
+            SegmentSearchPlan::Flat => search_persisted_flat(
+                segment,
+                FlatSearchRequest {
+                    metric: state.catalog.schema.vector.metric,
+                    query_vector,
+                    top_k: segment_top_k(segment.meta.doc_count),
+                    filter,
+                },
+                scope,
+            ),
+            SegmentSearchPlan::Hnsw { ef_search } => search_persisted_hnsw(
+                segment,
+                HnswSegmentSearchRequest {
+                    query_vector,
+                    top_k: plan.top_k,
+                    ef_search,
+                    filter,
+                },
+                scope,
+            ),
+        },
+    )
 }
 
 fn collect_docs_from_writing_segment(
@@ -164,38 +172,66 @@ fn collect_docs_from_writing_segment(
     query_vector: &DenseVector,
     segment: &WritingSegment,
 ) -> Result<(), Status> {
-    let filter = segment_filter(&plan.filter);
-    let hits = match plan.search {
-        SegmentSearchPlan::Flat => search_writing_flat(
-            segment,
-            FlatSearchRequest {
-                metric: state.catalog.schema.vector.metric,
-                query_vector,
-                top_k: segment_top_k(segment.meta.doc_count),
-                filter,
-            },
-        )?,
-        SegmentSearchPlan::Hnsw { ef_search } => search_writing_hnsw(
-            segment,
-            HnswSegmentSearchRequest {
-                query_vector,
-                top_k: plan.top_k,
-                ef_search,
-                filter,
-            },
-        )?,
-    };
-
-    collect_docs_from_hits(docs, hits);
-    Ok(())
+    let allowed_doc_ids = segment.prefilter_doc_ids(&plan.scalar_prefilter);
+    collect_segment_hits(
+        docs,
+        &allowed_doc_ids,
+        None,
+        match &plan.residual_filter {
+            SegmentFilterPlan::All => SegmentFilter::All,
+            SegmentFilterPlan::Matching(filter) => SegmentFilter::Matching(filter),
+        },
+        |scope, filter| match plan.search {
+            SegmentSearchPlan::Flat => search_writing_flat(
+                segment,
+                FlatSearchRequest {
+                    metric: state.catalog.schema.vector.metric,
+                    query_vector,
+                    top_k: segment_top_k(segment.meta.doc_count),
+                    filter,
+                },
+                scope,
+            ),
+            SegmentSearchPlan::Hnsw { ef_search } => search_writing_hnsw(
+                segment,
+                HnswSegmentSearchRequest {
+                    query_vector,
+                    top_k: plan.top_k,
+                    ef_search,
+                    filter,
+                },
+                scope,
+            ),
+        },
+    )
 }
 
-fn collect_docs_from_hits(docs: &mut Vec<Doc>, hits: Vec<garuda_segment::SegmentSearchHit>) {
+fn collect_segment_hits(
+    docs: &mut Vec<Doc>,
+    allowed_doc_ids: &Option<HashSet<InternalDocId>>,
+    delete_store: Option<&DeleteStore>,
+    filter: SegmentFilter<'_>,
+    search: impl FnOnce(SearchScope<'_>, SegmentFilter<'_>) -> Result<Vec<SegmentSearchHit>, Status>,
+) -> Result<(), Status> {
+    if matches!(allowed_doc_ids, Some(doc_ids) if doc_ids.is_empty()) {
+        return Ok(());
+    }
+
+    let hits = search(
+        SearchScope {
+            allowed_doc_ids: allowed_doc_ids.as_ref(),
+            delete_store,
+        },
+        filter,
+    )?;
+
     for hit in hits {
         let mut doc = hit.record.doc;
         doc.score = Some(hit.score);
         docs.push(doc);
     }
+
+    Ok(())
 }
 
 fn finalize_docs(mut docs: Vec<Doc>, plan: &QueryPlan) -> Vec<Doc> {
@@ -212,13 +248,6 @@ fn finalize_docs(mut docs: Vec<Doc>, plan: &QueryPlan) -> Vec<Doc> {
     }
 
     docs
-}
-
-fn segment_filter(filter: &SegmentFilterPlan) -> SegmentFilter<'_> {
-    match filter {
-        SegmentFilterPlan::All => SegmentFilter::All,
-        SegmentFilterPlan::Matching(filter) => SegmentFilter::Matching(filter),
-    }
 }
 
 fn segment_top_k(doc_count: usize) -> TopK {

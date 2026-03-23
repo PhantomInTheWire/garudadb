@@ -31,6 +31,7 @@ pub(crate) fn validate_schema(schema: &CollectionSchema) -> Result<(), Status> {
     let mut seen: HashSet<FieldName> = HashSet::new();
     for field in &schema.fields {
         validate_unique_field_name(&mut seen, field)?;
+        validate_scalar_index_field(field)?;
         validate_declared_default(field)?;
     }
 
@@ -113,4 +114,19 @@ fn validate_declared_default(field: &ScalarFieldSchema) -> Result<(), Status> {
     };
 
     validate_scalar_value(field.field_type, field.nullability, default_value)
+}
+
+fn validate_scalar_index_field(field: &ScalarFieldSchema) -> Result<(), Status> {
+    if !field.is_indexed() {
+        return Ok(());
+    }
+
+    if matches!(field.nullability, Nullability::Required) {
+        return Ok(());
+    }
+
+    Err(Status::err(
+        StatusCode::InvalidArgument,
+        "indexed scalar fields cannot be nullable",
+    ))
 }

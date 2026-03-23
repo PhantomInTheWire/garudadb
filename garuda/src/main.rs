@@ -3,8 +3,8 @@ use garuda_engine::Database;
 use garuda_types::{
     CollectionName, CollectionOptions, CollectionSchema, DistanceMetric, FieldName,
     FlatIndexParams, HnswIndexParams, IndexKind, IndexParams, Nullability, ScalarFieldSchema,
-    ScalarType, ScalarValue, TopK, VectorDimension, VectorFieldSchema, VectorIndexState,
-    VectorQuery,
+    ScalarIndexParams, ScalarIndexState, ScalarType, ScalarValue, TopK, VectorDimension,
+    VectorFieldSchema, VectorIndexState, VectorQuery,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -86,24 +86,28 @@ fn main() -> Result<(), String> {
                     ScalarFieldSchema {
                         name: field_name(PRIMARY_KEY_FIELD),
                         field_type: ScalarType::String,
+                        index: ScalarIndexState::None,
                         nullability: Nullability::Required,
                         default_value: None,
                     },
                     ScalarFieldSchema {
                         name: field_name("rank"),
                         field_type: ScalarType::Int64,
+                        index: ScalarIndexState::None,
                         nullability: Nullability::Required,
                         default_value: None,
                     },
                     ScalarFieldSchema {
                         name: field_name("category"),
                         field_type: ScalarType::String,
+                        index: ScalarIndexState::None,
                         nullability: Nullability::Required,
                         default_value: None,
                     },
                     ScalarFieldSchema {
                         name: field_name("score"),
                         field_type: ScalarType::Float64,
+                        index: ScalarIndexState::None,
                         nullability: Nullability::Required,
                         default_value: None,
                     },
@@ -231,6 +235,7 @@ fn parse_index_kind(raw: &str) -> Result<IndexKind, String> {
     match raw {
         "flat" => Ok(IndexKind::Flat),
         "hnsw" => Ok(IndexKind::Hnsw),
+        "scalar" => Ok(IndexKind::Scalar),
         _ => Err(format!("unsupported index kind: {raw}")),
     }
 }
@@ -239,6 +244,7 @@ fn index_params(kind: IndexKind) -> IndexParams {
     match kind {
         IndexKind::Flat => IndexParams::Flat(FlatIndexParams),
         IndexKind::Hnsw => IndexParams::Hnsw(HnswIndexParams::default()),
+        IndexKind::Scalar => IndexParams::Scalar(ScalarIndexParams),
     }
 }
 

@@ -3,8 +3,8 @@ use garuda_segment::{reset_wal, write_persisted_segment, write_writing_segment};
 use garuda_storage::{
     SnapshotKind, VersionManager, WRITING_SEGMENT_ID, delete_snapshot_path, id_map_snapshot_path,
     manifest_path, read_file, remove_old_snapshots, remove_path_if_exists, segment_data_path,
-    segment_dir, segment_flat_index_path, segment_hnsw_index_path, segment_wal_path,
-    write_delete_snapshot, write_file_atomically, write_id_map_snapshot,
+    segment_dir, segment_flat_index_path, segment_hnsw_index_path, segment_scalar_index_dir,
+    segment_wal_path, write_delete_snapshot, write_file_atomically, write_id_map_snapshot,
 };
 use garuda_types::{SegmentId, Status, StatusCode};
 use std::collections::HashSet;
@@ -20,10 +20,9 @@ pub(crate) fn checkpoint_state(state: &mut CollectionRuntime) -> Result<(), Stat
         state.catalog.manifest_version_id = state.catalog.manifest_version_id.next();
     }
 
-    state.segments.seal_writing_segment(
-        &mut state.catalog.next_segment_id,
-        &state.catalog.schema.vector,
-    );
+    state
+        .segments
+        .seal_writing_segment(&mut state.catalog.next_segment_id, &state.catalog.schema);
     state.rebuild_indexes();
 
     let rollback = capture_checkpoint_files(state)?;
@@ -83,13 +82,13 @@ fn write_checkpoint_files(
 
 fn write_all_segments(state: &CollectionRuntime) -> Result<(), Status> {
     for segment in state.segments.persisted_segments() {
-        write_persisted_segment(&state.path, segment, &state.catalog.schema.vector)?;
+        write_persisted_segment(&state.path, segment, &state.catalog.schema)?;
     }
 
     write_writing_segment(
         &state.path,
         state.segments.writing_segment(),
-        &state.catalog.schema.vector,
+        &state.catalog.schema,
     )
 }
 
@@ -151,45 +150,53 @@ fn capture_checkpoint_files(state: &CollectionRuntime) -> Result<CheckpointFiles
     let mut files = Vec::new();
 
     for segment in state.segments.persisted_segments() {
-        files.push(capture_file(&segment_data_path(
+        files.push(capture_path(&segment_data_path(
             &state.path,
             segment.meta.id,
         ))?);
-        files.push(capture_file(&segment_flat_index_path(
+        files.push(capture_path(&segment_flat_index_path(
             &state.path,
             segment.meta.id,
         ))?);
-        files.push(capture_file(&segment_hnsw_index_path(
+        files.push(capture_path(&segment_hnsw_index_path(
+            &state.path,
+            segment.meta.id,
+        ))?);
+        files.push(capture_path(&segment_scalar_index_dir(
             &state.path,
             segment.meta.id,
         ))?);
     }
 
-    files.push(capture_file(&segment_data_path(
+    files.push(capture_path(&segment_data_path(
         &state.path,
         WRITING_SEGMENT_ID,
     ))?);
-    files.push(capture_file(&segment_flat_index_path(
+    files.push(capture_path(&segment_flat_index_path(
         &state.path,
         WRITING_SEGMENT_ID,
     ))?);
-    files.push(capture_file(&segment_hnsw_index_path(
+    files.push(capture_path(&segment_hnsw_index_path(
         &state.path,
         WRITING_SEGMENT_ID,
     ))?);
-    files.push(capture_file(&id_map_snapshot_path(
+    files.push(capture_path(&segment_scalar_index_dir(
+        &state.path,
+        WRITING_SEGMENT_ID,
+    ))?);
+    files.push(capture_path(&id_map_snapshot_path(
         &state.path,
         state.catalog.id_map_snapshot_id,
     ))?);
-    files.push(capture_file(&delete_snapshot_path(
+    files.push(capture_path(&delete_snapshot_path(
         &state.path,
         state.catalog.delete_snapshot_id,
     ))?);
-    files.push(capture_file(&segment_wal_path(
+    files.push(capture_path(&segment_wal_path(
         &state.path,
         WRITING_SEGMENT_ID,
     ))?);
-    files.push(capture_file(&manifest_path(
+    files.push(capture_path(&manifest_path(
         &state.path,
         state.catalog.manifest_version_id,
     ))?);
@@ -197,48 +204,106 @@ fn capture_checkpoint_files(state: &CollectionRuntime) -> Result<CheckpointFiles
     Ok(CheckpointFiles { files })
 }
 
-fn capture_file(path: &Path) -> Result<FileBackup, Status> {
-    let original_bytes = if path.exists() {
-        Some(read_file(path)?)
-    } else {
-        None
-    };
+fn capture_path(path: &Path) -> Result<PathBackup, Status> {
+    if !path.exists() {
+        return Ok(PathBackup {
+            path: path.to_path_buf(),
+            state: PathState::Missing,
+        });
+    }
 
-    Ok(FileBackup {
+    if path.is_dir() {
+        return Ok(PathBackup {
+            path: path.to_path_buf(),
+            state: PathState::Dir(capture_dir_entries(path)?),
+        });
+    }
+
+    Ok(PathBackup {
         path: path.to_path_buf(),
-        original_bytes,
+        state: PathState::File(read_file(path)?),
     })
 }
 
+fn capture_dir_entries(path: &Path) -> Result<Vec<DirEntryBackup>, Status> {
+    let mut entries = Vec::new();
+    let read_dir = std::fs::read_dir(path).map_err(|error| {
+        Status::err(
+            StatusCode::Internal,
+            format!("failed to read directory {}: {error}", path.display()),
+        )
+    })?;
+
+    for entry in read_dir {
+        let entry = entry.map_err(|error| {
+            Status::err(
+                StatusCode::Internal,
+                format!("failed to read directory entry: {error}"),
+            )
+        })?;
+        let child_path = entry.path();
+
+        if child_path.is_dir() {
+            entries.extend(capture_dir_entries(&child_path)?);
+            continue;
+        }
+
+        let relative_path = child_path
+            .strip_prefix(path)
+            .expect("directory child should strip prefix")
+            .to_path_buf();
+        entries.push(DirEntryBackup {
+            relative_path,
+            bytes: read_file(&child_path)?,
+        });
+    }
+
+    Ok(entries)
+}
+
 struct CheckpointFiles {
-    files: Vec<FileBackup>,
+    files: Vec<PathBackup>,
 }
 
 impl CheckpointFiles {
     fn restore(self) -> Result<(), Status> {
         for file in self.files {
-            restore_file(file)?;
+            restore_path(file)?;
         }
 
         Ok(())
     }
 }
 
-struct FileBackup {
+struct PathBackup {
     path: PathBuf,
-    original_bytes: Option<Vec<u8>>,
+    state: PathState,
 }
 
-fn restore_file(file: FileBackup) -> Result<(), Status> {
-    let Some(original_bytes) = file.original_bytes else {
-        remove_path_if_exists(&file.path)?;
-        return Ok(());
-    };
+enum PathState {
+    Missing,
+    File(Vec<u8>),
+    Dir(Vec<DirEntryBackup>),
+}
 
-    let parent = file.path.parent().ok_or_else(|| {
+struct DirEntryBackup {
+    relative_path: PathBuf,
+    bytes: Vec<u8>,
+}
+
+fn restore_path(path: PathBackup) -> Result<(), Status> {
+    match path.state {
+        PathState::Missing => remove_path_if_exists(&path.path),
+        PathState::File(bytes) => restore_file(&path.path, &bytes),
+        PathState::Dir(entries) => restore_dir(&path.path, entries),
+    }
+}
+
+fn restore_file(path: &Path, bytes: &[u8]) -> Result<(), Status> {
+    let parent = path.parent().ok_or_else(|| {
         Status::err(
             StatusCode::Internal,
-            format!("cannot determine parent for {}", file.path.display()),
+            format!("cannot determine parent for {}", path.display()),
         )
     })?;
 
@@ -249,5 +314,22 @@ fn restore_file(file: FileBackup) -> Result<(), Status> {
         )
     })?;
 
-    write_file_atomically(&file.path, &original_bytes)
+    write_file_atomically(path, bytes)
+}
+
+fn restore_dir(path: &Path, entries: Vec<DirEntryBackup>) -> Result<(), Status> {
+    remove_path_if_exists(path)?;
+    std::fs::create_dir_all(path).map_err(|error| {
+        Status::err(
+            StatusCode::Internal,
+            format!("failed to create directory {}: {error}", path.display()),
+        )
+    })?;
+
+    for entry in entries {
+        let entry_path = path.join(entry.relative_path);
+        restore_file(&entry_path, &entry.bytes)?;
+    }
+
+    Ok(())
 }

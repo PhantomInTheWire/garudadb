@@ -2,8 +2,8 @@ mod common;
 
 use common::{database, default_options, default_schema, doc_id, field_name, seed_collection};
 use garuda_types::{
-    DenseVector, Doc, HnswIndexParams, IndexKind, IndexParams, ScalarFieldSchema, ScalarType,
-    ScalarValue, VectorIndexState,
+    DenseVector, Doc, HnswIndexParams, IndexKind, IndexParams, ScalarFieldSchema, ScalarIndexState,
+    ScalarType, ScalarValue, VectorIndexState,
 };
 use std::collections::BTreeMap;
 
@@ -30,6 +30,7 @@ fn create_drop_index_and_column_ddl_roundtrip() {
         .add_column(ScalarFieldSchema {
             name: field_name("flag"),
             field_type: ScalarType::Bool,
+            index: ScalarIndexState::None,
             nullability: garuda_types::Nullability::Nullable,
             default_value: None,
         })
@@ -52,6 +53,95 @@ fn create_drop_index_and_column_ddl_roundtrip() {
     assert_eq!(
         collection.schema().vector.indexes,
         VectorIndexState::DefaultFlat
+    );
+}
+
+#[test]
+fn create_and_drop_scalar_index_uses_scalar_field_state() {
+    let (_root, db) = database("ddl-scalar-index");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+
+    collection
+        .create_index(
+            &field_name("category"),
+            IndexParams::Scalar(garuda_types::ScalarIndexParams),
+        )
+        .expect("create scalar index");
+    assert!(
+        collection
+            .schema()
+            .fields
+            .iter()
+            .find(|field| field.name == field_name("category"))
+            .expect("category field")
+            .index
+            .is_indexed()
+    );
+
+    collection
+        .drop_index(&field_name("category"), IndexKind::Scalar)
+        .expect("drop scalar index");
+    assert!(
+        !collection
+            .schema()
+            .fields
+            .iter()
+            .find(|field| field.name == field_name("category"))
+            .expect("category field")
+            .index
+            .is_indexed()
+    );
+}
+
+#[test]
+fn create_index_rejects_wrong_field_kind() {
+    let (_root, db) = database("ddl-wrong-index-kind");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+
+    let vector_on_scalar = collection.create_index(
+        &field_name("category"),
+        IndexParams::Hnsw(HnswIndexParams::default()),
+    );
+    assert!(vector_on_scalar.is_err());
+    assert_eq!(
+        collection.schema().vector.indexes,
+        VectorIndexState::DefaultFlat
+    );
+
+    let scalar_on_vector = collection.create_index(
+        &field_name("embedding"),
+        IndexParams::Scalar(garuda_types::ScalarIndexParams),
+    );
+    assert!(scalar_on_vector.is_err());
+    assert_eq!(
+        collection.schema().vector.indexes,
+        VectorIndexState::DefaultFlat
+    );
+}
+
+#[test]
+fn invalid_drop_index_leaves_vector_state_unchanged() {
+    let (_root, db) = database("ddl-invalid-drop-index");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+
+    collection
+        .create_index(
+            &field_name("embedding"),
+            IndexParams::Hnsw(HnswIndexParams::default()),
+        )
+        .expect("create hnsw index");
+
+    let result = collection.drop_index(&field_name("embedding"), IndexKind::Scalar);
+    assert!(result.is_err());
+    assert_eq!(
+        collection.schema().vector.indexes.default_kind(),
+        IndexKind::Hnsw
     );
 }
 
@@ -85,6 +175,7 @@ fn add_non_nullable_column_requires_a_backfill_strategy() {
     let result = collection.add_column(ScalarFieldSchema {
         name: field_name("required_flag"),
         field_type: ScalarType::Bool,
+        index: ScalarIndexState::None,
         nullability: garuda_types::Nullability::Required,
         default_value: None,
     });
@@ -107,6 +198,7 @@ fn add_column_with_default_backfills_existing_rows() {
         .add_column(ScalarFieldSchema {
             name: field_name("is_public"),
             field_type: ScalarType::Bool,
+            index: ScalarIndexState::None,
             nullability: garuda_types::Nullability::Required,
             default_value: Some(ScalarValue::Bool(true)),
         })
@@ -134,6 +226,7 @@ fn add_column_rejects_default_with_wrong_type() {
     let result = collection.add_column(ScalarFieldSchema {
         name: field_name("is_public"),
         field_type: ScalarType::Bool,
+        index: ScalarIndexState::None,
         nullability: garuda_types::Nullability::Required,
         default_value: Some(ScalarValue::String(String::from("yes"))),
     });
@@ -155,6 +248,7 @@ fn inserts_apply_schema_defaults_after_add_column() {
         .add_column(ScalarFieldSchema {
             name: field_name("is_public"),
             field_type: ScalarType::Bool,
+            index: ScalarIndexState::None,
             nullability: garuda_types::Nullability::Required,
             default_value: Some(ScalarValue::Bool(true)),
         })
@@ -220,4 +314,36 @@ fn renamed_column_survives_reopen_and_query_projection_uses_new_name() {
     query.output_fields = Some(vec!["label".to_string()]);
     let results = reopened.query(query).expect("query");
     assert!(results.iter().all(|doc| doc.fields.contains_key("label")));
+}
+
+#[test]
+fn renamed_indexed_scalar_column_remains_queryable() {
+    let (_root, db) = database("ddl-rename-indexed-scalar");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+    seed_collection(&collection);
+
+    collection
+        .create_index(
+            &field_name("category"),
+            IndexParams::Scalar(garuda_types::ScalarIndexParams),
+        )
+        .expect("create scalar index");
+    collection
+        .alter_column(&field_name("category"), &field_name("label"))
+        .expect("rename indexed column");
+
+    let mut query = garuda_types::VectorQuery::by_vector(
+        field_name("embedding"),
+        common::dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
+        common::top_k(10),
+    );
+    query.filter = Some("label = 'alpha'".to_string());
+
+    let results = collection
+        .query(query)
+        .expect("query renamed indexed field");
+    let ids: Vec<_> = results.into_iter().map(|doc| doc.id).collect();
+    assert_eq!(ids, vec![doc_id("doc-1"), doc_id("doc-2")]);
 }

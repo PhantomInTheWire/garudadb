@@ -3,8 +3,8 @@
 use garuda_engine::{Collection, Database};
 use garuda_types::{
     AccessMode, CollectionName, CollectionOptions, CollectionSchema, DenseVector, DistanceMetric,
-    Doc, DocId, FieldName, Nullability, ScalarFieldSchema, ScalarType, ScalarValue, StorageAccess,
-    TopK, VectorDimension, VectorFieldSchema, VectorIndexState,
+    Doc, DocId, FieldName, Nullability, ScalarFieldSchema, ScalarIndexState, ScalarType,
+    ScalarValue, StorageAccess, TopK, VectorDimension, VectorFieldSchema, VectorIndexState,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -32,24 +32,28 @@ pub fn default_schema(name: &str) -> CollectionSchema {
             ScalarFieldSchema {
                 name: field_name("pk"),
                 field_type: ScalarType::String,
+                index: ScalarIndexState::None,
                 nullability: Nullability::Required,
                 default_value: None,
             },
             ScalarFieldSchema {
                 name: field_name("rank"),
                 field_type: ScalarType::Int64,
+                index: ScalarIndexState::None,
                 nullability: Nullability::Required,
                 default_value: None,
             },
             ScalarFieldSchema {
                 name: field_name("category"),
                 field_type: ScalarType::String,
+                index: ScalarIndexState::None,
                 nullability: Nullability::Required,
                 default_value: None,
             },
             ScalarFieldSchema {
                 name: field_name("score"),
                 field_type: ScalarType::Float64,
+                index: ScalarIndexState::None,
                 nullability: Nullability::Required,
                 default_value: None,
             },

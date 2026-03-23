@@ -69,7 +69,7 @@ impl CollectionRuntime {
     }
 
     pub(crate) fn rebuild_indexes(&mut self) {
-        self.segments.rebuild_indexes(&self.catalog.schema.vector);
+        self.segments.rebuild_indexes(&self.catalog.schema);
         self.refresh_metadata();
     }
 
@@ -102,7 +102,7 @@ impl CollectionRuntime {
             doc,
             &mut self.catalog.next_segment_id,
             self.catalog.options.segment_max_docs,
-            &self.catalog.schema.vector,
+            &self.catalog.schema,
         );
     }
 
@@ -118,10 +118,7 @@ impl CollectionRuntime {
             return false;
         }
 
-        if !self
-            .segments
-            .mark_deleted(doc_id, &self.catalog.schema.vector)
-        {
+        if !self.segments.mark_deleted(doc_id, &self.catalog.schema) {
             return false;
         }
 

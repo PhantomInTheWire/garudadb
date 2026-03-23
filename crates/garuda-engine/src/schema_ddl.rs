@@ -1,43 +1,125 @@
 use garuda_types::{
-    CollectionSchema, FieldName, IndexKind, IndexParams, ScalarFieldSchema, Status, StatusCode,
+    CollectionSchema, FieldName, IndexKind, IndexParams, Nullability, ScalarFieldSchema,
+    ScalarIndexState, Status, StatusCode,
 };
 
-pub(crate) fn ensure_vector_index_field(
-    schema: &CollectionSchema,
+pub(crate) fn create_index(
+    schema: &mut CollectionSchema,
     field_name: &FieldName,
+    params: IndexParams,
 ) -> Result<(), Status> {
     if *field_name == schema.vector.name {
+        return create_vector_index(schema, params);
+    }
+
+    create_scalar_index(schema, field_name, params)
+}
+
+pub(crate) fn drop_index(
+    schema: &mut CollectionSchema,
+    field_name: &FieldName,
+    kind: IndexKind,
+) -> Result<(), Status> {
+    if *field_name == schema.vector.name {
+        return drop_vector_index(schema, kind);
+    }
+
+    drop_scalar_index(schema, field_name, kind)
+}
+
+fn create_vector_index(schema: &mut CollectionSchema, params: IndexParams) -> Result<(), Status> {
+    schema.vector.indexes = match params {
+        IndexParams::Flat(_) => schema.vector.indexes.clone().enable_flat(),
+        IndexParams::Hnsw(params) => {
+            params.neighbor_config()?;
+            schema.vector.indexes.clone().enable_hnsw(params)
+        }
+        IndexParams::Scalar(_) => {
+            return Err(Status::err(
+                StatusCode::InvalidArgument,
+                "cannot create a scalar index on the vector field",
+            ));
+        }
+    };
+
+    Ok(())
+}
+
+fn drop_vector_index(schema: &mut CollectionSchema, kind: IndexKind) -> Result<(), Status> {
+    schema.vector.indexes = match kind {
+        IndexKind::Flat | IndexKind::Hnsw => schema.vector.indexes.clone().drop(kind),
+        IndexKind::Scalar => {
+            return Err(Status::err(
+                StatusCode::InvalidArgument,
+                "cannot drop a scalar index from the vector field",
+            ));
+        }
+    };
+
+    Ok(())
+}
+
+fn create_scalar_index(
+    schema: &mut CollectionSchema,
+    field_name: &FieldName,
+    params: IndexParams,
+) -> Result<(), Status> {
+    let field = scalar_field_mut(schema, field_name)?;
+
+    match params {
+        IndexParams::Scalar(_) => {
+            ensure_scalar_field_can_be_indexed(field)?;
+            field.index = ScalarIndexState::Indexed;
+            Ok(())
+        }
+        IndexParams::Flat(_) | IndexParams::Hnsw(_) => Err(Status::err(
+            StatusCode::InvalidArgument,
+            "cannot create a vector index on a scalar field",
+        )),
+    }
+}
+
+fn ensure_scalar_field_can_be_indexed(field: &ScalarFieldSchema) -> Result<(), Status> {
+    if matches!(field.nullability, Nullability::Required) {
         return Ok(());
     }
 
     Err(Status::err(
         StatusCode::InvalidArgument,
-        "cannot create a vector index on a scalar field",
+        "indexed scalar fields cannot be nullable",
     ))
 }
 
-pub(crate) fn enable_vector_index(
+fn drop_scalar_index(
     schema: &mut CollectionSchema,
-    params: IndexParams,
+    field_name: &FieldName,
+    kind: IndexKind,
 ) -> Result<(), Status> {
-    if let IndexParams::Hnsw(params) = &params {
-        params.neighbor_config()?;
+    if kind != IndexKind::Scalar {
+        return Err(Status::err(
+            StatusCode::InvalidArgument,
+            "cannot drop a vector index from a scalar field",
+        ));
     }
 
-    let current = std::mem::replace(
-        &mut schema.vector.indexes,
-        garuda_types::VectorIndexState::DefaultFlat,
-    );
-    schema.vector.indexes = current.enable(params);
+    let field = scalar_field_mut(schema, field_name)?;
+    field.index = ScalarIndexState::None;
     Ok(())
 }
 
-pub(crate) fn drop_vector_index(schema: &mut CollectionSchema, kind: IndexKind) {
-    let current = std::mem::replace(
-        &mut schema.vector.indexes,
-        garuda_types::VectorIndexState::DefaultFlat,
-    );
-    schema.vector.indexes = current.drop(kind);
+fn scalar_field_mut<'a>(
+    schema: &'a mut CollectionSchema,
+    field_name: &FieldName,
+) -> Result<&'a mut ScalarFieldSchema, Status> {
+    let Some(field) = schema
+        .fields
+        .iter_mut()
+        .find(|field| field.name == *field_name)
+    else {
+        return Err(Status::err(StatusCode::NotFound, "field not found"));
+    };
+
+    Ok(field)
 }
 
 pub(crate) fn ensure_column_can_be_added(
@@ -91,14 +173,7 @@ pub(crate) fn rename_column(
         ));
     }
 
-    let Some(field) = schema
-        .fields
-        .iter_mut()
-        .find(|field| field.name == *old_name)
-    else {
-        return Err(Status::err(StatusCode::NotFound, "field not found"));
-    };
-
+    let field = scalar_field_mut(schema, old_name)?;
     field.name = new_name.clone();
     Ok(())
 }

@@ -4,7 +4,7 @@ use garuda_segment::{
     segment_file_name, segment_meta,
 };
 use garuda_storage::WRITING_SEGMENT_ID;
-use garuda_types::{Doc, InternalDocId, SegmentId, VectorFieldSchema};
+use garuda_types::{CollectionSchema, Doc, InternalDocId, SegmentId};
 
 #[derive(Clone)]
 pub(crate) struct SegmentManager {
@@ -23,8 +23,8 @@ impl SegmentManager {
         }
     }
 
-    pub(crate) fn empty_writing_segment(vector_field: &VectorFieldSchema) -> WritingSegment {
-        WritingSegment::new(segment_meta(WRITING_SEGMENT_ID), Vec::new(), vector_field)
+    pub(crate) fn empty_writing_segment(schema: &CollectionSchema) -> WritingSegment {
+        WritingSegment::new(segment_meta(WRITING_SEGMENT_ID), Vec::new(), schema)
     }
 
     pub(crate) fn persisted_segments(&self) -> &[PersistedSegment] {
@@ -108,18 +108,18 @@ impl SegmentManager {
         index_segment_meta(&self.writing_segment.records, meta);
     }
 
-    pub(crate) fn rebuild_indexes(&mut self, vector_field: &VectorFieldSchema) {
+    pub(crate) fn rebuild_indexes(&mut self, schema: &CollectionSchema) {
         self.persisted_segments = self
             .persisted_segments
             .iter()
             .map(|segment| {
-                PersistedSegment::new(segment.meta.clone(), segment.records.clone(), vector_field)
+                PersistedSegment::new(segment.meta.clone(), segment.records.clone(), schema)
             })
             .collect();
         self.writing_segment = WritingSegment::new(
             self.writing_segment.meta.clone(),
             self.writing_segment.records.clone(),
-            vector_field,
+            schema,
         );
     }
 
@@ -129,7 +129,7 @@ impl SegmentManager {
         doc: Doc,
         next_segment_id: &mut SegmentId,
         segment_max_docs: usize,
-        vector_field: &VectorFieldSchema,
+        schema: &CollectionSchema,
     ) {
         self.writing_segment.records.push(StoredRecord {
             doc_id,
@@ -145,8 +145,25 @@ impl SegmentManager {
             index.insert(doc_id, doc.vector);
         }
 
+        for field in &schema.fields {
+            if !field.is_indexed() {
+                continue;
+            }
+
+            let value = doc
+                .fields
+                .get(field.name.as_str())
+                .expect("validated indexed scalar field should exist");
+            let index = self
+                .writing_segment
+                .scalar_indexes
+                .get_mut(&field.name)
+                .expect("enabled writing scalar index should exist");
+            index.insert(doc_id, value);
+        }
+
         self.writing_segment.sync_meta();
-        self.rotate_writing_segment_if_needed(next_segment_id, segment_max_docs, vector_field);
+        self.rotate_writing_segment_if_needed(next_segment_id, segment_max_docs, schema);
     }
 
     pub(crate) fn mark_writing_deleted(&mut self, doc_id: InternalDocId) -> bool {
@@ -163,7 +180,7 @@ impl SegmentManager {
     pub(crate) fn mark_deleted(
         &mut self,
         doc_id: InternalDocId,
-        vector_field: &VectorFieldSchema,
+        schema: &CollectionSchema,
     ) -> bool {
         if self.mark_writing_deleted(doc_id) {
             return true;
@@ -180,7 +197,7 @@ impl SegmentManager {
             };
 
             record.state = RecordState::Deleted;
-            segment.rebuild_search_resources(vector_field);
+            segment.rebuild_search_resources(schema);
             return true;
         }
 
@@ -191,14 +208,14 @@ impl SegmentManager {
         &mut self,
         next_segment_id: &mut SegmentId,
         segment_max_docs: usize,
-        vector_field: &VectorFieldSchema,
+        schema: &CollectionSchema,
         is_deleted: impl Fn(InternalDocId) -> bool,
     ) {
         let all_live_records = self.all_live_records(is_deleted);
         let rebuilt_capacity =
             (all_live_records.len() + segment_max_docs.saturating_sub(1)) / segment_max_docs.max(1);
         let mut rebuilt_segments = Vec::with_capacity(rebuilt_capacity);
-        let mut current_segment = Self::empty_writing_segment(vector_field);
+        let mut current_segment = Self::empty_writing_segment(schema);
 
         for record in all_live_records {
             if current_segment.records.len() >= segment_max_docs {
@@ -206,9 +223,9 @@ impl SegmentManager {
                     &mut rebuilt_segments,
                     current_segment,
                     next_segment_id,
-                    vector_field,
+                    schema,
                 );
-                current_segment = Self::empty_writing_segment(vector_field);
+                current_segment = Self::empty_writing_segment(schema);
             }
 
             current_segment.records.push(record);
@@ -219,21 +236,21 @@ impl SegmentManager {
                 &mut rebuilt_segments,
                 current_segment,
                 next_segment_id,
-                vector_field,
+                schema,
             );
         }
 
         self.persisted_segments = rebuilt_segments;
-        self.writing_segment = Self::empty_writing_segment(vector_field);
+        self.writing_segment = Self::empty_writing_segment(schema);
     }
 
     pub(crate) fn seal_writing_segment(
         &mut self,
         next_segment_id: &mut SegmentId,
-        vector_field: &VectorFieldSchema,
+        schema: &CollectionSchema,
     ) {
         if self.writing_segment.meta.doc_count == 0 {
-            self.writing_segment = Self::empty_writing_segment(vector_field);
+            self.writing_segment = Self::empty_writing_segment(schema);
             return;
         }
 
@@ -241,23 +258,23 @@ impl SegmentManager {
         *next_segment_id = next_segment_id.next();
         let writing = std::mem::replace(
             &mut self.writing_segment,
-            Self::empty_writing_segment(vector_field),
+            Self::empty_writing_segment(schema),
         );
         self.persisted_segments
-            .push(seal_writing_segment(writing, segment_id, vector_field));
+            .push(seal_writing_segment(writing, segment_id, schema));
     }
 
     fn rotate_writing_segment_if_needed(
         &mut self,
         next_segment_id: &mut SegmentId,
         segment_max_docs: usize,
-        vector_field: &VectorFieldSchema,
+        schema: &CollectionSchema,
     ) {
         if self.writing_segment.meta.doc_count < segment_max_docs {
             return;
         }
 
-        self.seal_writing_segment(next_segment_id, vector_field);
+        self.seal_writing_segment(next_segment_id, schema);
     }
 }
 
@@ -314,11 +331,11 @@ fn seal_segment(
     rebuilt_segments: &mut Vec<PersistedSegment>,
     current_segment: WritingSegment,
     next_segment_id: &mut SegmentId,
-    vector_field: &VectorFieldSchema,
+    schema: &CollectionSchema,
 ) {
     let new_id = *next_segment_id;
     *next_segment_id = next_segment_id.next();
-    let mut segment = seal_writing_segment(current_segment, new_id, vector_field);
+    let mut segment = seal_writing_segment(current_segment, new_id, schema);
     segment.meta.path = segment_file_name(new_id);
     rebuilt_segments.push(segment);
 }
