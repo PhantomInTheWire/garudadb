@@ -258,6 +258,22 @@ pub struct CollectionSchema {
     pub vector: VectorFieldSchema,
 }
 
+impl CollectionSchema {
+    pub fn scalar_field(&self, field_name: &FieldName) -> Option<&ScalarFieldSchema> {
+        self.fields.iter().find(|field| field.name == *field_name)
+    }
+
+    pub fn scalar_field_by_name(&self, field_name: &str) -> Option<&ScalarFieldSchema> {
+        self.fields
+            .iter()
+            .find(|field| field.name.as_str() == field_name)
+    }
+
+    pub fn scalar_field_mut(&mut self, field_name: &FieldName) -> Option<&mut ScalarFieldSchema> {
+        self.fields.iter_mut().find(|field| field.name == *field_name)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CollectionOptions {
     pub access_mode: AccessMode,

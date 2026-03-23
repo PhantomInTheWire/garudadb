@@ -29,11 +29,7 @@ fn field_schema<'a>(
     schema: &'a CollectionSchema,
     field: &str,
 ) -> Result<&'a ScalarFieldSchema, Status> {
-    let Some(field_schema) = schema
-        .fields
-        .iter()
-        .find(|candidate| candidate.name.as_str() == field)
-    else {
+    let Some(field_schema) = schema.scalar_field_by_name(field) else {
         return Err(Status::err(
             StatusCode::InvalidArgument,
             format!("unknown filter field: {field}"),
