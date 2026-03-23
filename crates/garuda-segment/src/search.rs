@@ -2,8 +2,6 @@ use crate::types::{
     PersistedSegment, RecordState, SegmentFilter, SegmentSearchHit, SegmentSearchRequest,
     StoredRecord, WritingSegment,
 };
-use garuda_index_flat::FlatSearchHit;
-use garuda_index_hnsw::HnswHit;
 use garuda_meta::{DeleteStore, evaluate_filter};
 use garuda_types::{HnswEfSearch, InternalDocId, Status, TopK};
 use std::collections::{HashMap, HashSet};
@@ -52,13 +50,11 @@ pub fn search_writing(
     request: SegmentSearchRequest<'_>,
     allowed_doc_ids: Option<&HashSet<InternalDocId>>,
 ) -> Result<Vec<SegmentSearchHit>, Status> {
-    search_segment(
+    search(
         SearchSegment::Writing(segment),
         request,
-        SearchScope {
-            allowed_doc_ids,
-            delete_store: None,
-        },
+        allowed_doc_ids,
+        None,
     )
 }
 
@@ -68,21 +64,24 @@ pub fn search_persisted(
     allowed_doc_ids: Option<&HashSet<InternalDocId>>,
     delete_store: &DeleteStore,
 ) -> Result<Vec<SegmentSearchHit>, Status> {
-    search_segment(
+    search(
         SearchSegment::Persisted(segment),
         request,
-        SearchScope {
-            allowed_doc_ids,
-            delete_store: Some(delete_store),
-        },
+        allowed_doc_ids,
+        Some(delete_store),
     )
 }
 
-fn search_segment(
+fn search(
     segment: SearchSegment<'_>,
     request: SegmentSearchRequest<'_>,
-    scope: SearchScope<'_>,
+    allowed_doc_ids: Option<&HashSet<InternalDocId>>,
+    delete_store: Option<&DeleteStore>,
 ) -> Result<Vec<SegmentSearchHit>, Status> {
+    let scope = SearchScope {
+        allowed_doc_ids,
+        delete_store,
+    };
     let records = segment.records();
     let record_indexes = live_record_indexes(records, scope);
 
@@ -121,7 +120,7 @@ fn search_segment(
 
             Ok(collect_search_hits(
                 records,
-                hits.into_iter().map(flat_hit),
+                hits.into_iter().map(|hit| (hit.doc_id, hit.score)),
                 request.filter,
                 record_indexes,
             ))
@@ -152,7 +151,7 @@ fn search_segment(
 
             Ok(collect_search_hits(
                 records,
-                hits.into_iter().map(hnsw_hit),
+                hits.into_iter().map(|hit| (hit.doc_id, hit.score)),
                 request.filter,
                 record_indexes,
             ))
@@ -221,12 +220,4 @@ fn search_candidate_ef_search(ef_search: HnswEfSearch, candidate_top_k: TopK) ->
     let candidate_limit = candidate_top_k.get() as u32;
     let widened = ef_search.get().max(candidate_limit);
     HnswEfSearch::new(widened).expect("candidate ef_search should stay valid")
-}
-
-fn flat_hit(hit: FlatSearchHit) -> (InternalDocId, f32) {
-    (hit.doc_id, hit.score)
-}
-
-fn hnsw_hit(hit: HnswHit) -> (InternalDocId, f32) {
-    (hit.doc_id, hit.score)
 }
