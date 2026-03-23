@@ -39,7 +39,7 @@ impl CollectionRuntime {
 
         let inserted_doc_id = doc.id.clone();
         self.append_new_record(doc);
-        self.finish_mutation();
+        self.refresh_metadata();
         WriteResult::ok(inserted_doc_id)
     }
 
@@ -55,7 +55,7 @@ impl CollectionRuntime {
 
         self.delete_existing_if_present(&doc.id);
         self.append_new_record(merged_doc);
-        self.finish_mutation();
+        self.refresh_metadata();
         WriteResult::ok(doc.id)
     }
 
@@ -64,7 +64,7 @@ impl CollectionRuntime {
             return WriteResult::err(id, StatusCode::NotFound, "document not found");
         }
 
-        self.finish_mutation();
+        self.refresh_metadata();
         WriteResult::ok(id)
     }
 
@@ -74,9 +74,7 @@ impl CollectionRuntime {
     }
 
     pub(crate) fn live_doc_count(&self) -> usize {
-        self.segments
-            .all_live_records(|doc_id| self.meta.is_deleted(doc_id))
-            .len()
+        self.all_live_records().len()
     }
 
     pub(crate) fn all_live_records(&self) -> Vec<StoredRecord> {
@@ -104,10 +102,6 @@ impl CollectionRuntime {
             self.catalog.options.segment_max_docs,
             &self.catalog.schema,
         );
-    }
-
-    fn finish_mutation(&mut self) {
-        self.refresh_metadata();
     }
 
     fn delete_existing_if_present(&mut self, id: &DocId) -> bool {
