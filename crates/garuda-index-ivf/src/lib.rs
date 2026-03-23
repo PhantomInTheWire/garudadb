@@ -1,7 +1,7 @@
 use garuda_math::score_doc;
 use garuda_types::{
-    DenseVector, DistanceMetric, InternalDocId, IvfIndexParams, IvfProbeCount,
-    Status, StatusCode, TopK, VectorDimension,
+    DenseVector, DistanceMetric, InternalDocId, IvfIndexParams, IvfProbeCount, Status, StatusCode,
+    TopK, VectorDimension,
 };
 use std::collections::HashMap;
 
@@ -12,7 +12,11 @@ pub struct IvfBuildEntry {
 }
 
 impl IvfBuildEntry {
-    pub fn new(dimension: VectorDimension, doc_id: InternalDocId, vector: DenseVector) -> Result<Self, Status> {
+    pub fn new(
+        dimension: VectorDimension,
+        doc_id: InternalDocId,
+        vector: DenseVector,
+    ) -> Result<Self, Status> {
         if vector.len() != dimension.get() {
             return Err(Status::err(
                 StatusCode::InvalidArgument,
@@ -225,7 +229,11 @@ fn assign_entries(
     assignments
 }
 
-fn nearest_centroid(metric: DistanceMetric, vector: &DenseVector, centroids: &[DenseVector]) -> usize {
+fn nearest_centroid(
+    metric: DistanceMetric,
+    vector: &DenseVector,
+    centroids: &[DenseVector],
+) -> usize {
     let mut best_index = 0usize;
     let mut best_score = score_doc(metric, vector.as_slice(), centroids[0].as_slice());
 
@@ -375,11 +383,20 @@ fn search_entries(
     for (list_index, centroid) in centroids.iter().enumerate() {
         list_scores.push((
             list_index,
-            score_doc(config.metric, request.query_vector.as_slice(), centroid.as_slice()),
+            score_doc(
+                config.metric,
+                request.query_vector.as_slice(),
+                centroid.as_slice(),
+            ),
         ));
     }
 
-    list_scores.sort_by(|left, right| right.1.total_cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    list_scores.sort_by(|left, right| {
+        right
+            .1
+            .total_cmp(&left.1)
+            .then_with(|| left.0.cmp(&right.0))
+    });
     list_scores.truncate((request.nprobe.get() as usize).min(list_scores.len()));
 
     let mut hits = Vec::new();
@@ -443,7 +460,10 @@ mod tests {
             IvfProbeCount::new(1).expect("nprobe"),
         ));
 
-        assert_eq!(result.expect_err("dimension mismatch").code, StatusCode::InvalidArgument);
+        assert_eq!(
+            result.expect_err("dimension mismatch").code,
+            StatusCode::InvalidArgument
+        );
     }
 
     #[test]

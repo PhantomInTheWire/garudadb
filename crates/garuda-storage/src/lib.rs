@@ -17,10 +17,10 @@ pub use layout::{
     DATA_SEG_FILE_NAME, DATA_WAL_FILE_NAME, FLAT_INDEX_FILE_NAME, HNSW_INDEX_FILE_NAME,
     IVF_INDEX_FILE_NAME, LOCK_FILE_NAME, SCALAR_INDEX_DIR_NAME, SCALAR_INDEX_FILE_SUFFIX,
     WRITING_SEGMENT_ID, collection_dir, delete_snapshot_path, ensure_database_root,
-    ensure_existing_collection_dir, ensure_new_collection_dir, id_map_snapshot_path,
-    manifest_path, manifest_paths, remove_path_if_exists, segment_data_path, segment_dir,
-    segment_flat_index_path, segment_hnsw_index_path, segment_ivf_index_path,
-    segment_scalar_index_dir, segment_scalar_index_path, segment_wal_path,
+    ensure_existing_collection_dir, ensure_new_collection_dir, id_map_snapshot_path, manifest_path,
+    manifest_paths, remove_path_if_exists, segment_data_path, segment_dir, segment_flat_index_path,
+    segment_hnsw_index_path, segment_ivf_index_path, segment_scalar_index_dir,
+    segment_scalar_index_path, segment_wal_path,
 };
 pub use snapshots::{
     SnapshotKind, read_delete_snapshot, read_id_map_snapshot, remove_old_snapshots,

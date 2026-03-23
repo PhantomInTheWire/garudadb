@@ -135,7 +135,10 @@ pub fn encode_ivf_index(
     writer.write_u64(vector_field.dimension.get() as u64);
     writer.write_u8(vector_field.metric.to_tag());
 
-    let params = vector_field.indexes.ivf_params().expect("validated ivf vector field");
+    let params = vector_field
+        .indexes
+        .ivf_params()
+        .expect("validated ivf vector field");
     writer.write_u64(params.n_list.get() as u64);
     writer.write_u64(params.n_probe.get() as u64);
     writer.write_u64(params.training_iterations.get() as u64);
@@ -192,7 +195,10 @@ pub fn decode_ivf_index(
         ));
     }
 
-    let expected_params = vector_field.indexes.ivf_params().expect("validated ivf field");
+    let expected_params = vector_field
+        .indexes
+        .ivf_params()
+        .expect("validated ivf field");
     let persisted_params = IvfIndexParams {
         n_list: IvfListCount::from_persisted_u64(reader.read_u64()?)?,
         n_probe: IvfProbeCount::from_persisted_u64(reader.read_u64()?)?,
