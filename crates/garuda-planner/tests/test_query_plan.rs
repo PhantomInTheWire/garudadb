@@ -57,7 +57,7 @@ fn indexed_and_filter_should_split_prefilter_and_residual() {
     let plan = build_query_plan(query, Some(filter.clone()), &indexed_schema());
 
     assert_eq!(
-        plan.scalar_prefilter,
+        plan.filter.scalar_prefilter,
         ScalarPrefilter::And(vec![ScalarPredicate {
             field: field_name("category"),
             op: ScalarCompareOp::Eq,
@@ -65,7 +65,7 @@ fn indexed_and_filter_should_split_prefilter_and_residual() {
         }])
     );
     assert_eq!(
-        plan.residual_filter,
+        plan.filter.residual,
         SegmentFilterPlan::Matching(FilterExpr::Ne("rank".to_string(), ScalarValue::Int64(2),))
     );
 }
@@ -87,8 +87,8 @@ fn or_filter_should_stay_residual() {
 
     let plan = build_query_plan(query, Some(filter.clone()), &indexed_schema());
 
-    assert_eq!(plan.scalar_prefilter, ScalarPrefilter::All);
-    assert_eq!(plan.residual_filter, SegmentFilterPlan::Matching(filter));
+    assert_eq!(plan.filter.scalar_prefilter, ScalarPrefilter::All);
+    assert_eq!(plan.filter.residual, SegmentFilterPlan::Matching(filter));
 }
 
 #[test]
@@ -117,9 +117,9 @@ fn like_contains_and_is_null_stay_residual() {
 
     let plan = build_query_plan(query, Some(filter), &indexed_schema());
 
-    assert_eq!(plan.scalar_prefilter, ScalarPrefilter::All);
+    assert_eq!(plan.filter.scalar_prefilter, ScalarPrefilter::All);
     assert_eq!(
-        plan.residual_filter,
+        plan.filter.residual,
         SegmentFilterPlan::Matching(FilterExpr::And(
             Box::new(FilterExpr::And(
                 Box::new(FilterExpr::StringMatch(

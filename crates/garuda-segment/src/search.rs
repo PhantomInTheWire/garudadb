@@ -32,64 +32,34 @@ impl SearchScope<'_> {
     }
 }
 
+#[derive(Clone, Copy)]
+enum SearchSegment<'a> {
+    Writing(&'a WritingSegment),
+    Persisted(&'a PersistedSegment),
+}
+
+impl SearchSegment<'_> {
+    fn records(&self) -> &[StoredRecord] {
+        match self {
+            Self::Writing(segment) => &segment.records,
+            Self::Persisted(segment) => &segment.records,
+        }
+    }
+}
+
 pub fn search_writing(
     segment: &WritingSegment,
     request: SegmentSearchRequest<'_>,
     allowed_doc_ids: Option<&HashSet<InternalDocId>>,
 ) -> Result<Vec<SegmentSearchHit>, Status> {
-    let scope = SearchScope {
-        allowed_doc_ids,
-        delete_store: None,
-    };
-    let record_indexes = live_record_indexes(&segment.records, scope);
-
-    match request {
-        SegmentSearchRequest::Flat(request) => {
-            let hits = segment
-                .flat_index
-                .as_ref()
-                .expect("writing flat index state")
-                .search(
-                    request.metric,
-                    request.query_vector,
-                    search_candidate_top_k(
-                        request.top_k,
-                        request.filter,
-                        &segment.records,
-                        &record_indexes,
-                    ),
-                )?;
-            Ok(collect_search_hits(
-                &segment.records,
-                hits.into_iter().map(flat_hit),
-                request.filter,
-                record_indexes,
-            ))
-        }
-        SegmentSearchRequest::Hnsw(request) => {
-            let candidate_top_k = search_candidate_top_k(
-                request.top_k,
-                request.filter,
-                &segment.records,
-                &record_indexes,
-            );
-            let hits = segment
-                .hnsw_index
-                .as_ref()
-                .expect("writing hnsw index state")
-                .search(
-                    request.query_vector,
-                    candidate_top_k,
-                    search_candidate_ef_search(request.ef_search, candidate_top_k),
-                )?;
-            Ok(collect_search_hits(
-                &segment.records,
-                hits.into_iter().map(hnsw_hit),
-                request.filter,
-                record_indexes,
-            ))
-        }
-    }
+    search_segment(
+        SearchSegment::Writing(segment),
+        request,
+        SearchScope {
+            allowed_doc_ids,
+            delete_store: None,
+        },
+    )
 }
 
 pub fn search_persisted(
@@ -98,53 +68,90 @@ pub fn search_persisted(
     allowed_doc_ids: Option<&HashSet<InternalDocId>>,
     delete_store: &DeleteStore,
 ) -> Result<Vec<SegmentSearchHit>, Status> {
-    let scope = SearchScope {
-        allowed_doc_ids,
-        delete_store: Some(delete_store),
-    };
-    let record_indexes = live_record_indexes(&segment.records, scope);
+    search_segment(
+        SearchSegment::Persisted(segment),
+        request,
+        SearchScope {
+            allowed_doc_ids,
+            delete_store: Some(delete_store),
+        },
+    )
+}
+
+fn search_segment(
+    segment: SearchSegment<'_>,
+    request: SegmentSearchRequest<'_>,
+    scope: SearchScope<'_>,
+) -> Result<Vec<SegmentSearchHit>, Status> {
+    let records = segment.records();
+    let record_indexes = live_record_indexes(records, scope);
 
     match request {
         SegmentSearchRequest::Flat(request) => {
-            let hits = segment
-                .flat_index
-                .as_ref()
-                .expect("persisted flat index state")
-                .search(
-                    request.metric,
-                    request.query_vector,
-                    search_candidate_top_k(
-                        request.top_k,
-                        request.filter,
-                        &segment.records,
-                        &record_indexes,
-                    ),
-                )?;
+            let hits = match segment {
+                SearchSegment::Writing(segment) => segment
+                    .flat_index
+                    .as_ref()
+                    .expect("writing flat index state")
+                    .search(
+                        request.metric,
+                        request.query_vector,
+                        search_candidate_top_k(
+                            request.top_k,
+                            request.filter,
+                            records,
+                            &record_indexes,
+                        ),
+                    )?,
+                SearchSegment::Persisted(segment) => segment
+                    .flat_index
+                    .as_ref()
+                    .expect("persisted flat index state")
+                    .search(
+                        request.metric,
+                        request.query_vector,
+                        search_candidate_top_k(
+                            request.top_k,
+                            request.filter,
+                            records,
+                            &record_indexes,
+                        ),
+                    )?,
+            };
+
             Ok(collect_search_hits(
-                &segment.records,
+                records,
                 hits.into_iter().map(flat_hit),
                 request.filter,
                 record_indexes,
             ))
         }
         SegmentSearchRequest::Hnsw(request) => {
-            let candidate_top_k = search_candidate_top_k(
-                request.top_k,
-                request.filter,
-                &segment.records,
-                &record_indexes,
-            );
-            let hits = segment
-                .hnsw_index
-                .as_ref()
-                .expect("persisted hnsw index state")
-                .search(garuda_index_hnsw::HnswSearchRequest::new(
-                    request.query_vector,
-                    candidate_top_k,
-                    search_candidate_ef_search(request.ef_search, candidate_top_k),
-                ))?;
+            let candidate_top_k =
+                search_candidate_top_k(request.top_k, request.filter, records, &record_indexes);
+            let hits = match segment {
+                SearchSegment::Writing(segment) => segment
+                    .hnsw_index
+                    .as_ref()
+                    .expect("writing hnsw index state")
+                    .search(
+                        request.query_vector,
+                        candidate_top_k,
+                        search_candidate_ef_search(request.ef_search, candidate_top_k),
+                    )?,
+                SearchSegment::Persisted(segment) => segment
+                    .hnsw_index
+                    .as_ref()
+                    .expect("persisted hnsw index state")
+                    .search(garuda_index_hnsw::HnswSearchRequest::new(
+                        request.query_vector,
+                        candidate_top_k,
+                        search_candidate_ef_search(request.ef_search, candidate_top_k),
+                    ))?,
+            };
+
             Ok(collect_search_hits(
-                &segment.records,
+                records,
                 hits.into_iter().map(hnsw_hit),
                 request.filter,
                 record_indexes,

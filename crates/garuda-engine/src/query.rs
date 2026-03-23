@@ -1,6 +1,7 @@
 use crate::filter::validate_filter;
 use crate::filter_parser::parse_filter;
 use crate::state::CollectionRuntime;
+use garuda_index_scalar::ScalarIndex;
 use garuda_index_scalar::prefilter_doc_ids;
 use garuda_meta::DeleteStore;
 use garuda_planner::{QueryPlan, SegmentFilterPlan, SegmentSearchPlan, build_query_plan};
@@ -9,10 +10,46 @@ use garuda_segment::{
     SegmentSearchRequest, WritingSegment, search_persisted, search_writing,
 };
 use garuda_types::{
-    CollectionSchema, DenseVector, Doc, FilterExpr, InternalDocId, QueryVectorSource, Status,
-    StatusCode, VectorProjection, VectorQuery,
+    CollectionSchema, DenseVector, Doc, FieldName, FilterExpr, InternalDocId, QueryVectorSource,
+    Status, StatusCode, VectorProjection, VectorQuery,
 };
+use std::collections::BTreeMap;
 use std::collections::HashSet;
+
+#[derive(Clone, Copy)]
+enum QuerySegment<'a> {
+    Persisted(&'a PersistedSegment, &'a DeleteStore),
+    Writing(&'a WritingSegment),
+}
+
+impl<'a> QuerySegment<'a> {
+    fn doc_count(self) -> usize {
+        match self {
+            Self::Persisted(segment, _) => segment.meta.doc_count,
+            Self::Writing(segment) => segment.meta.doc_count,
+        }
+    }
+
+    fn scalar_indexes(self) -> &'a BTreeMap<FieldName, ScalarIndex> {
+        match self {
+            Self::Persisted(segment, _) => &segment.scalar_indexes,
+            Self::Writing(segment) => &segment.scalar_indexes,
+        }
+    }
+
+    fn search(
+        self,
+        request: SegmentSearchRequest<'a>,
+        allowed_doc_ids: Option<&HashSet<InternalDocId>>,
+    ) -> Result<Vec<SegmentSearchHit>, Status> {
+        match self {
+            Self::Persisted(segment, delete_store) => {
+                search_persisted(segment, request, allowed_doc_ids, delete_store)
+            }
+            Self::Writing(segment) => search_writing(segment, request, allowed_doc_ids),
+        }
+    }
+}
 
 pub(crate) fn parse_query_filter(
     raw_filter: Option<&str>,
@@ -106,81 +143,45 @@ fn collect_matching_docs(
             continue;
         }
 
-        collect_docs_from_persisted_segment(&mut docs, state, plan, query_vector, segment)?;
+        collect_docs_from_segment(
+            &mut docs,
+            state,
+            plan,
+            query_vector,
+            QuerySegment::Persisted(segment, state.meta.delete_store()),
+        )?;
     }
 
     if state.segments.writing_segment().meta.doc_count == 0 {
         return Ok(docs);
     }
 
-    collect_docs_from_writing_segment(
+    collect_docs_from_segment(
         &mut docs,
         state,
         plan,
         query_vector,
-        state.segments.writing_segment(),
+        QuerySegment::Writing(state.segments.writing_segment()),
     )?;
 
     Ok(docs)
 }
 
-fn collect_docs_from_persisted_segment(
+fn collect_docs_from_segment(
     docs: &mut Vec<Doc>,
     state: &CollectionRuntime,
     plan: &QueryPlan,
     query_vector: &DenseVector,
-    segment: &PersistedSegment,
+    segment: QuerySegment<'_>,
 ) -> Result<(), Status> {
-    let allowed_doc_ids = prefilter_doc_ids(&plan.scalar_prefilter, &segment.scalar_indexes);
-    collect_segment_hits(
-        docs,
-        &allowed_doc_ids,
-        Some(state.meta.delete_store()),
-        segment_request(state, plan, query_vector, segment.meta.doc_count),
-        |request, allowed_doc_ids, delete_store| {
-            search_persisted(
-                segment,
-                request,
-                allowed_doc_ids,
-                delete_store.expect("persisted segment delete store"),
-            )
-        },
-    )
-}
-
-fn collect_docs_from_writing_segment(
-    docs: &mut Vec<Doc>,
-    state: &CollectionRuntime,
-    plan: &QueryPlan,
-    query_vector: &DenseVector,
-    segment: &WritingSegment,
-) -> Result<(), Status> {
-    let allowed_doc_ids = prefilter_doc_ids(&plan.scalar_prefilter, &segment.scalar_indexes);
-    collect_segment_hits(
-        docs,
-        &allowed_doc_ids,
-        None,
-        segment_request(state, plan, query_vector, segment.meta.doc_count),
-        |request, allowed_doc_ids, _| search_writing(segment, request, allowed_doc_ids),
-    )
-}
-
-fn collect_segment_hits(
-    docs: &mut Vec<Doc>,
-    allowed_doc_ids: &Option<HashSet<InternalDocId>>,
-    delete_store: Option<&DeleteStore>,
-    request: SegmentSearchRequest<'_>,
-    search: impl FnOnce(
-        SegmentSearchRequest<'_>,
-        Option<&HashSet<InternalDocId>>,
-        Option<&DeleteStore>,
-    ) -> Result<Vec<SegmentSearchHit>, Status>,
-) -> Result<(), Status> {
-    if matches!(allowed_doc_ids, Some(doc_ids) if doc_ids.is_empty()) {
-        return Ok(());
-    }
-
-    let hits = search(request, allowed_doc_ids.as_ref(), delete_store)?;
+    let allowed_doc_ids =
+        prefilter_doc_ids(&plan.filter.scalar_prefilter, segment.scalar_indexes());
+    let request = segment_request(state, plan, query_vector, segment.doc_count());
+    let hits = if matches!(allowed_doc_ids, Some(ref doc_ids) if doc_ids.is_empty()) {
+        Vec::new()
+    } else {
+        segment.search(request, allowed_doc_ids.as_ref())?
+    };
 
     for hit in hits {
         let mut doc = hit.record.doc;
@@ -197,7 +198,7 @@ fn segment_request<'a>(
     query_vector: &'a DenseVector,
     segment_doc_count: usize,
 ) -> SegmentSearchRequest<'a> {
-    let filter = match &plan.residual_filter {
+    let filter = match &plan.filter.residual {
         SegmentFilterPlan::All => SegmentFilter::All,
         SegmentFilterPlan::Matching(filter) => SegmentFilter::Matching(filter),
     };
