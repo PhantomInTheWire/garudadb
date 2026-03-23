@@ -28,14 +28,6 @@ pub fn encode_segment(meta: &SegmentMeta, records: &[StoredRecord]) -> Result<Ve
     Ok(writer.finish())
 }
 
-pub fn encode_empty_segment(meta: &SegmentMeta) -> Result<Vec<u8>, Status> {
-    let mut writer = BinaryWriter::new(SEGMENT_MAGIC);
-    writer.write_u16(FORMAT_VERSION);
-    write_segment_meta(&mut writer, meta)?;
-    writer.write_len(0)?;
-    Ok(writer.finish())
-}
-
 pub struct DecodedSegment {
     pub meta: SegmentMeta,
     pub records: Vec<StoredRecord>,
@@ -333,41 +325,33 @@ fn read_posting_list(reader: &mut BinaryReader<'_>) -> Result<Vec<InternalDocId>
     Ok(doc_ids)
 }
 
+macro_rules! read_postings {
+    ($reader:expr, $read_value:ident) => {{
+        let posting_count = $reader.read_len()?;
+        let mut postings = Vec::with_capacity(posting_count);
+
+        for _ in 0..posting_count {
+            postings.push(($reader.$read_value()?, read_posting_list($reader)?));
+        }
+
+        Ok(postings)
+    }};
+}
+
 fn read_i64_postings(
     reader: &mut BinaryReader<'_>,
 ) -> Result<Vec<(i64, Vec<InternalDocId>)>, Status> {
-    let posting_count = reader.read_len()?;
-    let mut postings = Vec::with_capacity(posting_count);
-
-    for _ in 0..posting_count {
-        postings.push((reader.read_i64()?, read_posting_list(reader)?));
-    }
-
-    Ok(postings)
+    read_postings!(reader, read_i64)
 }
 
 fn read_f64_postings(
     reader: &mut BinaryReader<'_>,
 ) -> Result<Vec<(f64, Vec<InternalDocId>)>, Status> {
-    let posting_count = reader.read_len()?;
-    let mut postings = Vec::with_capacity(posting_count);
-
-    for _ in 0..posting_count {
-        postings.push((reader.read_f64()?, read_posting_list(reader)?));
-    }
-
-    Ok(postings)
+    read_postings!(reader, read_f64)
 }
 
 fn read_string_postings(
     reader: &mut BinaryReader<'_>,
 ) -> Result<Vec<(String, Vec<InternalDocId>)>, Status> {
-    let posting_count = reader.read_len()?;
-    let mut postings = Vec::with_capacity(posting_count);
-
-    for _ in 0..posting_count {
-        postings.push((reader.read_string()?, read_posting_list(reader)?));
-    }
-
-    Ok(postings)
+    read_postings!(reader, read_string)
 }
