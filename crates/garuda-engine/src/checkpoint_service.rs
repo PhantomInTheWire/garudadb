@@ -215,7 +215,7 @@ fn capture_path(path: &Path) -> Result<PathBackup, Status> {
     if path.is_dir() {
         return Ok(PathBackup {
             path: path.to_path_buf(),
-            state: PathState::Dir(capture_dir_entries(path)?),
+            state: PathState::Dir(capture_dir_entries(path, path)?),
         });
     }
 
@@ -225,7 +225,7 @@ fn capture_path(path: &Path) -> Result<PathBackup, Status> {
     })
 }
 
-fn capture_dir_entries(path: &Path) -> Result<Vec<DirEntryBackup>, Status> {
+fn capture_dir_entries(root: &Path, path: &Path) -> Result<Vec<DirEntryBackup>, Status> {
     let mut entries = Vec::new();
     let read_dir = std::fs::read_dir(path).map_err(|error| {
         Status::err(
@@ -244,12 +244,12 @@ fn capture_dir_entries(path: &Path) -> Result<Vec<DirEntryBackup>, Status> {
         let child_path = entry.path();
 
         if child_path.is_dir() {
-            entries.extend(capture_dir_entries(&child_path)?);
+            entries.extend(capture_dir_entries(root, &child_path)?);
             continue;
         }
 
         let relative_path = child_path
-            .strip_prefix(path)
+            .strip_prefix(root)
             .expect("directory child should strip prefix")
             .to_path_buf();
         entries.push(DirEntryBackup {
