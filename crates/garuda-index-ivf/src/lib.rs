@@ -168,14 +168,16 @@ impl IvfIndex {
         self.entries.push(entry);
 
         if self.centroids.is_empty() {
-            self.centroids.push(self.entries[entry_index].vector.clone());
+            self.centroids
+                .push(self.entries[entry_index].vector.clone());
             self.list_entry_indexes.push(vec![entry_index]);
             return;
         }
 
         let list_count = self.config.list_count(self.entries.len());
         if self.centroids.len() < list_count {
-            self.centroids.push(self.entries[entry_index].vector.clone());
+            self.centroids
+                .push(self.entries[entry_index].vector.clone());
             self.list_entry_indexes.push(vec![entry_index]);
             return;
         }
