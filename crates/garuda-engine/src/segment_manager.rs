@@ -78,7 +78,7 @@ impl SegmentManager {
         }
 
         for segment in &self.persisted_segments {
-            if !segment.meta.contains_doc_id(doc_id) {
+            if !segment_contains_doc_id(&segment.meta, doc_id) {
                 continue;
             }
 
@@ -173,20 +173,28 @@ impl SegmentManager {
         self.rotate_writing_segment_if_needed(next_segment_id, segment_max_docs, schema);
     }
 
+    pub(crate) fn mark_writing_deleted(&mut self, doc_id: InternalDocId) -> bool {
+        let Some(record) = live_record_by_internal_id(&mut self.writing_segment.records, doc_id)
+        else {
+            return false;
+        };
+
+        record.state = RecordState::Deleted;
+        self.writing_segment.sync_meta();
+        true
+    }
+
     pub(crate) fn mark_deleted(
         &mut self,
         doc_id: InternalDocId,
         schema: &CollectionSchema,
     ) -> bool {
-        if let Some(record) = live_record_by_internal_id(&mut self.writing_segment.records, doc_id)
-        {
-            record.state = RecordState::Deleted;
-            self.writing_segment.sync_meta();
+        if self.mark_writing_deleted(doc_id) {
             return true;
         }
 
         for index in 0..self.persisted_segments.len() {
-            if !self.persisted_segments[index].meta.contains_doc_id(doc_id) {
+            if !segment_contains_doc_id(&self.persisted_segments[index].meta, doc_id) {
                 continue;
             }
 
@@ -291,20 +299,39 @@ fn collect_visible_records(
     }
 }
 
+fn segment_contains_doc_id(meta: &garuda_types::SegmentMeta, doc_id: InternalDocId) -> bool {
+    let Some(min_doc_id) = meta.min_doc_id else {
+        return false;
+    };
+    let Some(max_doc_id) = meta.max_doc_id else {
+        return false;
+    };
+
+    min_doc_id <= doc_id && doc_id <= max_doc_id
+}
+
 fn record_in_segment_by_internal_id(
     records: &[StoredRecord],
     doc_id: InternalDocId,
 ) -> Option<&StoredRecord> {
-    records.iter().find(|record| is_live_record(record, doc_id))
+    records
+        .iter()
+        .find(|record| record.doc_id == doc_id && matches!(record.state, RecordState::Live))
 }
 
 fn live_record_by_internal_id(
     records: &mut [StoredRecord],
     doc_id: InternalDocId,
 ) -> Option<&mut StoredRecord> {
-    records
-        .iter_mut()
-        .find(|record| is_live_record(record, doc_id))
+    for record in records {
+        if record.doc_id != doc_id || matches!(record.state, RecordState::Deleted) {
+            continue;
+        }
+
+        return Some(record);
+    }
+
+    None
 }
 
 fn seal_segment(
@@ -329,8 +356,4 @@ fn index_segment_meta(records: &[StoredRecord], meta: &mut MetadataStore) {
 
         meta.index_live_doc(record.doc.id.clone(), record.doc_id);
     }
-}
-
-fn is_live_record(record: &StoredRecord, doc_id: InternalDocId) -> bool {
-    record.doc_id == doc_id && matches!(record.state, RecordState::Live)
 }
