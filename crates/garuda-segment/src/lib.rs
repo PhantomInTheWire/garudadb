@@ -8,7 +8,6 @@ mod wal;
 
 pub use garuda_index_flat::WritingFlatIndex;
 pub use garuda_index_hnsw::WritingHnswIndex;
-pub use garuda_index_ivf::WritingIvfIndex;
 pub use search::{search_persisted, search_writing};
 pub use storage::{
     doc_exists, ensure_segment_files, read_persisted_segment, read_writing_segment, remove_segment,

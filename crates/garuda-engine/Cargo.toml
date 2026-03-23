@@ -9,6 +9,7 @@ workspace = true
 
 [dependencies]
 garuda-index-scalar = { path = "../garuda-index-scalar" }
+garuda-index-ivf = { path = "../garuda-index-ivf" }
 garuda-math = { path = "../garuda-math" }
 garuda-meta = { path = "../garuda-meta" }
 garuda-planner = { path = "../garuda-planner" }
