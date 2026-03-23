@@ -1,5 +1,5 @@
 use garuda_segment::{
-    IvfSegmentSearchRequest, PersistedSegment, SegmentFilter, SegmentSearchRequest,
+    IvfSegmentSearchRequest, PersistedSegment, SegmentFilter, SegmentSearchRequest, WritingSegment,
     read_persisted_segment, search_persisted, segment_meta, write_persisted_segment,
 };
 use garuda_storage::{read_file, segment_ivf_index_path};
@@ -83,6 +83,21 @@ fn missing_or_invalid_ivf_sidecar_fails_reopen() {
     let sidecar_bytes =
         read_file(&segment_ivf_index_path(&root, segment.meta.id)).expect("read corrupt sidecar");
     assert_eq!(sidecar_bytes, b"broken");
+}
+
+#[test]
+fn writing_ivf_index_should_contain_each_live_record_once() {
+    let schema = schema();
+    let records = vec![
+        stored_record(1, "doc-1", [1.0, 0.0, 0.0, 0.0]),
+        stored_record(2, "doc-2", [0.9, 0.1, 0.0, 0.0]),
+        stored_record(3, "doc-3", [0.0, 1.0, 0.0, 0.0]),
+    ];
+    let segment = WritingSegment::new(segment_meta(SegmentId::new_unchecked(0)), records, &schema);
+
+    let index = segment.ivf_index.expect("ivf index");
+    assert_eq!(index.len(), 3);
+    assert_eq!(index.list_count(), 3);
 }
 
 fn temp_root(prefix: &str) -> PathBuf {
