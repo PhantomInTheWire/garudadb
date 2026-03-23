@@ -2,9 +2,9 @@ use clap::{Parser, Subcommand};
 use garuda_engine::Database;
 use garuda_types::{
     CollectionName, CollectionOptions, CollectionSchema, DistanceMetric, FieldName,
-    FlatIndexParams, HnswIndexParams, IndexKind, IndexParams, Nullability, ScalarFieldSchema,
-    ScalarIndexParams, ScalarIndexState, ScalarType, ScalarValue, TopK, VectorDimension,
-    VectorFieldSchema, VectorIndexState, VectorQuery,
+    FlatIndexParams, HnswIndexParams, IndexKind, IndexParams, IvfIndexParams, Nullability,
+    ScalarFieldSchema, ScalarIndexParams, ScalarIndexState, ScalarType, ScalarValue, TopK,
+    VectorDimension, VectorFieldSchema, VectorIndexState, VectorQuery,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -235,6 +235,7 @@ fn parse_index_kind(raw: &str) -> Result<IndexKind, String> {
     match raw {
         "flat" => Ok(IndexKind::Flat),
         "hnsw" => Ok(IndexKind::Hnsw),
+        "ivf" => Ok(IndexKind::Ivf),
         "scalar" => Ok(IndexKind::Scalar),
         _ => Err(format!("unsupported index kind: {raw}")),
     }
@@ -244,6 +245,7 @@ fn index_params(kind: IndexKind) -> IndexParams {
     match kind {
         IndexKind::Flat => IndexParams::Flat(FlatIndexParams),
         IndexKind::Hnsw => IndexParams::Hnsw(HnswIndexParams::default()),
+        IndexKind::Ivf => IndexParams::Ivf(IvfIndexParams::default()),
         IndexKind::Scalar => IndexParams::Scalar(ScalarIndexParams),
     }
 }

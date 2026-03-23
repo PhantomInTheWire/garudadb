@@ -3,7 +3,7 @@ mod common;
 use common::{
     database, default_options, default_schema, dense_vector, doc_id, field_name, seed_collection,
 };
-use garuda_types::{HnswIndexParams, IndexParams, VectorQuery};
+use garuda_types::{HnswIndexParams, IndexParams, IvfIndexParams, VectorQuery, VectorSearch};
 
 #[test]
 fn query_by_document_id_should_behave_like_query_by_its_stored_vector() {
@@ -134,6 +134,42 @@ fn query_by_document_id_should_match_query_by_vector_results_under_hnsw() {
             common::top_k(4),
         ))
         .expect("query by id");
+
+    assert_eq!(
+        by_vector
+            .iter()
+            .map(|doc| doc.id.clone())
+            .collect::<Vec<_>>(),
+        by_id.iter().map(|doc| doc.id.clone()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn query_by_document_id_should_match_query_by_vector_results_under_ivf() {
+    let (_root, db) = database("query-by-id-ivf-parity");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+    seed_collection(&collection);
+    collection
+        .create_index(
+            &field_name("embedding"),
+            IndexParams::Ivf(IvfIndexParams::default()),
+        )
+        .expect("create ivf");
+
+    let mut by_vector_query = VectorQuery::by_vector(
+        field_name("embedding"),
+        dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
+        common::top_k(4),
+    );
+    by_vector_query.search = VectorSearch::Default;
+    let by_vector = collection.query(by_vector_query).expect("query by vector");
+
+    let mut by_id_query =
+        VectorQuery::by_id(field_name("embedding"), doc_id("doc-1"), common::top_k(4));
+    by_id_query.search = VectorSearch::Default;
+    let by_id = collection.query(by_id_query).expect("query by id");
 
     assert_eq!(
         by_vector

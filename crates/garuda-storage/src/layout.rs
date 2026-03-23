@@ -12,6 +12,7 @@ pub const DATA_SEG_FILE_NAME: &str = "data.seg";
 pub const DATA_WAL_FILE_NAME: &str = "data.wal";
 pub const FLAT_INDEX_FILE_NAME: &str = "flat.idx";
 pub const HNSW_INDEX_FILE_NAME: &str = "hnsw.idx";
+pub const IVF_INDEX_FILE_NAME: &str = "ivf.idx";
 pub const SCALAR_INDEX_DIR_NAME: &str = "scalar";
 pub const SCALAR_INDEX_FILE_SUFFIX: &str = ".sidx";
 pub const WRITING_SEGMENT_ID: SegmentId = SegmentId::new_unchecked(0);
@@ -96,6 +97,10 @@ pub fn segment_flat_index_path(root: &Path, segment_id: SegmentId) -> PathBuf {
 
 pub fn segment_hnsw_index_path(root: &Path, segment_id: SegmentId) -> PathBuf {
     segment_dir(root, segment_id).join(HNSW_INDEX_FILE_NAME)
+}
+
+pub fn segment_ivf_index_path(root: &Path, segment_id: SegmentId) -> PathBuf {
+    segment_dir(root, segment_id).join(IVF_INDEX_FILE_NAME)
 }
 
 pub fn segment_scalar_index_dir(root: &Path, segment_id: SegmentId) -> PathBuf {

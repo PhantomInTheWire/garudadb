@@ -1,16 +1,19 @@
 use crate::doc_codec::{read_doc, write_doc};
 use crate::{RecordState, StoredRecord};
 use garuda_index_flat::{FlatIndex, FlatIndexEntry};
+use garuda_index_ivf::IvfStoredLists;
 use garuda_index_scalar::{ScalarIndex, ScalarIndexData};
 use garuda_storage::{BinaryReader, BinaryWriter, read_segment_meta, write_segment_meta};
 use garuda_types::{
-    DenseVector, DistanceMetric, InternalDocId, NodeIndex, ScalarFieldSchema, SegmentMeta, Status,
-    StatusCode, VectorDimension, VectorFieldSchema,
+    DenseVector, DistanceMetric, InternalDocId, IvfIndexParams, IvfListCount, IvfProbeCount,
+    IvfTrainingIterations, NodeIndex, ScalarFieldSchema, SegmentMeta, Status, StatusCode,
+    VectorDimension, VectorFieldSchema,
 };
 use garuda_types::{HnswGraph, HnswLevel, HnswNeighborLimits};
 const SEGMENT_MAGIC: &[u8; 8] = b"GRDSEG01";
 const FLAT_INDEX_MAGIC: &[u8; 8] = b"GRDFLT01";
 const HNSW_INDEX_MAGIC: &[u8; 8] = b"GRDHNS01";
+const IVF_INDEX_MAGIC: &[u8; 8] = b"GRDIVF01";
 const SCALAR_INDEX_MAGIC: &[u8; 8] = b"GRDSCL01";
 const FORMAT_VERSION: u16 = 1;
 pub fn encode_segment(meta: &SegmentMeta, records: &[StoredRecord]) -> Result<Vec<u8>, Status> {
@@ -121,6 +124,121 @@ pub fn decode_flat_index(
 
     reader.finish()?;
     FlatIndex::build(dimension, entries)
+}
+
+pub fn encode_ivf_index(
+    lists: IvfStoredLists,
+    vector_field: &VectorFieldSchema,
+) -> Result<Vec<u8>, Status> {
+    let mut writer = BinaryWriter::new(IVF_INDEX_MAGIC);
+    writer.write_u16(FORMAT_VERSION);
+    writer.write_u64(vector_field.dimension.get() as u64);
+    writer.write_u8(vector_field.metric.to_tag());
+
+    let params = vector_field.indexes.ivf_params().expect("validated ivf vector field");
+    writer.write_u64(params.n_list.get() as u64);
+    writer.write_u64(params.n_probe.get() as u64);
+    writer.write_u64(params.training_iterations.get() as u64);
+    writer.write_len(lists.centroids.len())?;
+
+    for centroid in &lists.centroids {
+        writer.write_len(centroid.len())?;
+
+        for value in centroid.as_slice() {
+            writer.write_f32(*value);
+        }
+    }
+
+    writer.write_len(lists.doc_ids_by_list.len())?;
+
+    for doc_ids in lists.doc_ids_by_list {
+        writer.write_len(doc_ids.len())?;
+
+        for doc_id in doc_ids {
+            writer.write_u64(doc_id.get());
+        }
+    }
+
+    Ok(writer.finish())
+}
+
+pub fn decode_ivf_index(
+    bytes: &[u8],
+    vector_field: &VectorFieldSchema,
+) -> Result<IvfStoredLists, Status> {
+    let mut reader = BinaryReader::new(bytes, IVF_INDEX_MAGIC, "segment")?;
+    reader.expect_u16(FORMAT_VERSION)?;
+
+    let dimension = VectorDimension::new(reader.read_u64()? as usize)?;
+    if dimension != vector_field.dimension {
+        return Err(Status::err(
+            StatusCode::Internal,
+            "persisted ivf index dimension does not match schema",
+        ));
+    }
+
+    let metric = DistanceMetric::from_tag(reader.read_u8()?)?;
+    if metric != vector_field.metric {
+        return Err(Status::err(
+            StatusCode::Internal,
+            "persisted ivf index metric does not match schema",
+        ));
+    }
+
+    if !vector_field.indexes.has_ivf() {
+        return Err(Status::err(
+            StatusCode::Internal,
+            "persisted ivf index requested for a non-ivf vector field",
+        ));
+    }
+
+    let expected_params = vector_field.indexes.ivf_params().expect("validated ivf field");
+    let persisted_params = IvfIndexParams {
+        n_list: IvfListCount::from_persisted_u64(reader.read_u64()?)?,
+        n_probe: IvfProbeCount::from_persisted_u64(reader.read_u64()?)?,
+        training_iterations: IvfTrainingIterations::from_persisted_u64(reader.read_u64()?)?,
+    };
+
+    if &persisted_params != expected_params {
+        return Err(Status::err(
+            StatusCode::Internal,
+            "persisted ivf index params do not match schema",
+        ));
+    }
+
+    let centroid_count = reader.read_len()?;
+    let mut centroids = Vec::with_capacity(centroid_count);
+
+    for _ in 0..centroid_count {
+        let vector_len = reader.read_len()?;
+        let mut vector = Vec::with_capacity(vector_len);
+
+        for _ in 0..vector_len {
+            vector.push(reader.read_f32()?);
+        }
+
+        centroids.push(DenseVector::parse(vector)?);
+    }
+
+    let list_count = reader.read_len()?;
+    let mut doc_ids_by_list = Vec::with_capacity(list_count);
+
+    for _ in 0..list_count {
+        let doc_count = reader.read_len()?;
+        let mut doc_ids = Vec::with_capacity(doc_count);
+
+        for _ in 0..doc_count {
+            doc_ids.push(InternalDocId::new(reader.read_u64()?)?);
+        }
+
+        doc_ids_by_list.push(doc_ids);
+    }
+
+    reader.finish()?;
+    Ok(IvfStoredLists {
+        centroids,
+        doc_ids_by_list,
+    })
 }
 
 pub fn encode_hnsw_graph(graph: &HnswGraph) -> Result<Vec<u8>, Status> {

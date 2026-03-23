@@ -141,7 +141,9 @@ impl SegmentManager {
         }
 
         if let Some(index) = &mut self.writing_segment.hnsw_index {
-            index.insert(doc_id, doc.vector);
+            index.insert(doc_id, doc.vector.clone());
+        } else if let Some(index) = &mut self.writing_segment.ivf_index {
+            index.insert(doc_id, doc.vector.clone());
         }
 
         for field in &schema.fields {

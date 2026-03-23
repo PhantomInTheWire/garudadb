@@ -28,33 +28,17 @@ pub(crate) fn drop_index(
 }
 
 fn create_vector_index(schema: &mut CollectionSchema, params: IndexParams) -> Result<(), Status> {
-    schema.vector.indexes = match params {
-        IndexParams::Flat(_) => schema.vector.indexes.clone().enable_flat(),
-        IndexParams::Hnsw(params) => {
-            params.neighbor_config()?;
-            schema.vector.indexes.clone().enable_hnsw(params)
-        }
-        IndexParams::Scalar(_) => {
-            return Err(Status::err(
-                StatusCode::InvalidArgument,
-                "cannot create a scalar index on the vector field",
-            ));
-        }
-    };
+    if let IndexParams::Hnsw(params) = &params {
+        params.neighbor_config()?;
+    }
+
+    schema.vector.indexes = schema.vector.indexes.clone().enable(params)?;
 
     Ok(())
 }
 
 fn drop_vector_index(schema: &mut CollectionSchema, kind: IndexKind) -> Result<(), Status> {
-    schema.vector.indexes = match kind {
-        IndexKind::Flat | IndexKind::Hnsw => schema.vector.indexes.clone().drop(kind),
-        IndexKind::Scalar => {
-            return Err(Status::err(
-                StatusCode::InvalidArgument,
-                "cannot drop a scalar index from the vector field",
-            ));
-        }
-    };
+    schema.vector.indexes = schema.vector.indexes.clone().drop(kind)?;
 
     Ok(())
 }
@@ -74,7 +58,7 @@ fn create_scalar_index(
             field.index = ScalarIndexState::Indexed;
             Ok(())
         }
-        IndexParams::Flat(_) | IndexParams::Hnsw(_) => Err(Status::err(
+        IndexParams::Flat(_) | IndexParams::Hnsw(_) | IndexParams::Ivf(_) => Err(Status::err(
             StatusCode::InvalidArgument,
             "cannot create a vector index on a scalar field",
         )),

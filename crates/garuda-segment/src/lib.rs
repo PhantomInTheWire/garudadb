@@ -8,14 +8,15 @@ mod wal;
 
 pub use garuda_index_flat::WritingFlatIndex;
 pub use garuda_index_hnsw::WritingHnswIndex;
+pub use garuda_index_ivf::WritingIvfIndex;
 pub use search::{search_persisted, search_writing};
 pub use storage::{
     doc_exists, ensure_segment_files, read_persisted_segment, read_writing_segment, remove_segment,
     write_persisted_segment, write_writing_segment,
 };
 pub use types::{
-    FlatSearchRequest, HnswSegmentSearchRequest, PersistedSegment, RecordState, SegmentFilter,
-    SegmentSearchHit, SegmentSearchRequest, StoredRecord, WritingSegment, segment_file_name,
-    segment_meta,
+    FlatSearchRequest, HnswSegmentSearchRequest, IvfSegmentSearchRequest, PersistedSegment,
+    RecordState, SegmentFilter, SegmentSearchHit, SegmentSearchRequest, StoredRecord,
+    WritingSegment, segment_file_name, segment_meta,
 };
 pub use wal::{WalOp, append_wal_ops, read_wal_ops, reset_wal};

@@ -1,10 +1,11 @@
 use crate::index::{build_persisted_search_resources, build_writing_search_resources};
 use garuda_index_flat::{FlatIndex, WritingFlatIndex};
 use garuda_index_hnsw::{HnswIndex, WritingHnswIndex};
+use garuda_index_ivf::{IvfIndex, WritingIvfIndex};
 use garuda_index_scalar::ScalarIndex;
 use garuda_types::{
     CollectionSchema, DenseVector, DistanceMetric, Doc, FieldName, FilterExpr, HnswEfSearch,
-    InternalDocId, SegmentId, SegmentMeta, Status, StatusCode, TopK,
+    InternalDocId, IvfProbeCount, SegmentId, SegmentMeta, Status, StatusCode, TopK,
 };
 use std::collections::BTreeMap;
 
@@ -47,6 +48,7 @@ pub struct WritingSegment {
     pub records: Vec<StoredRecord>,
     pub flat_index: Option<WritingFlatIndex>,
     pub hnsw_index: Option<WritingHnswIndex>,
+    pub ivf_index: Option<WritingIvfIndex>,
     pub scalar_indexes: BTreeMap<FieldName, ScalarIndex>,
 }
 
@@ -56,6 +58,7 @@ pub struct PersistedSegment {
     pub records: Vec<StoredRecord>,
     pub flat_index: Option<FlatIndex>,
     pub hnsw_index: Option<HnswIndex>,
+    pub ivf_index: Option<IvfIndex>,
     pub scalar_indexes: BTreeMap<FieldName, ScalarIndex>,
 }
 
@@ -88,9 +91,18 @@ pub struct HnswSegmentSearchRequest<'a> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct IvfSegmentSearchRequest<'a> {
+    pub query_vector: &'a DenseVector,
+    pub top_k: TopK,
+    pub nprobe: IvfProbeCount,
+    pub filter: SegmentFilter<'a>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SegmentSearchRequest<'a> {
     Flat(FlatSearchRequest<'a>),
     Hnsw(HnswSegmentSearchRequest<'a>),
+    Ivf(IvfSegmentSearchRequest<'a>),
 }
 
 pub fn segment_file_name(segment_id: SegmentId) -> String {
@@ -118,6 +130,7 @@ impl WritingSegment {
             records,
             flat_index: resources.flat_index,
             hnsw_index: resources.hnsw_index,
+            ivf_index: resources.ivf_index,
             scalar_indexes: resources.scalar_indexes,
         }
     }
@@ -145,6 +158,7 @@ impl PersistedSegment {
             records,
             flat_index: resources.flat_index,
             hnsw_index: resources.hnsw_index,
+            ivf_index: resources.ivf_index,
             scalar_indexes: resources.scalar_indexes,
         }
     }
@@ -158,6 +172,7 @@ impl PersistedSegment {
         let resources = build_persisted_search_resources(schema, &self.meta, &self.records);
         self.flat_index = resources.flat_index;
         self.hnsw_index = resources.hnsw_index;
+        self.ivf_index = resources.ivf_index;
         self.scalar_indexes = resources.scalar_indexes;
     }
 }
