@@ -39,24 +39,32 @@ impl ScalarType {
 pub enum IndexKind {
     Flat,
     Hnsw,
+    Scalar,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FlatIndexParams;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScalarIndexParams;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ScalarIndexState {
+    None,
+    Indexed,
+}
+
+impl ScalarIndexState {
+    pub fn is_indexed(self) -> bool {
+        matches!(self, Self::Indexed)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum IndexParams {
     Flat(FlatIndexParams),
     Hnsw(HnswIndexParams),
-}
-
-impl IndexParams {
-    pub fn kind(&self) -> IndexKind {
-        match self {
-            Self::Flat(_) => IndexKind::Flat,
-            Self::Hnsw(_) => IndexKind::Hnsw,
-        }
-    }
+    Scalar(ScalarIndexParams),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -100,26 +108,27 @@ impl VectorIndexState {
         }
     }
 
-    pub fn enable(self, params: IndexParams) -> Self {
-        match params {
-            IndexParams::Flat(_) => match self {
-                Self::DefaultFlat => Self::DefaultFlat,
-                Self::HnswOnly(hnsw) => Self::FlatAndHnsw {
-                    default: IndexKind::Hnsw,
-                    hnsw,
-                },
-                Self::FlatAndHnsw { default, hnsw } => Self::FlatAndHnsw { default, hnsw },
+    pub fn enable_flat(self) -> Self {
+        match self {
+            Self::DefaultFlat => Self::DefaultFlat,
+            Self::HnswOnly(hnsw) => Self::FlatAndHnsw {
+                default: IndexKind::Hnsw,
+                hnsw,
             },
-            IndexParams::Hnsw(hnsw) => match self {
-                Self::DefaultFlat => Self::FlatAndHnsw {
-                    default: IndexKind::Hnsw,
-                    hnsw,
-                },
-                Self::HnswOnly(_) => Self::HnswOnly(hnsw),
-                Self::FlatAndHnsw { .. } => Self::FlatAndHnsw {
-                    default: IndexKind::Hnsw,
-                    hnsw,
-                },
+            Self::FlatAndHnsw { default, hnsw } => Self::FlatAndHnsw { default, hnsw },
+        }
+    }
+
+    pub fn enable_hnsw(self, hnsw: HnswIndexParams) -> Self {
+        match self {
+            Self::DefaultFlat => Self::FlatAndHnsw {
+                default: IndexKind::Hnsw,
+                hnsw,
+            },
+            Self::HnswOnly(_) => Self::HnswOnly(hnsw),
+            Self::FlatAndHnsw { .. } => Self::FlatAndHnsw {
+                default: IndexKind::Hnsw,
+                hnsw,
             },
         }
     }
@@ -131,6 +140,7 @@ impl VectorIndexState {
             (Self::HnswOnly(_), IndexKind::Hnsw) => Self::DefaultFlat,
             (Self::FlatAndHnsw { hnsw, .. }, IndexKind::Flat) => Self::HnswOnly(hnsw),
             (Self::FlatAndHnsw { .. }, IndexKind::Hnsw) => Self::DefaultFlat,
+            (_, IndexKind::Scalar) => panic!("vector index state cannot drop a scalar index"),
         }
     }
 }
@@ -169,8 +179,15 @@ impl Nullability {
 pub struct ScalarFieldSchema {
     pub name: FieldName,
     pub field_type: ScalarType,
+    pub index: ScalarIndexState,
     pub nullability: Nullability,
     pub default_value: Option<crate::ScalarValue>,
+}
+
+impl ScalarFieldSchema {
+    pub fn is_indexed(&self) -> bool {
+        self.index.is_indexed()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
