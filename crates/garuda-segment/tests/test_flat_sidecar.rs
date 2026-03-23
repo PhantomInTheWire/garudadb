@@ -1,21 +1,18 @@
+mod common;
+
+use common::{field_name, stored_record, temp_root};
 use garuda_index_scalar::prefilter_doc_ids;
 use garuda_segment::{
-    FlatSearchRequest, PersistedSegment, SegmentFilter, SegmentSearchRequest, StoredRecord,
+    FlatSearchRequest, PersistedSegment, SegmentFilter, SegmentSearchRequest,
     read_persisted_segment, search_persisted, segment_meta, write_persisted_segment,
 };
 use garuda_storage::{read_file, segment_flat_index_path, segment_scalar_index_path};
 use garuda_types::{
-    CollectionName, CollectionSchema, DenseVector, DistanceMetric, Doc, DocId, FieldName,
-    FilterExpr, InternalDocId, Nullability, ScalarCompareOp, ScalarFieldSchema, ScalarIndexState,
+    CollectionName, CollectionSchema, DenseVector, DistanceMetric, DocId, FilterExpr,
+    InternalDocId, Nullability, ScalarCompareOp, ScalarFieldSchema, ScalarIndexState,
     ScalarPredicate, ScalarPrefilter, ScalarType, ScalarValue, SegmentId, StatusCode, TopK,
     VectorDimension, VectorFieldSchema, VectorIndexState,
 };
-use std::collections::BTreeMap;
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
-
-static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn persisted_flat_sidecar_roundtrips_exact_search() {
@@ -224,35 +221,6 @@ fn missing_scalar_sidecar_fails_reopen_for_indexed_scalar_field() {
     assert_eq!(error.code, StatusCode::NotFound);
 }
 
-fn temp_root(prefix: &str) -> PathBuf {
-    let nonce = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time went backwards")
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!("garudadb-segment-{prefix}-{ts}-{nonce}"));
-    std::fs::create_dir_all(&path).expect("create temp root");
-    path
-}
-
-fn stored_record(internal_doc_id: u64, id: &str, category: &str, vector: [f32; 4]) -> StoredRecord {
-    StoredRecord {
-        doc_id: InternalDocId::new(internal_doc_id).expect("valid internal doc id"),
-        state: garuda_segment::RecordState::Live,
-        doc: Doc::new(
-            DocId::parse(id).expect("valid doc id"),
-            BTreeMap::from([
-                ("pk".to_string(), ScalarValue::String(id.to_string())),
-                (
-                    "category".to_string(),
-                    ScalarValue::String(category.to_string()),
-                ),
-            ]),
-            DenseVector::parse(vector.to_vec()).expect("valid vector"),
-        ),
-    }
-}
-
 fn schema(vector_indexes: VectorIndexState, scalar_index: ScalarIndexState) -> CollectionSchema {
     CollectionSchema {
         name: CollectionName::parse("docs").expect("valid name"),
@@ -280,8 +248,4 @@ fn schema(vector_indexes: VectorIndexState, scalar_index: ScalarIndexState) -> C
             indexes: vector_indexes,
         },
     }
-}
-
-fn field_name(value: &str) -> FieldName {
-    FieldName::parse(value).expect("valid field name")
 }
