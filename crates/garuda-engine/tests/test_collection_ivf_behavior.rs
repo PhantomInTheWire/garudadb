@@ -2,10 +2,13 @@ mod common;
 
 use common::{
     build_doc, collection_name, database, default_options, default_schema, dense_vector,
-    field_name, seed_collection, seed_more_collection_docs,
+    doc_id, field_name, seed_collection, seed_more_collection_docs,
 };
 use garuda_storage::{WRITING_SEGMENT_ID, segment_ivf_index_path};
-use garuda_types::{IndexKind, IndexParams, IvfIndexParams, VectorIndexState, VectorQuery};
+use garuda_types::{
+    IndexKind, IndexParams, IvfIndexParams, IvfProbeCount, VectorIndexState, VectorQuery,
+    VectorSearch,
+};
 
 const FIRST_PERSISTED_SEGMENT_ID: garuda_types::SegmentId =
     garuda_types::SegmentId::new_unchecked(1);
@@ -190,4 +193,36 @@ fn ivf_writing_segment_should_preserve_results_after_flush() {
         before.iter().map(|doc| doc.id.clone()).collect::<Vec<_>>(),
         after.iter().map(|doc| doc.id.clone()).collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn delete_on_persisted_segment_with_small_nprobe_still_returns_live_hit() {
+    let (_root, db) = database("ivf-persisted-delete-small-nprobe");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+    seed_collection(&collection);
+    collection.flush().expect("flush");
+
+    collection
+        .create_index(
+            &field_name("embedding"),
+            IndexParams::Ivf(IvfIndexParams::default()),
+        )
+        .expect("create ivf index");
+
+    let deleted = collection.delete(vec![doc_id("doc-1")]);
+    assert!(deleted.iter().all(|result| result.status.is_ok()));
+
+    let mut query = VectorQuery::by_vector(
+        field_name("embedding"),
+        dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
+        common::top_k(1),
+    );
+    query.search = VectorSearch::Ivf {
+        nprobe: IvfProbeCount::new(1).expect("valid nprobe"),
+    };
+
+    let results = collection.query(query).expect("query after delete");
+    assert_eq!(results[0].id.as_str(), "doc-2");
 }
