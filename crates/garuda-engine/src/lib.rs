@@ -238,18 +238,17 @@ impl Collection {
     }
 
     fn checkpoint(&self) -> Result<(), Status> {
-        let mut state = self.write_state();
-        let snapshot = state.clone();
-
-        if let Err(status) = checkpoint_state(&mut state) {
-            *state = snapshot;
-            return Err(status);
-        }
-
-        Ok(())
+        self.with_checkpoint(|_| Ok(()))
     }
 
     fn mutate_and_checkpoint(
+        &self,
+        mutate: impl FnOnce(&mut CollectionRuntime) -> Result<(), Status>,
+    ) -> Result<(), Status> {
+        self.with_checkpoint(mutate)
+    }
+
+    fn with_checkpoint(
         &self,
         mutate: impl FnOnce(&mut CollectionRuntime) -> Result<(), Status>,
     ) -> Result<(), Status> {
