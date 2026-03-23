@@ -88,7 +88,10 @@ pub fn remove_old_snapshots(
             continue;
         };
 
-        let prefix = snapshot_prefix(kind);
+        let prefix = match kind {
+            SnapshotKind::IdMap => ID_MAP_FILE_PREFIX,
+            SnapshotKind::Delete => DELETE_FILE_PREFIX,
+        };
         if !file_name.starts_with(prefix) {
             continue;
         }
@@ -106,13 +109,6 @@ pub fn remove_old_snapshots(
     }
 
     Ok(())
-}
-
-fn snapshot_prefix(kind: SnapshotKind) -> &'static str {
-    match kind {
-        SnapshotKind::IdMap => ID_MAP_FILE_PREFIX,
-        SnapshotKind::Delete => DELETE_FILE_PREFIX,
-    }
 }
 
 fn write_snapshot(path: &Path, bytes: &[u8]) -> Result<(), Status> {
