@@ -96,7 +96,13 @@ fn build_filter_plan(filter: Option<FilterExpr>, schema: &CollectionSchema) -> F
         residual: if residual_terms.is_empty() {
             SegmentFilterPlan::All
         } else {
-            SegmentFilterPlan::Matching(and_expr(residual_terms))
+            let mut residual_terms = residual_terms;
+            let first = residual_terms.remove(0);
+            SegmentFilterPlan::Matching(
+                residual_terms.into_iter().fold(first, |lhs, rhs| {
+                    FilterExpr::And(Box::new(lhs), Box::new(rhs))
+                }),
+            )
         },
     }
 }
@@ -182,11 +188,4 @@ fn supports_pushdown(field: &ScalarFieldSchema, op: ScalarCompareOp, value: &Sca
             | (ScalarType::Float64, _, ScalarValue::Float64(_))
             | (ScalarType::String, _, ScalarValue::String(_))
     )
-}
-
-fn and_expr(mut filters: Vec<FilterExpr>) -> FilterExpr {
-    let first = filters.remove(0);
-    filters.into_iter().fold(first, |lhs, rhs| {
-        FilterExpr::And(Box::new(lhs), Box::new(rhs))
-    })
 }
