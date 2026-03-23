@@ -306,16 +306,16 @@ fn record_in_segment_by_internal_id(
     records: &[StoredRecord],
     doc_id: InternalDocId,
 ) -> Option<&StoredRecord> {
-    records
-        .iter()
-        .find(|record| is_live_record(record, doc_id))
+    records.iter().find(|record| is_live_record(record, doc_id))
 }
 
 fn live_record_by_internal_id(
     records: &mut [StoredRecord],
     doc_id: InternalDocId,
 ) -> Option<&mut StoredRecord> {
-    records.iter_mut().find(|record| is_live_record(record, doc_id))
+    records
+        .iter_mut()
+        .find(|record| is_live_record(record, doc_id))
 }
 
 fn seal_segment(

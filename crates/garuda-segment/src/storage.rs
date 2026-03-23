@@ -182,11 +182,5 @@ fn write_segment_sidecars(
         remove_path_if_exists(&segment_hnsw_index_path(root, segment_id))?;
     }
 
-    write_scalar_indexes(
-        root,
-        segment_id,
-        scalar_indexes,
-        schema,
-        live_doc_count,
-    )
+    write_scalar_indexes(root, segment_id, scalar_indexes, schema, live_doc_count)
 }
