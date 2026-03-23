@@ -7,6 +7,8 @@ use common::{
 use garuda_storage::SCALAR_INDEX_DIR_NAME;
 use garuda_types::{Doc, HnswIndexParams, IndexParams, ScalarType, ScalarValue, TopK};
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 #[test]
 fn rejects_duplicate_ids_wrong_dimensions_invalid_filters_and_wrong_index_targets() {
@@ -341,12 +343,15 @@ fn failed_checkpoint_restores_rewritten_segment_files() {
 
     for segment_id in ["0", "1", "2"] {
         let segment_dir = collection_dir.join(segment_id);
-        let mut segment_permissions = fs::metadata(&segment_dir)
-            .expect("segment dir metadata")
-            .permissions();
-        segment_permissions.set_readonly(false);
-        fs::set_permissions(&segment_dir, segment_permissions)
-            .expect("restore segment dir write access");
+        #[cfg(unix)]
+        {
+            let mut segment_permissions = fs::metadata(&segment_dir)
+                .expect("segment dir metadata")
+                .permissions();
+            segment_permissions.set_mode(0o755);
+            fs::set_permissions(&segment_dir, segment_permissions)
+                .expect("restore segment dir write access");
+        }
     }
 
     let result = collection.add_column(garuda_types::ScalarFieldSchema {

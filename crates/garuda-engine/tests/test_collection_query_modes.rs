@@ -3,7 +3,9 @@ mod common;
 use common::{
     database, default_options, default_schema, dense_vector, doc_id, field_name, seed_collection,
 };
-use garuda_types::{HnswIndexParams, IndexParams, IvfIndexParams, VectorQuery, VectorSearch};
+use garuda_types::{
+    HnswIndexParams, IndexParams, IvfIndexParams, IvfProbeCount, VectorQuery, VectorSearch,
+};
 
 #[test]
 fn query_by_document_id_should_behave_like_query_by_its_stored_vector() {
@@ -178,4 +180,52 @@ fn query_by_document_id_should_match_query_by_vector_results_under_ivf() {
             .collect::<Vec<_>>(),
         by_id.iter().map(|doc| doc.id.clone()).collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn ivf_query_should_accept_public_nprobe_override() {
+    let (_root, db) = database("query-ivf-nprobe");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+    seed_collection(&collection);
+    collection
+        .create_index(
+            &field_name("embedding"),
+            IndexParams::Ivf(IvfIndexParams::default()),
+        )
+        .expect("create ivf");
+
+    let mut query = VectorQuery::by_vector(
+        field_name("embedding"),
+        dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
+        common::top_k(4),
+    );
+    query.search = VectorSearch::Ivf {
+        nprobe: IvfProbeCount::new(1).expect("nprobe"),
+    };
+
+    let results = collection.query(query).expect("ivf query");
+    assert!(!results.is_empty());
+}
+
+#[test]
+fn mismatched_query_override_should_fail() {
+    let (_root, db) = database("query-mismatched-override");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+    seed_collection(&collection);
+
+    let mut query = VectorQuery::by_vector(
+        field_name("embedding"),
+        dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
+        common::top_k(4),
+    );
+    query.search = VectorSearch::Ivf {
+        nprobe: IvfProbeCount::new(1).expect("nprobe"),
+    };
+
+    let error = collection.query(query).expect_err("mismatched override should fail");
+    assert_eq!(error.code, garuda_types::StatusCode::InvalidArgument);
 }
