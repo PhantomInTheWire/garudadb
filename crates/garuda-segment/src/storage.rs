@@ -5,7 +5,7 @@ use crate::index::{
     flat_index_entries, indexed_scalar_fields, load_persisted_search_resources,
     persistable_flat_entries_from_writing,
 };
-use crate::types::{PersistedSegment, StoredRecord, WritingSegment, sync_segment_meta_fields};
+use crate::types::{PersistedSegment, StoredRecord, WritingSegment};
 use crate::{RecordState, reset_wal, segment_meta};
 use garuda_index_flat::FlatIndexEntry;
 use garuda_index_scalar::ScalarIndex;
@@ -86,10 +86,9 @@ pub fn read_writing_segment(
 ) -> Result<WritingSegment, Status> {
     let bytes = read_file(&segment_data_path(root, meta.id))?;
     let decoded = decode_segment(&bytes)?;
-    let mut segment_meta = decoded.meta;
-    sync_segment_meta_fields(&mut segment_meta, &decoded.records);
-    segment_meta.path = meta.path.clone();
-    Ok(WritingSegment::new(segment_meta, decoded.records, schema))
+    let mut segment = WritingSegment::new(decoded.meta, decoded.records, schema);
+    segment.meta.path = meta.path.clone();
+    Ok(segment)
 }
 
 pub fn read_persisted_segment(
@@ -99,11 +98,10 @@ pub fn read_persisted_segment(
 ) -> Result<PersistedSegment, Status> {
     let bytes = read_file(&segment_data_path(root, meta.id))?;
     let decoded = decode_segment(&bytes)?;
-    let mut segment_meta = decoded.meta;
-    sync_segment_meta_fields(&mut segment_meta, &decoded.records);
-    segment_meta.path = meta.path.clone();
+    let mut segment_meta = decoded.meta.clone();
     let resources =
         load_persisted_search_resources(root, meta.id, schema, &segment_meta, &decoded.records)?;
+    segment_meta.path = meta.path.clone();
 
     Ok(PersistedSegment {
         meta: segment_meta,
