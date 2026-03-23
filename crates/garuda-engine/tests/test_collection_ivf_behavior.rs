@@ -2,10 +2,12 @@ mod common;
 
 use common::{
     collection_name, database, default_options, default_schema, dense_vector, field_name,
-    seed_collection, seed_more_collection_docs,
+    seed_collection, seed_more_collection_docs, build_doc,
 };
 use garuda_storage::{WRITING_SEGMENT_ID, segment_ivf_index_path};
-use garuda_types::{IndexKind, IndexParams, IvfIndexParams, VectorIndexState, VectorQuery};
+use garuda_types::{
+    IndexKind, IndexParams, IvfIndexParams, VectorIndexState, VectorQuery,
+};
 
 const FIRST_PERSISTED_SEGMENT_ID: garuda_types::SegmentId =
     garuda_types::SegmentId::new_unchecked(1);
@@ -106,5 +108,41 @@ fn create_flat_index_on_ivf_only_collection_should_preserve_results() {
     assert_eq!(
         before.iter().map(|doc| doc.id.clone()).collect::<Vec<_>>(),
         after.iter().map(|doc| doc.id.clone()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn ivf_writing_segment_should_return_each_inserted_record_once() {
+    let (_root, db) = database("ivf-writing-segment");
+    let mut schema = default_schema("docs");
+    schema.vector.indexes = VectorIndexState::IvfOnly(IvfIndexParams::default());
+    let mut options = default_options();
+    options.segment_max_docs = 100;
+
+    let collection = db
+        .create_collection(schema, options)
+        .expect("create collection");
+
+    let results = collection.insert(vec![
+        build_doc("doc-1", 1, "alpha", 0.9, [1.0, 0.0, 0.0, 0.0]),
+        build_doc("doc-2", 2, "alpha", 0.8, [0.9, 0.1, 0.0, 0.0]),
+        build_doc("doc-3", 3, "beta", 0.7, [0.0, 1.0, 0.0, 0.0]),
+        build_doc("doc-4", 4, "gamma", 0.6, [0.0, 0.0, 1.0, 0.0]),
+    ]);
+    assert!(results.iter().all(|result| result.status.is_ok()));
+    assert_eq!(collection.stats().doc_count, 4);
+
+    let docs = collection
+        .query(VectorQuery::by_vector(
+            field_name("embedding"),
+            dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
+            common::top_k(4),
+        ))
+        .expect("query");
+
+    assert_eq!(docs.len(), 4);
+    assert_eq!(
+        docs.iter().map(|doc| doc.id.clone()).collect::<std::collections::BTreeSet<_>>().len(),
+        4
     );
 }
