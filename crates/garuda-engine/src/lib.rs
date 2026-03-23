@@ -1,4 +1,3 @@
-mod catalog;
 mod checkpoint_service;
 mod filter;
 mod filter_parser;
@@ -101,11 +100,11 @@ impl Collection {
     }
 
     pub fn schema(&self) -> CollectionSchema {
-        self.read_state().catalog.schema.clone()
+        self.read_state().schema.clone()
     }
 
     pub fn options(&self) -> CollectionOptions {
-        self.read_state().catalog.options.clone()
+        self.read_state().options.clone()
     }
 
     pub fn stats(&self) -> CollectionStats {
@@ -123,7 +122,7 @@ impl Collection {
 
     pub fn create_index(&self, field_name: &FieldName, params: IndexParams) -> Result<(), Status> {
         self.mutate_and_checkpoint(|state| {
-            create_index_in_schema(&mut state.catalog.schema, field_name, params)?;
+            create_index_in_schema(&mut state.schema, field_name, params)?;
             state.rebuild_indexes();
 
             Ok(())
@@ -132,7 +131,7 @@ impl Collection {
 
     pub fn drop_index(&self, field_name: &FieldName, kind: IndexKind) -> Result<(), Status> {
         self.mutate_and_checkpoint(|state| {
-            drop_index_from_schema(&mut state.catalog.schema, field_name, kind)?;
+            drop_index_from_schema(&mut state.schema, field_name, kind)?;
             state.rebuild_indexes();
 
             Ok(())
@@ -141,21 +140,21 @@ impl Collection {
 
     pub fn add_column(&self, field: ScalarFieldSchema) -> Result<(), Status> {
         self.mutate_and_checkpoint(|state| {
-            ensure_column_can_be_added(&state.catalog.schema, &field)?;
+            ensure_column_can_be_added(&state.schema, &field)?;
             validate_field_default(&field)?;
             validate_schema(&CollectionSchema {
-                name: state.catalog.schema.name.clone(),
-                primary_key: state.catalog.schema.primary_key.clone(),
+                name: state.schema.name.clone(),
+                primary_key: state.schema.primary_key.clone(),
                 fields: {
-                    let mut fields = state.catalog.schema.fields.clone();
+                    let mut fields = state.schema.fields.clone();
                     fields.push(field.clone());
                     fields
                 },
-                vector: state.catalog.schema.vector.clone(),
+                vector: state.schema.vector.clone(),
             })?;
 
             backfill_new_column(&mut state.segments, &field);
-            state.catalog.schema.fields.push(field);
+            state.schema.fields.push(field);
             state.rebuild_indexes();
 
             Ok(())
@@ -164,7 +163,7 @@ impl Collection {
 
     pub fn alter_column(&self, old_name: &FieldName, new_name: &FieldName) -> Result<(), Status> {
         self.mutate_and_checkpoint(|state| {
-            rename_column_in_schema(&mut state.catalog.schema, old_name, new_name)?;
+            rename_column_in_schema(&mut state.schema, old_name, new_name)?;
             rename_column_in_state(&mut state.segments, old_name, new_name);
             state.rebuild_indexes();
 
@@ -174,7 +173,7 @@ impl Collection {
 
     pub fn drop_column(&self, name: &FieldName) -> Result<(), Status> {
         self.mutate_and_checkpoint(|state| {
-            drop_column_from_schema(&mut state.catalog.schema, name)?;
+            drop_column_from_schema(&mut state.schema, name)?;
             drop_column_from_state(&mut state.segments, name);
             state.rebuild_indexes();
 
@@ -185,9 +184,9 @@ impl Collection {
     pub fn optimize(&self, _options: OptimizeOptions) -> Result<(), Status> {
         self.mutate_and_checkpoint(|state| {
             state.segments.optimize(
-                &mut state.catalog.next_segment_id,
-                state.catalog.options.segment_max_docs,
-                &state.catalog.schema,
+                &mut state.next_segment_id,
+                state.options.segment_max_docs,
+                &state.schema,
                 |doc_id| state.meta.is_deleted(doc_id),
             );
             state.rebuild_indexes();

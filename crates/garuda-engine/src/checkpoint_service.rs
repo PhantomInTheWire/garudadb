@@ -15,14 +15,14 @@ pub(crate) fn checkpoint_state(state: &mut CollectionRuntime) -> Result<(), Stat
     let had_manifest = version_manager.exists();
 
     if had_manifest {
-        state.catalog.id_map_snapshot_id = state.catalog.id_map_snapshot_id.next();
-        state.catalog.delete_snapshot_id = state.catalog.delete_snapshot_id.next();
-        state.catalog.manifest_version_id = state.catalog.manifest_version_id.next();
+        state.id_map_snapshot_id = state.id_map_snapshot_id.next();
+        state.delete_snapshot_id = state.delete_snapshot_id.next();
+        state.manifest_version_id = state.manifest_version_id.next();
     }
 
     state
         .segments
-        .seal_writing_segment(&mut state.catalog.next_segment_id, &state.catalog.schema);
+        .seal_writing_segment(&mut state.next_segment_id, &state.schema);
     state.rebuild_indexes();
 
     let rollback = capture_checkpoint_files(state)?;
@@ -36,12 +36,12 @@ pub(crate) fn checkpoint_state(state: &mut CollectionRuntime) -> Result<(), Stat
     let _ = remove_old_snapshots(
         &state.path,
         SnapshotKind::IdMap,
-        state.catalog.id_map_snapshot_id,
+        state.id_map_snapshot_id,
     );
     let _ = remove_old_snapshots(
         &state.path,
         SnapshotKind::Delete,
-        state.catalog.delete_snapshot_id,
+        state.delete_snapshot_id,
     );
 
     let _ = remove_stale_segment_dirs(state);
@@ -53,14 +53,26 @@ fn write_checkpoint_files(
     state: &CollectionRuntime,
     version_manager: &VersionManager,
 ) -> Result<(), Status> {
-    let manifest = state.catalog.to_manifest(
-        state.segments.writing_segment(),
-        state.segments.persisted_segments(),
-    );
+    let manifest = garuda_types::Manifest {
+        schema: state.schema.clone(),
+        options: state.options.clone(),
+        next_doc_id: state.next_doc_id,
+        next_segment_id: state.next_segment_id,
+        id_map_snapshot_id: state.id_map_snapshot_id,
+        delete_snapshot_id: state.delete_snapshot_id,
+        manifest_version_id: state.manifest_version_id,
+        writing_segment: state.segments.writing_segment().meta.clone(),
+        persisted_segments: state
+            .segments
+            .persisted_segments()
+            .iter()
+            .map(|segment| segment.meta.clone())
+            .collect(),
+    };
     write_all_segments(state)?;
     write_id_map_snapshot(
         &state.path,
-        state.catalog.id_map_snapshot_id,
+        state.id_map_snapshot_id,
         state
             .meta
             .id_map_entries()
@@ -68,7 +80,7 @@ fn write_checkpoint_files(
     )?;
     write_delete_snapshot(
         &state.path,
-        state.catalog.delete_snapshot_id,
+        state.delete_snapshot_id,
         state.meta.deleted_doc_ids().copied(),
     )?;
     version_manager.write_manifest(&manifest)?;
@@ -82,13 +94,13 @@ fn write_checkpoint_files(
 
 fn write_all_segments(state: &CollectionRuntime) -> Result<(), Status> {
     for segment in state.segments.persisted_segments() {
-        write_persisted_segment(&state.path, segment, &state.catalog.schema)?;
+        write_persisted_segment(&state.path, segment, &state.schema)?;
     }
 
     write_writing_segment(
         &state.path,
         state.segments.writing_segment(),
-        &state.catalog.schema,
+        &state.schema,
     )
 }
 
@@ -186,11 +198,11 @@ fn capture_checkpoint_files(state: &CollectionRuntime) -> Result<CheckpointFiles
     ))?);
     files.push(capture_path(&id_map_snapshot_path(
         &state.path,
-        state.catalog.id_map_snapshot_id,
+        state.id_map_snapshot_id,
     ))?);
     files.push(capture_path(&delete_snapshot_path(
         &state.path,
-        state.catalog.delete_snapshot_id,
+        state.delete_snapshot_id,
     ))?);
     files.push(capture_path(&segment_wal_path(
         &state.path,
@@ -198,7 +210,7 @@ fn capture_checkpoint_files(state: &CollectionRuntime) -> Result<CheckpointFiles
     ))?);
     files.push(capture_path(&manifest_path(
         &state.path,
-        state.catalog.manifest_version_id,
+        state.manifest_version_id,
     ))?);
 
     Ok(CheckpointFiles { files })

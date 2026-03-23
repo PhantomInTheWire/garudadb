@@ -45,7 +45,7 @@ pub(crate) fn apply_delete_by_filter(
     state: &mut CollectionRuntime,
     raw_filter: &str,
 ) -> Result<(), Status> {
-    let filter = parse_required_filter(raw_filter, &state.catalog.schema)?;
+    let filter = parse_required_filter(raw_filter, &state.schema)?;
     let ids = collect_matching_doc_ids(state, &filter);
     if ids.is_empty() {
         return Ok(());

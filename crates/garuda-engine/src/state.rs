@@ -1,9 +1,11 @@
-use crate::catalog::CollectionCatalog;
 use crate::segment_manager::SegmentManager;
 use crate::validation::{apply_schema_defaults, validate_doc};
 use garuda_meta::MetadataStore;
 use garuda_segment::StoredRecord;
-use garuda_types::{Doc, DocId, StatusCode, WriteResult};
+use garuda_types::{
+    CollectionOptions, CollectionSchema, Doc, DocId, InternalDocId, ManifestVersionId,
+    SegmentId, SnapshotId, StatusCode, WriteResult,
+};
 use std::path::PathBuf;
 
 #[derive(Clone, Copy)]
@@ -15,7 +17,13 @@ pub(crate) enum WriteMode {
 #[derive(Clone)]
 pub(crate) struct CollectionRuntime {
     pub(crate) path: PathBuf,
-    pub(crate) catalog: CollectionCatalog,
+    pub(crate) schema: CollectionSchema,
+    pub(crate) options: CollectionOptions,
+    pub(crate) next_doc_id: InternalDocId,
+    pub(crate) next_segment_id: SegmentId,
+    pub(crate) id_map_snapshot_id: SnapshotId,
+    pub(crate) delete_snapshot_id: SnapshotId,
+    pub(crate) manifest_version_id: ManifestVersionId,
     pub(crate) segments: SegmentManager,
     pub(crate) meta: MetadataStore,
 }
@@ -23,9 +31,9 @@ pub(crate) struct CollectionRuntime {
 impl CollectionRuntime {
     pub(crate) fn insert_doc(&mut self, doc: Doc, mode: WriteMode) -> WriteResult {
         let mut doc = doc;
-        apply_schema_defaults(&self.catalog.schema, &mut doc);
+        apply_schema_defaults(&self.schema, &mut doc);
 
-        if let Err(status) = validate_doc(&self.catalog.schema, &doc) {
+        if let Err(status) = validate_doc(&self.schema, &doc) {
             return WriteResult::err(doc.id, status.code, status.message);
         }
 
@@ -49,7 +57,7 @@ impl CollectionRuntime {
         };
 
         let merged_doc = merge_docs(&existing_doc, &doc);
-        if let Err(status) = validate_doc(&self.catalog.schema, &merged_doc) {
+        if let Err(status) = validate_doc(&self.schema, &merged_doc) {
             return WriteResult::err(doc.id, status.code, status.message);
         }
 
@@ -69,7 +77,7 @@ impl CollectionRuntime {
     }
 
     pub(crate) fn rebuild_indexes(&mut self) {
-        self.segments.rebuild_indexes(&self.catalog.schema);
+        self.segments.rebuild_indexes(&self.schema);
         self.refresh_metadata();
     }
 
@@ -92,15 +100,15 @@ impl CollectionRuntime {
     }
 
     fn append_new_record(&mut self, doc: Doc) {
-        let doc_id = self.catalog.next_doc_id;
-        self.catalog.next_doc_id = self.catalog.next_doc_id.next();
+        let doc_id = self.next_doc_id;
+        self.next_doc_id = self.next_doc_id.next();
 
         self.segments.append_new_record(
             doc_id,
             doc,
-            &mut self.catalog.next_segment_id,
-            self.catalog.options.segment_max_docs,
-            &self.catalog.schema,
+            &mut self.next_segment_id,
+            self.options.segment_max_docs,
+            &self.schema,
         );
     }
 
@@ -112,7 +120,7 @@ impl CollectionRuntime {
             return false;
         }
 
-        if !self.segments.mark_deleted(doc_id, &self.catalog.schema) {
+        if !self.segments.mark_deleted(doc_id, &self.schema) {
             return false;
         }
 
