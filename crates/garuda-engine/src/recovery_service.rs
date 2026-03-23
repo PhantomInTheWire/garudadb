@@ -1,4 +1,3 @@
-use crate::catalog::CollectionCatalog;
 use crate::schema::validate_schema;
 use crate::segment_manager::SegmentManager;
 use crate::state::CollectionRuntime;
@@ -30,15 +29,13 @@ pub(crate) fn create_collection_state(
 
     CollectionRuntime {
         path,
-        catalog: CollectionCatalog {
-            schema,
-            options,
-            next_doc_id: INITIAL_DOC_ID,
-            next_segment_id: INITIAL_SEGMENT_ID,
-            id_map_snapshot_id: SnapshotId::new(INITIAL_SNAPSHOT_ID),
-            delete_snapshot_id: SnapshotId::new(INITIAL_SNAPSHOT_ID),
-            manifest_version_id: ManifestVersionId::new(INITIAL_MANIFEST_VERSION_ID),
-        },
+        schema,
+        options,
+        next_doc_id: INITIAL_DOC_ID,
+        next_segment_id: INITIAL_SEGMENT_ID,
+        id_map_snapshot_id: SnapshotId::new(INITIAL_SNAPSHOT_ID),
+        delete_snapshot_id: SnapshotId::new(INITIAL_SNAPSHOT_ID),
+        manifest_version_id: ManifestVersionId::new(INITIAL_MANIFEST_VERSION_ID),
         segments: SegmentManager::new(Vec::new(), writing_segment),
         meta: MetadataStore::new(),
     }
@@ -54,7 +51,13 @@ pub(crate) fn load_collection_state(path: PathBuf) -> Result<CollectionRuntime, 
 
     let mut state = CollectionRuntime {
         path,
-        catalog: CollectionCatalog::from(manifest),
+        schema: manifest.schema,
+        options: manifest.options,
+        next_doc_id: manifest.next_doc_id,
+        next_segment_id: manifest.next_segment_id,
+        id_map_snapshot_id: manifest.id_map_snapshot_id,
+        delete_snapshot_id: manifest.delete_snapshot_id,
+        manifest_version_id: manifest.manifest_version_id,
         segments: SegmentManager::new(persisted_segments, writing_segment),
         meta: MetadataStore::from_parts(id_map, delete_store),
     };

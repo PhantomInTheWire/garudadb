@@ -75,10 +75,10 @@ pub(crate) fn execute_query(
     state: &CollectionRuntime,
     query: VectorQuery,
 ) -> Result<Vec<Doc>, Status> {
-    let filter = parse_query_filter(query.filter.as_deref(), &state.catalog.schema)?;
-    let plan = build_query_plan(query, filter, &state.catalog.schema);
+    let filter = parse_query_filter(query.filter.as_deref(), &state.schema)?;
+    let plan = build_query_plan(query, filter, &state.schema);
 
-    if plan.field_name != state.catalog.schema.vector.name {
+    if plan.field_name != state.schema.vector.name {
         return Err(Status::err(
             StatusCode::InvalidArgument,
             "unknown vector field",
@@ -109,7 +109,7 @@ fn resolve_query_vector(
 ) -> Result<DenseVector, Status> {
     match &plan.source {
         QueryVectorSource::Vector(vector) => {
-            if vector.len() != state.catalog.schema.vector.dimension.get() {
+            if vector.len() != state.schema.vector.dimension.get() {
                 return Err(Status::err(
                     StatusCode::InvalidArgument,
                     "query vector dimension does not match schema",
@@ -205,7 +205,7 @@ fn segment_request<'a>(
 
     match plan.search {
         SegmentSearchPlan::Flat => SegmentSearchRequest::Flat(FlatSearchRequest {
-            metric: state.catalog.schema.vector.metric,
+            metric: state.schema.vector.metric,
             query_vector,
             top_k: segment_top_k(segment_doc_count),
             filter,
