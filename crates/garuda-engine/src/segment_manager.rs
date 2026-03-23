@@ -308,22 +308,14 @@ fn record_in_segment_by_internal_id(
 ) -> Option<&StoredRecord> {
     records
         .iter()
-        .find(|record| record.doc_id == doc_id && matches!(record.state, RecordState::Live))
+        .find(|record| is_live_record(record, doc_id))
 }
 
 fn live_record_by_internal_id(
     records: &mut [StoredRecord],
     doc_id: InternalDocId,
 ) -> Option<&mut StoredRecord> {
-    for record in records {
-        if record.doc_id != doc_id || matches!(record.state, RecordState::Deleted) {
-            continue;
-        }
-
-        return Some(record);
-    }
-
-    None
+    records.iter_mut().find(|record| is_live_record(record, doc_id))
 }
 
 fn seal_segment(
@@ -348,4 +340,8 @@ fn index_segment_meta(records: &[StoredRecord], meta: &mut MetadataStore) {
 
         meta.index_live_doc(record.doc.id.clone(), record.doc_id);
     }
+}
+
+fn is_live_record(record: &StoredRecord, doc_id: InternalDocId) -> bool {
+    record.doc_id == doc_id && matches!(record.state, RecordState::Live)
 }
