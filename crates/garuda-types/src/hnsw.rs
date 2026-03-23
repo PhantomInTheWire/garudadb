@@ -34,6 +34,46 @@ pub const HNSW_MAX_GRAPH_LEVEL: usize = 15;
 type NodeNeighbors = Vec<NodeIndex>;
 type HnswLevelAdjacency = Vec<NodeNeighbors>;
 
+macro_rules! hnsw_non_zero_u32_newtype {
+    (
+        $name:ident,
+        invalid = $invalid_message:literal,
+        persisted_overflow = $persisted_overflow_message:literal,
+        persisted_invalid = $persisted_invalid_message:literal
+        $(, validate = $validate:expr)?
+    ) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+        pub struct $name(NonZeroU32);
+
+        impl $name {
+            pub fn new(value: u32) -> Result<Self, Status> {
+                let value = NonZeroU32::new(value).ok_or_else(|| {
+                    Status::err(StatusCode::InvalidArgument, $invalid_message)
+                })?;
+
+                $(
+                    $validate(value)?;
+                )?
+
+                Ok(Self(value))
+            }
+
+            pub fn from_persisted_u64(value: u64) -> Result<Self, Status> {
+                let value = u32::try_from(value).map_err(|_| {
+                    Status::err(StatusCode::Internal, $persisted_overflow_message)
+                })?;
+
+                Self::new(value)
+                    .map_err(|_| Status::err(StatusCode::Internal, $persisted_invalid_message))
+            }
+
+            pub fn get(self) -> u32 {
+                self.0.get()
+            }
+        }
+    };
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HnswGraph {
     node_levels: Vec<HnswLevel>,
@@ -64,154 +104,47 @@ impl HnswNeighborLimits {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HnswM(NonZeroU32);
-
-impl HnswM {
-    pub fn new(value: u32) -> Result<Self, Status> {
-        let Some(value) = NonZeroU32::new(value) else {
-            return Err(Status::err(
-                StatusCode::InvalidArgument,
-                "hnsw m must be greater than zero",
-            ));
-        };
-
-        Ok(Self(value))
-    }
-
-    pub fn from_persisted_u64(value: u64) -> Result<Self, Status> {
-        let value = u32::try_from(value).map_err(|_| {
-            Status::err(
-                StatusCode::Internal,
-                "hnsw m exceeds u32::MAX in persisted manifest",
-            )
-        })?;
-
-        Self::new(value)
-            .map_err(|_| Status::err(StatusCode::Internal, "hnsw m must be greater than zero"))
-    }
-
-    pub fn get(self) -> u32 {
-        self.0.get()
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HnswScalingFactor(NonZeroU32);
+hnsw_non_zero_u32_newtype!(
+    HnswM,
+    invalid = "hnsw m must be greater than zero",
+    persisted_overflow = "hnsw m exceeds u32::MAX in persisted manifest",
+    persisted_invalid = "hnsw m must be greater than zero"
+);
 
 impl HnswScalingFactor {
     const MIN_SCALING_FACTOR: u32 = 2;
+}
 
-    pub fn new(value: u32) -> Result<Self, Status> {
-        let Some(value) = NonZeroU32::new(value) else {
-            return Err(Status::err(
-                StatusCode::InvalidArgument,
-                "hnsw scaling_factor must be greater than one",
-            ));
-        };
-
-        if value.get() < Self::MIN_SCALING_FACTOR {
+hnsw_non_zero_u32_newtype!(
+    HnswScalingFactor,
+    invalid = "hnsw scaling_factor must be greater than one",
+    persisted_overflow = "hnsw scaling_factor exceeds u32::MAX in persisted manifest",
+    persisted_invalid = "hnsw scaling_factor must be greater than one",
+    validate = |value: NonZeroU32| {
+        if value.get() < HnswScalingFactor::MIN_SCALING_FACTOR {
             return Err(Status::err(
                 StatusCode::InvalidArgument,
                 "hnsw scaling_factor must be greater than one",
             ));
         }
 
-        Ok(Self(value))
+        Ok(())
     }
+);
 
-    pub fn from_persisted_u64(value: u64) -> Result<Self, Status> {
-        let value = u32::try_from(value).map_err(|_| {
-            Status::err(
-                StatusCode::Internal,
-                "hnsw scaling_factor exceeds u32::MAX in persisted manifest",
-            )
-        })?;
+hnsw_non_zero_u32_newtype!(
+    HnswPruneWidth,
+    invalid = "hnsw prune_width must be greater than zero",
+    persisted_overflow = "hnsw prune_width exceeds u32::MAX in persisted manifest",
+    persisted_invalid = "hnsw prune_width must be greater than zero"
+);
 
-        Self::new(value).map_err(|_| {
-            Status::err(
-                StatusCode::Internal,
-                "hnsw scaling_factor must be greater than one",
-            )
-        })
-    }
-
-    pub fn get(self) -> u32 {
-        self.0.get()
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HnswPruneWidth(NonZeroU32);
-
-impl HnswPruneWidth {
-    pub fn new(value: u32) -> Result<Self, Status> {
-        let Some(value) = NonZeroU32::new(value) else {
-            return Err(Status::err(
-                StatusCode::InvalidArgument,
-                "hnsw prune_width must be greater than zero",
-            ));
-        };
-
-        Ok(Self(value))
-    }
-
-    pub fn from_persisted_u64(value: u64) -> Result<Self, Status> {
-        let value = u32::try_from(value).map_err(|_| {
-            Status::err(
-                StatusCode::Internal,
-                "hnsw prune_width exceeds u32::MAX in persisted manifest",
-            )
-        })?;
-
-        Self::new(value).map_err(|_| {
-            Status::err(
-                StatusCode::Internal,
-                "hnsw prune_width must be greater than zero",
-            )
-        })
-    }
-
-    pub fn get(self) -> u32 {
-        self.0.get()
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HnswMinNeighborCount(NonZeroU32);
-
-impl HnswMinNeighborCount {
-    pub fn new(value: u32) -> Result<Self, Status> {
-        let Some(value) = NonZeroU32::new(value) else {
-            return Err(Status::err(
-                StatusCode::InvalidArgument,
-                "hnsw min_neighbor_count must be greater than zero",
-            ));
-        };
-
-        Ok(Self(value))
-    }
-
-    pub fn from_persisted_u64(value: u64) -> Result<Self, Status> {
-        let value = u32::try_from(value).map_err(|_| {
-            Status::err(
-                StatusCode::Internal,
-                "hnsw min_neighbor_count exceeds u32::MAX in persisted manifest",
-            )
-        })?;
-
-        Self::new(value).map_err(|_| {
-            Status::err(
-                StatusCode::Internal,
-                "hnsw min_neighbor_count must be greater than zero",
-            )
-        })
-    }
-
-    pub fn get(self) -> u32 {
-        self.0.get()
-    }
-}
+hnsw_non_zero_u32_newtype!(
+    HnswMinNeighborCount,
+    invalid = "hnsw min_neighbor_count must be greater than zero",
+    persisted_overflow = "hnsw min_neighbor_count exceeds u32::MAX in persisted manifest",
+    persisted_invalid = "hnsw min_neighbor_count must be greater than zero"
+);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HnswNeighborConfig {
@@ -246,77 +179,19 @@ impl HnswNeighborConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HnswEfConstruction(NonZeroU32);
+hnsw_non_zero_u32_newtype!(
+    HnswEfConstruction,
+    invalid = "hnsw ef_construction must be greater than zero",
+    persisted_overflow = "hnsw ef_construction exceeds u32::MAX in persisted manifest",
+    persisted_invalid = "hnsw ef_construction must be greater than zero"
+);
 
-impl HnswEfConstruction {
-    pub fn new(value: u32) -> Result<Self, Status> {
-        let Some(value) = NonZeroU32::new(value) else {
-            return Err(Status::err(
-                StatusCode::InvalidArgument,
-                "hnsw ef_construction must be greater than zero",
-            ));
-        };
-
-        Ok(Self(value))
-    }
-
-    pub fn from_persisted_u64(value: u64) -> Result<Self, Status> {
-        let value = u32::try_from(value).map_err(|_| {
-            Status::err(
-                StatusCode::Internal,
-                "hnsw ef_construction exceeds u32::MAX in persisted manifest",
-            )
-        })?;
-
-        Self::new(value).map_err(|_| {
-            Status::err(
-                StatusCode::Internal,
-                "hnsw ef_construction must be greater than zero",
-            )
-        })
-    }
-
-    pub fn get(self) -> u32 {
-        self.0.get()
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HnswEfSearch(NonZeroU32);
-
-impl HnswEfSearch {
-    pub fn new(value: u32) -> Result<Self, Status> {
-        let Some(value) = NonZeroU32::new(value) else {
-            return Err(Status::err(
-                StatusCode::InvalidArgument,
-                "hnsw ef_search must be greater than zero",
-            ));
-        };
-
-        Ok(Self(value))
-    }
-
-    pub fn from_persisted_u64(value: u64) -> Result<Self, Status> {
-        let value = u32::try_from(value).map_err(|_| {
-            Status::err(
-                StatusCode::Internal,
-                "hnsw ef_search exceeds u32::MAX in persisted manifest",
-            )
-        })?;
-
-        Self::new(value).map_err(|_| {
-            Status::err(
-                StatusCode::Internal,
-                "hnsw ef_search must be greater than zero",
-            )
-        })
-    }
-
-    pub fn get(self) -> u32 {
-        self.0.get()
-    }
-}
+hnsw_non_zero_u32_newtype!(
+    HnswEfSearch,
+    invalid = "hnsw ef_search must be greater than zero",
+    persisted_overflow = "hnsw ef_search exceeds u32::MAX in persisted manifest",
+    persisted_invalid = "hnsw ef_search must be greater than zero"
+);
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HnswIndexParams {
