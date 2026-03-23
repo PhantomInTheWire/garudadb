@@ -1,9 +1,3 @@
-pub(crate) struct CosineAccum {
-    pub(crate) dot: f32,
-    pub(crate) lhs_norm: f32,
-    pub(crate) rhs_norm: f32,
-}
-
 pub(crate) fn dot(lhs: &[f32], rhs: &[f32]) -> f32 {
     implementation::dot(lhs, rhs)
 }
@@ -12,28 +6,51 @@ pub(crate) fn squared_l2(lhs: &[f32], rhs: &[f32]) -> f32 {
     implementation::squared_l2(lhs, rhs)
 }
 
-pub(crate) fn cosine_accum(lhs: &[f32], rhs: &[f32]) -> CosineAccum {
-    implementation::cosine_accum(lhs, rhs)
+pub(crate) fn cosine_similarity(lhs: &[f32], rhs: &[f32]) -> f32 {
+    implementation::cosine_similarity(lhs, rhs)
+}
+
+#[cfg_attr(target_arch = "aarch64", allow(dead_code))]
+pub(crate) fn dot_scalar(lhs: &[f32], rhs: &[f32]) -> f32 {
+    let mut sum = 0.0f32;
+
+    for (left, right) in lhs.iter().zip(rhs.iter()) {
+        sum += left * right;
+    }
+
+    sum
+}
+
+#[cfg_attr(target_arch = "aarch64", allow(dead_code))]
+pub(crate) fn squared_l2_scalar(lhs: &[f32], rhs: &[f32]) -> f32 {
+    let mut sum = 0.0f32;
+
+    for (left, right) in lhs.iter().zip(rhs.iter()) {
+        let delta = left - right;
+        sum += delta * delta;
+    }
+
+    sum
 }
 
 #[cfg(not(target_arch = "aarch64"))]
 mod implementation {
-    use super::CosineAccum;
+    use super::{dot_scalar, squared_l2_scalar};
 
     pub(super) fn dot(lhs: &[f32], rhs: &[f32]) -> f32 {
-        crate::dot_scalar(lhs, rhs)
+        dot_scalar(lhs, rhs)
     }
 
     pub(super) fn squared_l2(lhs: &[f32], rhs: &[f32]) -> f32 {
-        crate::squared_l2_scalar(lhs, rhs)
+        squared_l2_scalar(lhs, rhs)
     }
 
-    pub(super) fn cosine_accum(lhs: &[f32], rhs: &[f32]) -> CosineAccum {
+    pub(super) fn cosine_similarity(lhs: &[f32], rhs: &[f32]) -> f32 {
         assert_eq!(lhs.len(), rhs.len());
 
-        let mut dot = 0.0;
-        let mut lhs_norm = 0.0;
-        let mut rhs_norm = 0.0;
+        let mut dot = 0.0f32;
+        let mut lhs_norm = 0.0f32;
+        let mut rhs_norm = 0.0f32;
 
         for (left, right) in lhs.iter().zip(rhs.iter()) {
             dot += left * right;
@@ -41,17 +58,16 @@ mod implementation {
             rhs_norm += right * right;
         }
 
-        CosineAccum {
-            dot,
-            lhs_norm,
-            rhs_norm,
+        if lhs_norm == 0.0 || rhs_norm == 0.0 {
+            return 0.0;
         }
+
+        dot / (lhs_norm.sqrt() * rhs_norm.sqrt())
     }
 }
 
 #[cfg(target_arch = "aarch64")]
 mod implementation {
-    use super::CosineAccum;
     use std::arch::aarch64::*;
 
     pub(super) fn dot(lhs: &[f32], rhs: &[f32]) -> f32 {
@@ -62,8 +78,8 @@ mod implementation {
         unsafe { squared_l2_neon(lhs, rhs) }
     }
 
-    pub(super) fn cosine_accum(lhs: &[f32], rhs: &[f32]) -> CosineAccum {
-        unsafe { cosine_accum_neon(lhs, rhs) }
+    pub(super) fn cosine_similarity(lhs: &[f32], rhs: &[f32]) -> f32 {
+        unsafe { cosine_similarity_neon(lhs, rhs) }
     }
 
     #[inline]
@@ -120,7 +136,7 @@ mod implementation {
 
     #[inline]
     #[target_feature(enable = "neon")]
-    unsafe fn cosine_accum_neon(lhs: &[f32], rhs: &[f32]) -> CosineAccum {
+    unsafe fn cosine_similarity_neon(lhs: &[f32], rhs: &[f32]) -> f32 {
         assert_eq!(lhs.len(), rhs.len());
 
         let mut index = 0usize;
@@ -139,22 +155,24 @@ mod implementation {
             index += 4;
         }
 
-        let mut accum = CosineAccum {
-            dot: vaddvq_f32(dot),
-            lhs_norm: vaddvq_f32(lhs_norm),
-            rhs_norm: vaddvq_f32(rhs_norm),
-        };
+        let mut dot_sum = vaddvq_f32(dot);
+        let mut lhs_norm_sum = vaddvq_f32(lhs_norm);
+        let mut rhs_norm_sum = vaddvq_f32(rhs_norm);
 
         while index < len {
             let left = unsafe { *lhs.get_unchecked(index) };
             let right = unsafe { *rhs.get_unchecked(index) };
 
-            accum.dot += left * right;
-            accum.lhs_norm += left * left;
-            accum.rhs_norm += right * right;
+            dot_sum += left * right;
+            lhs_norm_sum += left * left;
+            rhs_norm_sum += right * right;
             index += 1;
         }
 
-        accum
+        if lhs_norm_sum == 0.0 || rhs_norm_sum == 0.0 {
+            return 0.0;
+        }
+
+        dot_sum / (lhs_norm_sum.sqrt() * rhs_norm_sum.sqrt())
     }
 }
