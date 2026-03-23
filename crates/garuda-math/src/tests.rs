@@ -226,9 +226,15 @@ fn next_random_value(seed: &mut u64) -> f32 {
         .wrapping_mul(RANDOM_MULTIPLIER)
         .wrapping_add(RANDOM_INCREMENT);
 
-    let bits = (*seed >> 32) as u32;
-    let centered = (bits as f32 / u32::MAX as f32) * 2.0 - 1.0;
-    let scale = match bits % 4 {
+    let centered_bits = (*seed >> 32) as u32;
+    let centered = (centered_bits as f32 / u32::MAX as f32) * 2.0 - 1.0;
+
+    *seed = seed
+        .wrapping_mul(RANDOM_MULTIPLIER)
+        .wrapping_add(RANDOM_INCREMENT);
+
+    let scale_bits = (*seed >> 32) as u32;
+    let scale = match scale_bits % 4 {
         0 => SCALE_SMALL,
         1 => SCALE_MEDIUM,
         2 => SCALE_LARGE,
