@@ -211,10 +211,6 @@ impl VectorIndexState {
 
     pub fn drop(self, kind: IndexKind) -> Result<Self, Status> {
         match (self, kind) {
-            (Self::DefaultFlat, IndexKind::Flat) => Err(Status::err(
-                StatusCode::InvalidArgument,
-                "index kind is not enabled",
-            )),
             (Self::DefaultFlat, _) => Err(Status::err(
                 StatusCode::InvalidArgument,
                 "index kind is not enabled",
