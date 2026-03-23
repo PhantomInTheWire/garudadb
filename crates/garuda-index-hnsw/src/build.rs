@@ -31,7 +31,7 @@ impl HnswIndex {
                 self.config.build_candidate_limit(level),
             );
 
-            if let Some(best_candidate) = best_retained_candidate(&candidates) {
+            if let Some(best_candidate) = candidates.first().copied() {
                 entry_point = best_candidate.index;
             }
 
@@ -157,10 +157,6 @@ impl HnswIndex {
 
         true
     }
-}
-
-fn best_retained_candidate(candidates: &[ScoredNode]) -> Option<ScoredNode> {
-    candidates.first().copied()
 }
 
 pub(crate) fn sample_node_levels(
