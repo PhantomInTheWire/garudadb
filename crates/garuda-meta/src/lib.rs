@@ -1,4 +1,4 @@
-use garuda_types::{DocId, FilterExpr, InternalDocId, ScalarValue};
+use garuda_types::{DocId, FilterExpr, InternalDocId, ScalarValue, StringMatchExpr};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -134,8 +134,30 @@ pub fn evaluate_filter(expr: &FilterExpr, fields: &BTreeMap<String, ScalarValue>
         FilterExpr::Gte(field, value) => compare_field_value(fields, field, value, Ordering::is_ge),
         FilterExpr::Lt(field, value) => compare_field_value(fields, field, value, Ordering::is_lt),
         FilterExpr::Lte(field, value) => compare_field_value(fields, field, value, Ordering::is_le),
+        FilterExpr::StringMatch(field, expr) => {
+            string_field(fields, field).is_some_and(|value| string_matches(value, expr))
+        }
+        FilterExpr::IsNull(field) => fields.get(field) == Some(&ScalarValue::Null),
         FilterExpr::And(lhs, rhs) => evaluate_filter(lhs, fields) && evaluate_filter(rhs, fields),
         FilterExpr::Or(lhs, rhs) => evaluate_filter(lhs, fields) || evaluate_filter(rhs, fields),
+    }
+}
+
+fn string_field<'a>(fields: &'a BTreeMap<String, ScalarValue>, field: &str) -> Option<&'a str> {
+    let Some(ScalarValue::String(value)) = fields.get(field) else {
+        return None;
+    };
+
+    Some(value)
+}
+
+fn string_matches(value: &str, expr: &StringMatchExpr) -> bool {
+    match expr {
+        StringMatchExpr::Like(garuda_types::LikePattern::Exact(pattern)) => value == pattern,
+        StringMatchExpr::Like(garuda_types::LikePattern::PrefixSuffix { prefix, suffix }) => {
+            value.starts_with(prefix) && value.ends_with(suffix)
+        }
+        StringMatchExpr::Contains(needle) => value.contains(needle),
     }
 }
 

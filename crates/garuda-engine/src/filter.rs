@@ -1,4 +1,6 @@
-use garuda_types::{CollectionSchema, FilterExpr, ScalarType, ScalarValue, Status, StatusCode};
+use garuda_types::{
+    CollectionSchema, FilterExpr, ScalarFieldSchema, ScalarType, ScalarValue, Status, StatusCode,
+};
 
 pub fn validate_filter(expr: &FilterExpr, schema: &CollectionSchema) -> Result<(), Status> {
     match expr {
@@ -7,7 +9,14 @@ pub fn validate_filter(expr: &FilterExpr, schema: &CollectionSchema) -> Result<(
         | FilterExpr::Gt(field, value)
         | FilterExpr::Gte(field, value)
         | FilterExpr::Lt(field, value)
-        | FilterExpr::Lte(field, value) => validate_filter_leaf(field, value, schema),
+        | FilterExpr::Lte(field, value) => {
+            validate_filter_value(field_schema(schema, field)?.field_type, value)
+        }
+        FilterExpr::StringMatch(field, _) => validate_string_field(field_schema(schema, field)?),
+        FilterExpr::IsNull(field) => {
+            field_schema(schema, field)?;
+            Ok(())
+        }
         FilterExpr::And(lhs, rhs) | FilterExpr::Or(lhs, rhs) => {
             validate_filter(lhs, schema)?;
             validate_filter(rhs, schema)?;
@@ -16,11 +25,10 @@ pub fn validate_filter(expr: &FilterExpr, schema: &CollectionSchema) -> Result<(
     }
 }
 
-fn validate_filter_leaf(
+fn field_schema<'a>(
+    schema: &'a CollectionSchema,
     field: &str,
-    value: &ScalarValue,
-    schema: &CollectionSchema,
-) -> Result<(), Status> {
+) -> Result<&'a ScalarFieldSchema, Status> {
     let Some(field_schema) = schema
         .fields
         .iter()
@@ -32,7 +40,18 @@ fn validate_filter_leaf(
         ));
     };
 
-    validate_filter_value(field_schema.field_type, value)
+    Ok(field_schema)
+}
+
+fn validate_string_field(field_schema: &ScalarFieldSchema) -> Result<(), Status> {
+    if matches!(field_schema.field_type, ScalarType::String) {
+        return Ok(());
+    }
+
+    Err(Status::err(
+        StatusCode::InvalidArgument,
+        "string filter operator requires a string field",
+    ))
 }
 
 fn validate_filter_value(expected_type: ScalarType, value: &ScalarValue) -> Result<(), Status> {

@@ -56,6 +56,14 @@ fn filters_on_unknown_fields_or_invalid_types_should_error() {
     );
     wrong_type.filter = Some("rank = 'not-a-number'".to_string());
     assert!(collection.query(wrong_type).is_err());
+
+    let mut bad_like = VectorQuery::by_vector(
+        field_name("embedding"),
+        dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
+        common::top_k(5),
+    );
+    bad_like.filter = Some("category LIKE 'a%b%c'".to_string());
+    assert!(collection.query(bad_like).is_err());
 }
 
 #[test]
