@@ -11,6 +11,12 @@ pub enum SegmentFilterPlan {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct FilterPlan {
+    pub scalar_prefilter: ScalarPrefilter,
+    pub residual: SegmentFilterPlan,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum SegmentSearchPlan {
     Flat,
     Hnsw { ef_search: HnswEfSearch },
@@ -20,8 +26,7 @@ pub enum SegmentSearchPlan {
 pub struct QueryPlan {
     pub field_name: FieldName,
     pub source: QueryVectorSource,
-    pub scalar_prefilter: ScalarPrefilter,
-    pub residual_filter: SegmentFilterPlan,
+    pub filter: FilterPlan,
     pub top_k: TopK,
     pub search: SegmentSearchPlan,
     pub vector_projection: VectorProjection,
@@ -33,13 +38,10 @@ pub fn build_query_plan(
     filter: Option<FilterExpr>,
     schema: &CollectionSchema,
 ) -> QueryPlan {
-    let (scalar_prefilter, residual_filter) = build_filter_plan(filter, schema);
-
     QueryPlan {
         field_name: query.field_name,
         source: query.source,
-        scalar_prefilter,
-        residual_filter,
+        filter: build_filter_plan(filter, schema),
         top_k: query.top_k,
         search: search_plan(query.ef_search, schema),
         vector_projection: query.vector_projection,
@@ -67,85 +69,72 @@ fn search_plan(
     }
 }
 
-fn build_filter_plan(
-    filter: Option<FilterExpr>,
-    schema: &CollectionSchema,
-) -> (ScalarPrefilter, SegmentFilterPlan) {
+fn build_filter_plan(filter: Option<FilterExpr>, schema: &CollectionSchema) -> FilterPlan {
     let Some(filter) = filter else {
-        return (ScalarPrefilter::All, SegmentFilterPlan::All);
+        return FilterPlan {
+            scalar_prefilter: ScalarPrefilter::All,
+            residual: SegmentFilterPlan::All,
+        };
     };
-
-    if contains_or(&filter) {
-        return (ScalarPrefilter::All, SegmentFilterPlan::Matching(filter));
-    }
 
     let mut scalar_predicates = Vec::new();
     let mut residual_terms = Vec::new();
 
-    for term in and_terms(&filter) {
-        let Some(predicate) = scalar_predicate(term, schema) else {
-            residual_terms.push(term.clone());
-            continue;
+    if !collect_filter_terms(&filter, schema, &mut scalar_predicates, &mut residual_terms) {
+        return FilterPlan {
+            scalar_prefilter: ScalarPrefilter::All,
+            residual: SegmentFilterPlan::Matching(filter),
         };
-
-        scalar_predicates.push(predicate);
     }
 
-    let scalar_prefilter = if scalar_predicates.is_empty() {
-        ScalarPrefilter::All
-    } else {
-        ScalarPrefilter::And(scalar_predicates)
-    };
-
-    let residual_filter = if residual_terms.is_empty() {
-        SegmentFilterPlan::All
-    } else {
-        SegmentFilterPlan::Matching(and_expr(residual_terms))
-    };
-
-    (scalar_prefilter, residual_filter)
-}
-
-fn contains_or(filter: &FilterExpr) -> bool {
-    match filter {
-        FilterExpr::Or(_, _) => true,
-        FilterExpr::And(lhs, rhs) => contains_or(lhs) || contains_or(rhs),
-        _ => false,
+    FilterPlan {
+        scalar_prefilter: if scalar_predicates.is_empty() {
+            ScalarPrefilter::All
+        } else {
+            ScalarPrefilter::And(scalar_predicates)
+        },
+        residual: if residual_terms.is_empty() {
+            SegmentFilterPlan::All
+        } else {
+            SegmentFilterPlan::Matching(and_expr(residual_terms))
+        },
     }
 }
 
-fn and_terms(filter: &FilterExpr) -> Vec<&FilterExpr> {
-    let mut terms = Vec::new();
-    collect_and_terms(filter, &mut terms);
-    terms
-}
-
-fn collect_and_terms<'a>(filter: &'a FilterExpr, out: &mut Vec<&'a FilterExpr>) {
+fn collect_filter_terms(
+    filter: &FilterExpr,
+    schema: &CollectionSchema,
+    scalar_predicates: &mut Vec<ScalarPredicate>,
+    residual_terms: &mut Vec<FilterExpr>,
+) -> bool {
     match filter {
         FilterExpr::And(lhs, rhs) => {
-            collect_and_terms(lhs, out);
-            collect_and_terms(rhs, out);
+            collect_filter_terms(lhs, schema, scalar_predicates, residual_terms)
+                && collect_filter_terms(rhs, schema, scalar_predicates, residual_terms)
         }
-        _ => out.push(filter),
+        FilterExpr::Or(_, _) => false,
+        _ => {
+            let Some(predicate) = pushdown_predicate(filter, schema) else {
+                residual_terms.push(filter.clone());
+                return true;
+            };
+
+            scalar_predicates.push(predicate);
+            true
+        }
     }
 }
 
-fn scalar_predicate(filter: &FilterExpr, schema: &CollectionSchema) -> Option<ScalarPredicate> {
+fn pushdown_predicate(filter: &FilterExpr, schema: &CollectionSchema) -> Option<ScalarPredicate> {
     match filter {
-        FilterExpr::Eq(field, value) => {
-            build_scalar_predicate(field, ScalarCompareOp::Eq, value, schema)
-        }
-        FilterExpr::Gt(field, value) => {
-            build_scalar_predicate(field, ScalarCompareOp::Gt, value, schema)
-        }
+        FilterExpr::Eq(field, value) => scalar_predicate(schema, field, ScalarCompareOp::Eq, value),
+        FilterExpr::Gt(field, value) => scalar_predicate(schema, field, ScalarCompareOp::Gt, value),
         FilterExpr::Gte(field, value) => {
-            build_scalar_predicate(field, ScalarCompareOp::Gte, value, schema)
+            scalar_predicate(schema, field, ScalarCompareOp::Gte, value)
         }
-        FilterExpr::Lt(field, value) => {
-            build_scalar_predicate(field, ScalarCompareOp::Lt, value, schema)
-        }
+        FilterExpr::Lt(field, value) => scalar_predicate(schema, field, ScalarCompareOp::Lt, value),
         FilterExpr::Lte(field, value) => {
-            build_scalar_predicate(field, ScalarCompareOp::Lte, value, schema)
+            scalar_predicate(schema, field, ScalarCompareOp::Lte, value)
         }
         FilterExpr::Ne(_, _)
         | FilterExpr::StringMatch(_, _)
@@ -155,18 +144,18 @@ fn scalar_predicate(filter: &FilterExpr, schema: &CollectionSchema) -> Option<Sc
     }
 }
 
-fn build_scalar_predicate(
+fn scalar_predicate(
+    schema: &CollectionSchema,
     field: &str,
     op: ScalarCompareOp,
     value: &ScalarValue,
-    schema: &CollectionSchema,
 ) -> Option<ScalarPredicate> {
     let field_schema = schema
         .fields
         .iter()
         .find(|candidate| candidate.name.as_str() == field)?;
 
-    if !supports_scalar_pushdown(field_schema, op, value) {
+    if !supports_pushdown(field_schema, op, value) {
         return None;
     }
 
@@ -177,11 +166,7 @@ fn build_scalar_predicate(
     })
 }
 
-fn supports_scalar_pushdown(
-    field: &ScalarFieldSchema,
-    op: ScalarCompareOp,
-    value: &ScalarValue,
-) -> bool {
+fn supports_pushdown(field: &ScalarFieldSchema, op: ScalarCompareOp, value: &ScalarValue) -> bool {
     if !field.is_indexed() {
         return false;
     }
