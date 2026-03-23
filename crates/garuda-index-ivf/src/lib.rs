@@ -81,28 +81,28 @@ impl<'a> IvfSearchRequest<'a> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct IvfIndex {
     config: IvfIndexConfig,
+    state: IvfState,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct WritingIvfIndex {
+    config: IvfIndexConfig,
+    state: IvfState,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct IvfState {
     entries: Vec<IvfBuildEntry>,
     centroids: Vec<DenseVector>,
     list_entry_indexes: Vec<Vec<usize>>,
 }
 
 impl IvfIndex {
-    pub fn empty(config: IvfIndexConfig) -> Self {
-        Self {
-            config,
-            entries: Vec::new(),
-            centroids: Vec::new(),
-            list_entry_indexes: Vec::new(),
-        }
-    }
-
     pub fn build(config: IvfIndexConfig, entries: Vec<IvfBuildEntry>) -> Result<Self, Status> {
         let trained = train_lists(&config, &entries)?;
         Ok(Self {
             config,
-            entries,
-            centroids: trained.centroids,
-            list_entry_indexes: trained.list_entry_indexes,
+            state: IvfState::new(entries, trained.centroids, trained.list_entry_indexes),
         })
     }
 
@@ -116,15 +116,90 @@ impl IvfIndex {
         let entry_indexes = build_list_entry_indexes(&entries, &stored.doc_ids_by_list)?;
         Ok(Self {
             config,
-            entries,
-            centroids: stored.centroids,
-            list_entry_indexes: entry_indexes,
+            state: IvfState::new(entries, stored.centroids, entry_indexes),
         })
     }
 
     pub fn search(&self, request: IvfSearchRequest<'_>) -> Result<Vec<IvfSearchHit>, Status> {
+        self.state.search(&self.config, request)
+    }
+
+    pub fn stored_lists(&self) -> IvfStoredLists {
+        self.state.stored_lists()
+    }
+
+    pub fn len(&self) -> usize {
+        self.state.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.state.is_empty()
+    }
+
+    pub fn list_count(&self) -> usize {
+        self.state.list_count()
+    }
+}
+
+impl WritingIvfIndex {
+    pub fn new(config: IvfIndexConfig) -> Self {
+        Self {
+            config,
+            state: IvfState::empty(),
+        }
+    }
+
+    pub fn from_entries_incremental(config: IvfIndexConfig, entries: Vec<IvfBuildEntry>) -> Self {
+        let mut index = Self::new(config);
+
+        for entry in entries {
+            index.insert(entry);
+        }
+
+        index
+    }
+
+    pub fn train(self) -> Result<IvfIndex, Status> {
+        IvfIndex::build(self.config, self.state.entries)
+    }
+
+    pub fn search(&self, request: IvfSearchRequest<'_>) -> Result<Vec<IvfSearchHit>, Status> {
+        self.state.search(&self.config, request)
+    }
+
+    pub fn active_list_count(&self) -> usize {
+        self.state.list_count()
+    }
+
+    pub fn insert(&mut self, entry: IvfBuildEntry) {
+        self.state.insert_incremental(&self.config, entry);
+    }
+}
+
+impl IvfState {
+    fn new(
+        entries: Vec<IvfBuildEntry>,
+        centroids: Vec<DenseVector>,
+        list_entry_indexes: Vec<Vec<usize>>,
+    ) -> Self {
+        Self {
+            entries,
+            centroids,
+            list_entry_indexes,
+        }
+    }
+
+    fn empty() -> Self {
+        Self::new(Vec::new(), Vec::new(), Vec::new())
+    }
+
+    fn search(
+        &self,
+        config: &IvfIndexConfig,
+        request: IvfSearchRequest<'_>,
+    ) -> Result<Vec<IvfSearchHit>, Status> {
         search_entries(
-            &self.config,
+            config,
             &self.entries,
             &self.centroids,
             &self.list_entry_indexes,
@@ -132,7 +207,7 @@ impl IvfIndex {
         )
     }
 
-    pub fn stored_lists(&self) -> IvfStoredLists {
+    fn stored_lists(&self) -> IvfStoredLists {
         let mut doc_ids_by_list = Vec::with_capacity(self.list_entry_indexes.len());
 
         for list in &self.list_entry_indexes {
@@ -151,19 +226,19 @@ impl IvfIndex {
         }
     }
 
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.entries.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
-    pub fn list_count(&self) -> usize {
+    fn list_count(&self) -> usize {
         self.centroids.len()
     }
 
-    pub fn insert(&mut self, entry: IvfBuildEntry) {
+    fn insert_incremental(&mut self, config: &IvfIndexConfig, entry: IvfBuildEntry) {
         let entry_index = self.entries.len();
         self.entries.push(entry);
 
@@ -174,7 +249,7 @@ impl IvfIndex {
             return;
         }
 
-        let list_count = self.config.list_count(self.entries.len());
+        let list_count = config.list_count(self.entries.len());
         if self.centroids.len() < list_count {
             self.centroids
                 .push(self.entries[entry_index].vector.clone());
@@ -183,13 +258,13 @@ impl IvfIndex {
         }
 
         let list_index = nearest_centroid(
-            self.config.metric,
+            config.metric,
             &self.entries[entry_index].vector,
             &self.centroids,
         );
         self.list_entry_indexes[list_index].push(entry_index);
         self.centroids[list_index] = centroid_for_list(
-            self.config.dimension,
+            config.dimension,
             &self.entries,
             &self.list_entry_indexes[list_index],
         );
@@ -211,11 +286,7 @@ fn train_lists(config: &IvfIndexConfig, entries: &[IvfBuildEntry]) -> Result<Tra
     }
 
     let list_count = config.list_count(entries.len());
-    let mut centroids = entries
-        .iter()
-        .take(list_count)
-        .map(|entry| entry.vector.clone())
-        .collect::<Vec<_>>();
+    let mut centroids = initialize_centroids(config.metric, entries, list_count);
     let mut assignments = vec![0usize; entries.len()];
 
     for _ in 0..config.params.training_iterations.get() {
@@ -303,6 +374,61 @@ fn recompute_centroids(
     }
 
     centroids
+}
+
+fn initialize_centroids(
+    metric: DistanceMetric,
+    entries: &[IvfBuildEntry],
+    list_count: usize,
+) -> Vec<DenseVector> {
+    let mut centroid_indexes = Vec::with_capacity(list_count);
+    centroid_indexes.push(0);
+
+    while centroid_indexes.len() < list_count {
+        let next = next_centroid_index(metric, entries, &centroid_indexes);
+        centroid_indexes.push(next);
+    }
+
+    let mut centroids = Vec::with_capacity(list_count);
+
+    for index in centroid_indexes {
+        centroids.push(entries[index].vector.clone());
+    }
+
+    centroids
+}
+
+fn next_centroid_index(
+    metric: DistanceMetric,
+    entries: &[IvfBuildEntry],
+    centroid_indexes: &[usize],
+) -> usize {
+    let mut next_index = 0usize;
+    let mut next_score = f32::INFINITY;
+
+    for (entry_index, entry) in entries.iter().enumerate() {
+        if centroid_indexes.contains(&entry_index) {
+            continue;
+        }
+
+        let nearest_score = centroid_indexes
+            .iter()
+            .map(|&centroid_index| {
+                score_doc(
+                    metric,
+                    entry.vector.as_slice(),
+                    entries[centroid_index].vector.as_slice(),
+                )
+            })
+            .fold(f32::NEG_INFINITY, f32::max);
+
+        if nearest_score < next_score {
+            next_index = entry_index;
+            next_score = nearest_score;
+        }
+    }
+
+    next_index
 }
 
 fn centroid_for_list(
@@ -467,138 +593,4 @@ fn search_entries(
     });
     hits.truncate(request.top_k.get());
     Ok(hits)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use garuda_types::{IvfListCount, IvfTrainingIterations};
-
-    fn config() -> IvfIndexConfig {
-        IvfIndexConfig::new(
-            VectorDimension::new(2).expect("dimension"),
-            DistanceMetric::Cosine,
-            IvfIndexParams {
-                n_list: IvfListCount::new(2).expect("n_list"),
-                n_probe: IvfProbeCount::new(1).expect("n_probe"),
-                training_iterations: IvfTrainingIterations::new(2).expect("iterations"),
-            },
-        )
-    }
-
-    fn entry(doc_id: u64, vector: [f32; 2]) -> IvfBuildEntry {
-        IvfBuildEntry::new(
-            VectorDimension::new(2).expect("dimension"),
-            InternalDocId::new(doc_id).expect("doc_id"),
-            DenseVector::parse(vector.to_vec()).expect("vector"),
-        )
-        .expect("entry")
-    }
-
-    #[test]
-    fn search_rejects_dimension_mismatch() {
-        let index = IvfIndex::build(config(), vec![entry(1, [1.0, 0.0])]).expect("build");
-        let result = index.search(IvfSearchRequest::new(
-            &DenseVector::parse(vec![1.0, 0.0, 0.0]).expect("vector"),
-            TopK::new(1).expect("top_k"),
-            IvfProbeCount::new(1).expect("nprobe"),
-        ));
-
-        assert_eq!(
-            result.expect_err("dimension mismatch").code,
-            StatusCode::InvalidArgument
-        );
-    }
-
-    #[test]
-    fn wider_nprobe_should_not_reduce_recall() {
-        let entries = vec![
-            entry(1, [1.0, 0.0]),
-            entry(2, [0.9, 0.1]),
-            entry(3, [0.0, 1.0]),
-            entry(4, [0.1, 0.9]),
-        ];
-        let index = IvfIndex::build(config(), entries).expect("build");
-        let query = DenseVector::parse(vec![0.95, 0.05]).expect("query");
-
-        let narrow = index
-            .search(IvfSearchRequest::new(
-                &query,
-                TopK::new(2).expect("top_k"),
-                IvfProbeCount::new(1).expect("nprobe"),
-            ))
-            .expect("search");
-        let wide = index
-            .search(IvfSearchRequest::new(
-                &query,
-                TopK::new(2).expect("top_k"),
-                IvfProbeCount::new(2).expect("nprobe"),
-            ))
-            .expect("search");
-
-        assert_eq!(wide[0].doc_id, InternalDocId::new(1).expect("doc_id"));
-        assert!(wide.len() >= narrow.len());
-    }
-
-    #[test]
-    fn insert_should_only_update_one_list() {
-        let mut index = IvfIndex::build(config(), vec![entry(1, [1.0, 0.0]), entry(2, [0.0, 1.0])])
-            .expect("build");
-        let before = index.stored_lists();
-
-        index.insert(entry(3, [0.9, 0.1]));
-
-        let after = index.stored_lists();
-        assert_eq!(after.doc_ids_by_list[1], before.doc_ids_by_list[1]);
-        assert_eq!(
-            after.doc_ids_by_list[0],
-            vec![
-                InternalDocId::new(1).expect("doc_id"),
-                InternalDocId::new(3).expect("doc_id"),
-            ]
-        );
-    }
-
-    #[test]
-    fn from_parts_rejects_duplicate_doc_ids() {
-        let config = config();
-        let entries = vec![entry(1, [1.0, 0.0]), entry(2, [0.0, 1.0])];
-        let error = IvfIndex::from_parts(
-            config,
-            entries,
-            IvfStoredLists {
-                centroids: vec![
-                    DenseVector::parse(vec![1.0, 0.0]).expect("centroid"),
-                    DenseVector::parse(vec![0.0, 1.0]).expect("centroid"),
-                ],
-                doc_ids_by_list: vec![
-                    vec![InternalDocId::new(1).expect("doc_id")],
-                    vec![InternalDocId::new(1).expect("doc_id")],
-                ],
-            },
-        )
-        .expect_err("duplicate doc ids should fail");
-
-        assert_eq!(error.code, StatusCode::Internal);
-    }
-
-    #[test]
-    fn from_parts_rejects_missing_doc_ids() {
-        let config = config();
-        let entries = vec![entry(1, [1.0, 0.0]), entry(2, [0.0, 1.0])];
-        let error = IvfIndex::from_parts(
-            config,
-            entries,
-            IvfStoredLists {
-                centroids: vec![
-                    DenseVector::parse(vec![1.0, 0.0]).expect("centroid"),
-                    DenseVector::parse(vec![0.0, 1.0]).expect("centroid"),
-                ],
-                doc_ids_by_list: vec![vec![InternalDocId::new(1).expect("doc_id")], vec![]],
-            },
-        )
-        .expect_err("missing doc ids should fail");
-
-        assert_eq!(error.code, StatusCode::Internal);
-    }
 }

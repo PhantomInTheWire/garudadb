@@ -6,8 +6,8 @@ use common::{
 };
 use garuda_storage::{WRITING_SEGMENT_ID, segment_flat_index_path, segment_hnsw_index_path};
 use garuda_types::{
-    FlatIndexParams, HnswEfConstruction, HnswEfSearch, HnswIndexParams, HnswM, IndexKind,
-    IndexParams, SegmentId, VectorIndexState, VectorQuery,
+    FlatHnswDefault, FlatIndexParams, HnswEfConstruction, HnswEfSearch, HnswIndexParams, HnswM,
+    IndexKind, IndexParams, SegmentId, VectorIndexState, VectorQuery,
 };
 
 const FIRST_PERSISTED_SEGMENT_ID: SegmentId = SegmentId::new_unchecked(1);
@@ -109,7 +109,7 @@ fn hnsw_index_params_should_roundtrip_through_reopen() {
     assert_eq!(
         reopened.schema().vector.indexes,
         VectorIndexState::FlatAndHnsw {
-            default: IndexKind::Hnsw,
+            default: FlatHnswDefault::Hnsw,
             hnsw: params,
         }
     );

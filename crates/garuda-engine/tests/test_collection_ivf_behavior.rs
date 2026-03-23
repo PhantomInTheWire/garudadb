@@ -147,3 +147,47 @@ fn ivf_writing_segment_should_return_each_inserted_record_once() {
         4
     );
 }
+
+#[test]
+fn ivf_writing_segment_should_preserve_results_after_flush() {
+    let (_root, db) = database("ivf-writing-flush");
+    let mut schema = default_schema("docs");
+    schema.vector.indexes = VectorIndexState::IvfOnly(IvfIndexParams::default());
+    let mut options = default_options();
+    options.segment_max_docs = 100;
+
+    let collection = db
+        .create_collection(schema, options)
+        .expect("create collection");
+
+    let results = collection.insert(vec![
+        build_doc("doc-1", 1, "alpha", 0.9, [1.0, 0.0, 0.0, 0.0]),
+        build_doc("doc-2", 2, "alpha", 0.8, [0.9, 0.1, 0.0, 0.0]),
+        build_doc("doc-3", 3, "beta", 0.7, [0.0, 1.0, 0.0, 0.0]),
+        build_doc("doc-4", 4, "gamma", 0.6, [0.0, 0.0, 1.0, 0.0]),
+    ]);
+    assert!(results.iter().all(|result| result.status.is_ok()));
+
+    let before = collection
+        .query(VectorQuery::by_vector(
+            field_name("embedding"),
+            dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
+            common::top_k(4),
+        ))
+        .expect("query before flush");
+
+    collection.flush().expect("flush");
+
+    let after = collection
+        .query(VectorQuery::by_vector(
+            field_name("embedding"),
+            dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
+            common::top_k(4),
+        ))
+        .expect("query after flush");
+
+    assert_eq!(
+        before.iter().map(|doc| doc.id.clone()).collect::<Vec<_>>(),
+        after.iter().map(|doc| doc.id.clone()).collect::<Vec<_>>()
+    );
+}
