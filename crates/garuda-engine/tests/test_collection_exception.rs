@@ -4,6 +4,7 @@ use common::{
     build_doc, collection_name, database, default_options, default_schema, dense_vector, doc_id,
     field_name, seed_collection,
 };
+use garuda_storage::SCALAR_INDEX_DIR_NAME;
 use garuda_types::{Doc, HnswIndexParams, IndexParams, ScalarType, ScalarValue, TopK};
 use std::fs;
 
@@ -324,6 +325,14 @@ fn failed_checkpoint_restores_rewritten_segment_files() {
         fs::create_dir_all(collection_dir.join(segment_id)).expect("create segment dir");
     }
 
+    let nested_scalar_dir = collection_dir
+        .join("0")
+        .join(SCALAR_INDEX_DIR_NAME)
+        .join("nested");
+    fs::create_dir_all(&nested_scalar_dir).expect("create nested scalar dir");
+    let nested_scalar_file = nested_scalar_dir.join("keep.sidx");
+    fs::write(&nested_scalar_file, b"nested").expect("write nested scalar file");
+
     let mut root_permissions = fs::metadata(&collection_dir)
         .expect("collection dir metadata")
         .permissions();
@@ -365,6 +374,10 @@ fn failed_checkpoint_restores_rewritten_segment_files() {
             .any(|field| field.name == field_name("is_public"))
     );
     assert!(!doc.fields.contains_key("is_public"));
+    assert_eq!(
+        fs::read(&nested_scalar_file).expect("nested scalar file"),
+        b"nested"
+    );
 }
 
 #[test]
