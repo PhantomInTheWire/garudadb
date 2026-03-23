@@ -166,10 +166,10 @@ fn collect_search_hits(
 
         let record = records[record_index].clone();
 
-        if let SegmentFilter::Matching(filter) = filter {
-            if !evaluate_filter(filter, &record.doc.fields) {
-                continue;
-            }
+        if let SegmentFilter::Matching(filter) = filter
+            && !evaluate_filter(filter, &record.doc.fields)
+        {
+            continue;
         }
 
         search_hits.push(SegmentSearchHit { record, score });

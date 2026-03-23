@@ -130,13 +130,13 @@ impl HnswIndex {
                     if neighbors.len() >= min_neighbor_count
                         || neighbors.len() >= max_neighbors_count
                     {
-                        return neighbors;
+                        break;
                     }
                 }
             }
         }
 
-        return neighbors;
+        neighbors
     }
 
     fn is_distinct_neighbor(&self, candidate: &ScoredNode, neighbors: &[NodeIndex]) -> bool {
@@ -210,6 +210,5 @@ fn hashed_unit_interval(node: NodeIndex, doc_id: InternalDocId) -> f64 {
     hash = hash.wrapping_mul(HASH_FINAL);
     hash ^= hash >> 31;
 
-    let unit = (hash as f64 + 1.0) / (u64::MAX as f64 + 2.0);
-    return unit;
+    (hash as f64 + 1.0) / (u64::MAX as f64 + 2.0)
 }
