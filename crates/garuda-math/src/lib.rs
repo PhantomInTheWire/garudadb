@@ -11,15 +11,13 @@ pub fn score_doc(metric: DistanceMetric, query_vector: &[f32], candidate_vector:
 }
 
 fn cosine_similarity(lhs: &[f32], rhs: &[f32]) -> f32 {
-    let dot = simd::dot(lhs, rhs);
-    let lhs_norm = simd::dot(lhs, lhs);
-    let rhs_norm = simd::dot(rhs, rhs);
+    let accum = simd::cosine_accum(lhs, rhs);
 
-    if lhs_norm == 0.0 || rhs_norm == 0.0 {
+    if accum.lhs_norm == 0.0 || accum.rhs_norm == 0.0 {
         return 0.0;
     }
 
-    dot / (lhs_norm.sqrt() * rhs_norm.sqrt())
+    accum.dot / (accum.lhs_norm.sqrt() * accum.rhs_norm.sqrt())
 }
 
 fn inner_product(lhs: &[f32], rhs: &[f32]) -> f32 {
@@ -30,6 +28,7 @@ fn negative_l2_distance(lhs: &[f32], rhs: &[f32]) -> f32 {
     -simd::squared_l2(lhs, rhs).sqrt()
 }
 
+#[cfg_attr(target_arch = "aarch64", allow(dead_code))]
 pub(crate) fn dot_scalar(lhs: &[f32], rhs: &[f32]) -> f32 {
     let mut sum = 0.0f32;
 
@@ -40,6 +39,7 @@ pub(crate) fn dot_scalar(lhs: &[f32], rhs: &[f32]) -> f32 {
     sum
 }
 
+#[cfg_attr(target_arch = "aarch64", allow(dead_code))]
 pub(crate) fn squared_l2_scalar(lhs: &[f32], rhs: &[f32]) -> f32 {
     let mut sum = 0.0f32;
 

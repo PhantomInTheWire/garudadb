@@ -140,15 +140,31 @@ fn assert_metric_matches_oracle(lhs: &[f32], rhs: &[f32], dim: usize, label: &st
 }
 
 fn cosine_similarity_scalar(lhs: &[f32], rhs: &[f32]) -> f32 {
-    let dot = dot_scalar(lhs, rhs);
-    let lhs_norm = dot_scalar(lhs, lhs);
-    let rhs_norm = dot_scalar(rhs, rhs);
+    let accum = cosine_accum_scalar(lhs, rhs);
 
-    if lhs_norm == 0.0 || rhs_norm == 0.0 {
+    if accum.lhs_norm == 0.0 || accum.rhs_norm == 0.0 {
         return 0.0;
     }
 
-    dot / (lhs_norm.sqrt() * rhs_norm.sqrt())
+    accum.dot / (accum.lhs_norm.sqrt() * accum.rhs_norm.sqrt())
+}
+
+fn cosine_accum_scalar(lhs: &[f32], rhs: &[f32]) -> simd::CosineAccum {
+    let mut dot = 0.0;
+    let mut lhs_norm = 0.0;
+    let mut rhs_norm = 0.0;
+
+    for (left, right) in lhs.iter().zip(rhs.iter()) {
+        dot += left * right;
+        lhs_norm += left * left;
+        rhs_norm += right * right;
+    }
+
+    simd::CosineAccum {
+        dot,
+        lhs_norm,
+        rhs_norm,
+    }
 }
 
 fn negative_l2_distance_scalar(lhs: &[f32], rhs: &[f32]) -> f32 {
