@@ -146,6 +146,19 @@ fn invalid_drop_index_leaves_vector_state_unchanged() {
 }
 
 #[test]
+fn drop_index_should_fail_when_kind_is_not_enabled() {
+    let (_root, db) = database("ddl-drop-invalid-index");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+
+    let error = collection
+        .drop_index(&field_name("embedding"), IndexKind::Hnsw)
+        .expect_err("dropping missing hnsw should fail");
+    assert_eq!(error.code, garuda_types::StatusCode::InvalidArgument);
+}
+
+#[test]
 fn create_and_drop_ivf_index_roundtrips_vector_state() {
     let (_root, db) = database("ddl-ivf-index");
     let collection = db
