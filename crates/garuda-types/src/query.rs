@@ -89,8 +89,44 @@ pub enum FilterExpr {
     Gte(String, ScalarValue),
     Lt(String, ScalarValue),
     Lte(String, ScalarValue),
+    StringMatch(String, StringMatchExpr),
+    IsNull(String),
     And(Box<FilterExpr>, Box<FilterExpr>),
     Or(Box<FilterExpr>, Box<FilterExpr>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StringMatchExpr {
+    Like(LikePattern),
+    Contains(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LikePattern {
+    Exact(String),
+    PrefixSuffix { prefix: String, suffix: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ScalarCompareOp {
+    Eq,
+    Gt,
+    Gte,
+    Lt,
+    Lte,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScalarPredicate {
+    pub field: FieldName,
+    pub op: ScalarCompareOp,
+    pub value: ScalarValue,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ScalarPrefilter {
+    All,
+    And(Vec<ScalarPredicate>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
