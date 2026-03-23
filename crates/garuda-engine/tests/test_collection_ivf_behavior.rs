@@ -1,13 +1,11 @@
 mod common;
 
 use common::{
-    collection_name, database, default_options, default_schema, dense_vector, field_name,
-    seed_collection, seed_more_collection_docs, build_doc,
+    build_doc, collection_name, database, default_options, default_schema, dense_vector,
+    field_name, seed_collection, seed_more_collection_docs,
 };
 use garuda_storage::{WRITING_SEGMENT_ID, segment_ivf_index_path};
-use garuda_types::{
-    IndexKind, IndexParams, IvfIndexParams, VectorIndexState, VectorQuery,
-};
+use garuda_types::{IndexKind, IndexParams, IvfIndexParams, VectorIndexState, VectorQuery};
 
 const FIRST_PERSISTED_SEGMENT_ID: garuda_types::SegmentId =
     garuda_types::SegmentId::new_unchecked(1);
@@ -142,7 +140,10 @@ fn ivf_writing_segment_should_return_each_inserted_record_once() {
 
     assert_eq!(docs.len(), 4);
     assert_eq!(
-        docs.iter().map(|doc| doc.id.clone()).collect::<std::collections::BTreeSet<_>>().len(),
+        docs.iter()
+            .map(|doc| doc.id.clone())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
         4
     );
 }
