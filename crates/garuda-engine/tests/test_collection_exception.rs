@@ -123,12 +123,51 @@ fn rejects_invalid_default_values_during_collection_creation() {
         .push(garuda_types::ScalarFieldSchema {
             name: field_name("is_public"),
             field_type: ScalarType::Bool,
+            index: garuda_types::ScalarIndexState::None,
             nullability: garuda_types::Nullability::Required,
             default_value: Some(ScalarValue::String(String::from("yes"))),
         });
 
     let wrong_type = db.create_collection(wrong_type_schema, default_options());
     assert!(wrong_type.is_err());
+}
+
+#[test]
+fn rejects_nullable_indexed_scalar_fields() {
+    let (_root, db) = database("exception-nullable-indexed-scalar");
+
+    let mut schema = default_schema("docs");
+    schema.fields[2].index = garuda_types::ScalarIndexState::Indexed;
+    schema.fields[2].nullability = garuda_types::Nullability::Nullable;
+    let create_result = db.create_collection(schema, default_options());
+    assert!(create_result.is_err());
+
+    let collection = db
+        .create_collection(default_schema("docs-two"), default_options())
+        .expect("create collection");
+    let add_result = collection.add_column(garuda_types::ScalarFieldSchema {
+        name: field_name("tag"),
+        field_type: ScalarType::String,
+        index: garuda_types::ScalarIndexState::Indexed,
+        nullability: garuda_types::Nullability::Nullable,
+        default_value: Some(ScalarValue::Null),
+    });
+    assert!(add_result.is_err());
+
+    collection
+        .add_column(garuda_types::ScalarFieldSchema {
+            name: field_name("nickname"),
+            field_type: ScalarType::String,
+            index: garuda_types::ScalarIndexState::None,
+            nullability: garuda_types::Nullability::Nullable,
+            default_value: Some(ScalarValue::Null),
+        })
+        .expect("add nullable non-indexed field");
+    let create_index_result = collection.create_index(
+        &field_name("nickname"),
+        IndexParams::Scalar(garuda_types::ScalarIndexParams),
+    );
+    assert!(create_index_result.is_err());
 }
 
 #[test]
@@ -214,6 +253,7 @@ fn add_column_rolls_back_state_when_persist_fails() {
     let result = collection.add_column(garuda_types::ScalarFieldSchema {
         name: field_name("is_public"),
         field_type: ScalarType::Bool,
+        index: garuda_types::ScalarIndexState::None,
         nullability: garuda_types::Nullability::Required,
         default_value: Some(ScalarValue::Bool(true)),
     });
@@ -247,6 +287,7 @@ fn failed_persist_does_not_publish_new_manifest_on_reopen() {
     let result = collection.add_column(garuda_types::ScalarFieldSchema {
         name: field_name("is_public"),
         field_type: ScalarType::Bool,
+        index: garuda_types::ScalarIndexState::None,
         nullability: garuda_types::Nullability::Required,
         default_value: Some(ScalarValue::Bool(true)),
     });
@@ -302,6 +343,7 @@ fn failed_checkpoint_restores_rewritten_segment_files() {
     let result = collection.add_column(garuda_types::ScalarFieldSchema {
         name: field_name("is_public"),
         field_type: ScalarType::Bool,
+        index: garuda_types::ScalarIndexState::None,
         nullability: garuda_types::Nullability::Required,
         default_value: Some(ScalarValue::Bool(true)),
     });

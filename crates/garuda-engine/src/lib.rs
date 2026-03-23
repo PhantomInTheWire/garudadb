@@ -22,8 +22,8 @@ use query::execute_query;
 use recovery_service::{create_collection_state, load_collection_state};
 use schema::{validate_create_options, validate_schema};
 use schema_ddl::{
-    drop_column as drop_column_from_schema, drop_vector_index, enable_vector_index,
-    ensure_column_can_be_added, ensure_vector_index_field,
+    create_index as create_index_in_schema, drop_column as drop_column_from_schema,
+    drop_index as drop_index_from_schema, ensure_column_can_be_added,
     rename_column as rename_column_in_schema,
 };
 use segment_ddl::{
@@ -123,8 +123,7 @@ impl Collection {
 
     pub fn create_index(&self, field_name: &FieldName, params: IndexParams) -> Result<(), Status> {
         self.mutate_and_checkpoint(|state| {
-            ensure_vector_index_field(&state.catalog.schema, field_name)?;
-            enable_vector_index(&mut state.catalog.schema, params)?;
+            create_index_in_schema(&mut state.catalog.schema, field_name, params)?;
             state.rebuild_indexes();
 
             Ok(())
@@ -133,8 +132,7 @@ impl Collection {
 
     pub fn drop_index(&self, field_name: &FieldName, kind: IndexKind) -> Result<(), Status> {
         self.mutate_and_checkpoint(|state| {
-            ensure_vector_index_field(&state.catalog.schema, field_name)?;
-            drop_vector_index(&mut state.catalog.schema, kind);
+            drop_index_from_schema(&mut state.catalog.schema, field_name, kind)?;
             state.rebuild_indexes();
 
             Ok(())
@@ -145,9 +143,20 @@ impl Collection {
         self.mutate_and_checkpoint(|state| {
             ensure_column_can_be_added(&state.catalog.schema, &field)?;
             validate_field_default(&field)?;
+            validate_schema(&CollectionSchema {
+                name: state.catalog.schema.name.clone(),
+                primary_key: state.catalog.schema.primary_key.clone(),
+                fields: {
+                    let mut fields = state.catalog.schema.fields.clone();
+                    fields.push(field.clone());
+                    fields
+                },
+                vector: state.catalog.schema.vector.clone(),
+            })?;
 
             backfill_new_column(&mut state.segments, &field);
             state.catalog.schema.fields.push(field);
+            state.rebuild_indexes();
 
             Ok(())
         })
@@ -157,6 +166,7 @@ impl Collection {
         self.mutate_and_checkpoint(|state| {
             rename_column_in_schema(&mut state.catalog.schema, old_name, new_name)?;
             rename_column_in_state(&mut state.segments, old_name, new_name);
+            state.rebuild_indexes();
 
             Ok(())
         })
@@ -166,6 +176,7 @@ impl Collection {
         self.mutate_and_checkpoint(|state| {
             drop_column_from_schema(&mut state.catalog.schema, name)?;
             drop_column_from_state(&mut state.segments, name);
+            state.rebuild_indexes();
 
             Ok(())
         })
@@ -176,7 +187,7 @@ impl Collection {
             state.segments.optimize(
                 &mut state.catalog.next_segment_id,
                 state.catalog.options.segment_max_docs,
-                &state.catalog.schema.vector,
+                &state.catalog.schema,
                 |doc_id| state.meta.is_deleted(doc_id),
             );
             state.rebuild_indexes();
