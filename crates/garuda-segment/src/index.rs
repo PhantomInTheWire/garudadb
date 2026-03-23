@@ -266,20 +266,9 @@ pub(crate) fn flat_index_entries(
     records: &[StoredRecord],
     live_doc_count: usize,
 ) -> Vec<FlatIndexEntry> {
-    let mut entries = Vec::with_capacity(live_doc_count);
-
-    for record in records {
-        if matches!(record.state, RecordState::Deleted) {
-            continue;
-        }
-
-        entries.push(FlatIndexEntry::new(
-            record.doc_id,
-            record.doc.vector.clone(),
-        ));
-    }
-
-    entries
+    live_record_entries(records, live_doc_count, |record| {
+        FlatIndexEntry::new(record.doc_id, record.doc.vector.clone())
+    })
 }
 
 pub(crate) fn hnsw_build_entries(
@@ -287,17 +276,22 @@ pub(crate) fn hnsw_build_entries(
     records: &[StoredRecord],
     live_doc_count: usize,
 ) -> Vec<HnswBuildEntry> {
+    live_record_entries(records, live_doc_count, |record| {
+        HnswBuildEntry::new(config, record.doc_id, record.doc.vector.clone())
+            .expect("validated segment records should match the vector field dimension")
+    })
+}
+
+fn live_record_entries<T>(
+    records: &[StoredRecord],
+    live_doc_count: usize,
+    build_entry: impl FnMut(&StoredRecord) -> T,
+) -> Vec<T> {
+    let mut build_entry = build_entry;
     let mut entries = Vec::with_capacity(live_doc_count);
 
-    for record in records {
-        if matches!(record.state, RecordState::Deleted) {
-            continue;
-        }
-
-        entries.push(
-            HnswBuildEntry::new(config, record.doc_id, record.doc.vector.clone())
-                .expect("validated segment records should match the vector field dimension"),
-        );
+    for record in records.iter().filter(|record| matches!(record.state, RecordState::Live)) {
+        entries.push(build_entry(record));
     }
 
     entries
