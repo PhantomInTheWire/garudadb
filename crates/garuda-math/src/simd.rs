@@ -38,10 +38,12 @@ mod implementation {
     use super::{dot_scalar, squared_l2_scalar};
 
     pub(super) fn dot(lhs: &[f32], rhs: &[f32]) -> f32 {
+        assert_eq!(lhs.len(), rhs.len());
         dot_scalar(lhs, rhs)
     }
 
     pub(super) fn squared_l2(lhs: &[f32], rhs: &[f32]) -> f32 {
+        assert_eq!(lhs.len(), rhs.len());
         squared_l2_scalar(lhs, rhs)
     }
 

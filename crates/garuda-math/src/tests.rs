@@ -104,6 +104,24 @@ fn cosine_oracle_returns_zero_when_candidate_is_zero_vector() {
     assert_eq!(actual, 0.0);
 }
 
+#[test]
+#[should_panic]
+fn score_doc_panics_when_cosine_vectors_have_mismatched_lengths() {
+    score_doc(DistanceMetric::Cosine, &[1.0, 2.0], &[3.0]);
+}
+
+#[test]
+#[should_panic]
+fn score_doc_panics_when_inner_product_vectors_have_mismatched_lengths() {
+    score_doc(DistanceMetric::InnerProduct, &[1.0, 2.0], &[3.0]);
+}
+
+#[test]
+#[should_panic]
+fn score_doc_panics_when_l2_vectors_have_mismatched_lengths() {
+    score_doc(DistanceMetric::L2, &[1.0, 2.0], &[3.0]);
+}
+
 fn assert_metric_matches_oracle(lhs: &[f32], rhs: &[f32], dim: usize, label: &str) {
     let inner_expected = simd::dot_scalar(lhs, rhs);
     let inner_actual = score_doc(DistanceMetric::InnerProduct, lhs, rhs);
