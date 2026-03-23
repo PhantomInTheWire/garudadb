@@ -227,7 +227,7 @@ impl HnswIndexParams {
 
 impl HnswGraph {
     pub fn new(node_levels: Vec<HnswLevel>) -> Self {
-        let level_count = max(&node_levels).map_or(1, |level| level.get() + 1);
+        let level_count = node_levels.iter().copied().max().map_or(1, |level| level.get() + 1);
         let node_count = node_levels.len();
 
         Self {
@@ -263,7 +263,11 @@ impl HnswGraph {
     }
 
     fn max_node_level(&self) -> HnswLevel {
-        max(&self.node_levels).expect("hnsw graph max node level")
+        self.node_levels
+            .iter()
+            .copied()
+            .max()
+            .expect("hnsw graph max node level")
     }
 
     pub fn max_level(&self) -> HnswLevel {
@@ -411,8 +415,4 @@ impl HnswGraph {
 
         Ok(())
     }
-}
-
-fn max<T: Copy + Ord>(values: &[T]) -> Option<T> {
-    values.iter().copied().max()
 }
