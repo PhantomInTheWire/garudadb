@@ -303,14 +303,6 @@ pub(crate) fn hnsw_build_entries(
     entries
 }
 
-pub(crate) fn should_persist_flat(schema: &CollectionSchema, live_doc_count: usize) -> bool {
-    schema.vector.indexes.has_flat() && live_doc_count != 0
-}
-
-pub(crate) fn should_persist_hnsw(schema: &CollectionSchema, live_doc_count: usize) -> bool {
-    schema.vector.indexes.has_hnsw() && live_doc_count != 0
-}
-
 pub(crate) fn indexed_scalar_fields(
     schema: &CollectionSchema,
 ) -> impl Iterator<Item = &ScalarFieldSchema> {

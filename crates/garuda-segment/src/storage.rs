@@ -3,17 +3,18 @@ use crate::codec::{
 };
 use crate::index::{
     flat_index_entries, indexed_scalar_fields, load_persisted_search_resources,
-    persistable_flat_entries_from_writing, should_persist_flat, should_persist_hnsw,
+    persistable_flat_entries_from_writing,
 };
 use crate::types::{PersistedSegment, StoredRecord, WritingSegment, sync_segment_meta_fields};
 use crate::{RecordState, reset_wal, segment_meta};
+use garuda_index_flat::FlatIndexEntry;
 use garuda_index_scalar::ScalarIndex;
 use garuda_storage::{
     create_dir_all, read_file, remove_path_if_exists, segment_data_path, segment_dir,
     segment_flat_index_path, segment_hnsw_index_path, segment_scalar_index_dir,
     segment_scalar_index_path, segment_wal_path, write_file_atomically,
 };
-use garuda_types::{CollectionSchema, DocId, FieldName, SegmentId, SegmentMeta, Status};
+use garuda_types::{CollectionSchema, DocId, FieldName, HnswGraph, SegmentId, SegmentMeta, Status};
 use std::collections::BTreeMap;
 
 pub fn ensure_segment_files(root: &std::path::Path, segment_id: SegmentId) -> Result<(), Status> {
@@ -40,36 +41,19 @@ pub fn write_persisted_segment(
     let bytes = encode_segment(&segment.meta, &segment.records)?;
     write_file_atomically(&segment_data_path(root, segment.meta.id), &bytes)?;
 
-    if should_persist_flat(schema, segment.meta.doc_count) {
-        let sidecar = encode_flat_index(
-            flat_index_entries(&segment.records, segment.meta.doc_count),
-            &schema.vector,
-        )?;
-        write_file_atomically(&segment_flat_index_path(root, segment.meta.id), &sidecar)?;
-    } else {
-        remove_path_if_exists(&segment_flat_index_path(root, segment.meta.id))?;
-    }
-
-    if should_persist_hnsw(schema, segment.meta.doc_count) {
-        let index = segment
-            .hnsw_index
-            .as_ref()
-            .expect("enabled persisted hnsw state should exist");
-        let sidecar = encode_hnsw_graph(index.graph())?;
-        write_file_atomically(&segment_hnsw_index_path(root, segment.meta.id), &sidecar)?;
-    } else {
-        remove_path_if_exists(&segment_hnsw_index_path(root, segment.meta.id))?;
-    }
-
-    write_scalar_indexes(
+    write_segment_sidecars(
         root,
         segment.meta.id,
+        schema
+            .vector
+            .indexes
+            .has_flat()
+            .then(|| flat_index_entries(&segment.records, segment.meta.doc_count)),
+        segment.hnsw_index.as_ref().map(|index| index.graph()),
         &segment.scalar_indexes,
         schema,
         segment.meta.doc_count,
-    )?;
-
-    Ok(())
+    )
 }
 
 pub fn write_writing_segment(
@@ -80,36 +64,19 @@ pub fn write_writing_segment(
     let bytes = encode_segment(&segment.meta, &segment.records)?;
     write_file_atomically(&segment_data_path(root, segment.meta.id), &bytes)?;
 
-    if should_persist_flat(schema, segment.meta.doc_count) {
-        let sidecar = encode_flat_index(
-            persistable_flat_entries_from_writing(segment),
-            &schema.vector,
-        )?;
-        write_file_atomically(&segment_flat_index_path(root, segment.meta.id), &sidecar)?;
-    } else {
-        remove_path_if_exists(&segment_flat_index_path(root, segment.meta.id))?;
-    }
-
-    if should_persist_hnsw(schema, segment.meta.doc_count) {
-        let index = segment
-            .hnsw_index
-            .as_ref()
-            .expect("enabled writing hnsw state should exist");
-        let sidecar = encode_hnsw_graph(index.graph())?;
-        write_file_atomically(&segment_hnsw_index_path(root, segment.meta.id), &sidecar)?;
-    } else {
-        remove_path_if_exists(&segment_hnsw_index_path(root, segment.meta.id))?;
-    }
-
-    write_scalar_indexes(
+    write_segment_sidecars(
         root,
         segment.meta.id,
+        schema
+            .vector
+            .indexes
+            .has_flat()
+            .then(|| persistable_flat_entries_from_writing(segment)),
+        segment.hnsw_index.as_ref().map(|index| index.graph()),
         &segment.scalar_indexes,
         schema,
         segment.meta.doc_count,
-    )?;
-
-    Ok(())
+    )
 }
 
 pub fn read_writing_segment(
@@ -185,4 +152,41 @@ fn write_scalar_indexes(
     }
 
     Ok(())
+}
+
+fn write_segment_sidecars(
+    root: &std::path::Path,
+    segment_id: SegmentId,
+    flat_entries: Option<Vec<FlatIndexEntry>>,
+    hnsw_graph: Option<&HnswGraph>,
+    scalar_indexes: &BTreeMap<FieldName, ScalarIndex>,
+    schema: &CollectionSchema,
+    live_doc_count: usize,
+) -> Result<(), Status> {
+    if schema.vector.indexes.has_flat() && live_doc_count != 0 {
+        let sidecar = encode_flat_index(
+            flat_entries.expect("enabled segment flat state should exist when persisting sidecars"),
+            &schema.vector,
+        )?;
+        write_file_atomically(&segment_flat_index_path(root, segment_id), &sidecar)?;
+    } else {
+        remove_path_if_exists(&segment_flat_index_path(root, segment_id))?;
+    }
+
+    if schema.vector.indexes.has_hnsw() && live_doc_count != 0 {
+        let sidecar = encode_hnsw_graph(
+            hnsw_graph.expect("enabled segment hnsw state should exist when persisting sidecars"),
+        )?;
+        write_file_atomically(&segment_hnsw_index_path(root, segment_id), &sidecar)?;
+    } else {
+        remove_path_if_exists(&segment_hnsw_index_path(root, segment_id))?;
+    }
+
+    write_scalar_indexes(
+        root,
+        segment_id,
+        scalar_indexes,
+        schema,
+        live_doc_count,
+    )
 }
