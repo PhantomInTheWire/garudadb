@@ -22,7 +22,7 @@ pub fn write_id_map_snapshot(
     ordered_entries.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
 
     let bytes = encode_id_map(&ordered_entries)?;
-    write_file_atomically(&id_map_snapshot_path(root, snapshot_id), &bytes)
+    write_snapshot(&id_map_snapshot_path(root, snapshot_id), &bytes)
 }
 
 pub fn read_id_map_snapshot(
@@ -49,7 +49,7 @@ pub fn write_delete_snapshot(
     ids.sort_unstable();
 
     let bytes = encode_delete_snapshot(&ids)?;
-    write_file_atomically(&delete_snapshot_path(root, snapshot_id), &bytes)
+    write_snapshot(&delete_snapshot_path(root, snapshot_id), &bytes)
 }
 
 pub fn read_delete_snapshot(
@@ -113,4 +113,8 @@ fn snapshot_prefix(kind: SnapshotKind) -> &'static str {
         SnapshotKind::IdMap => ID_MAP_FILE_PREFIX,
         SnapshotKind::Delete => DELETE_FILE_PREFIX,
     }
+}
+
+fn write_snapshot(path: &Path, bytes: &[u8]) -> Result<(), Status> {
+    write_file_atomically(path, bytes)
 }
