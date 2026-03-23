@@ -74,6 +74,19 @@ pub struct SegmentMeta {
     pub doc_count: usize,
 }
 
+impl SegmentMeta {
+    pub fn contains_doc_id(&self, doc_id: InternalDocId) -> bool {
+        let Some(min_doc_id) = self.min_doc_id else {
+            return false;
+        };
+        let Some(max_doc_id) = self.max_doc_id else {
+            return false;
+        };
+
+        min_doc_id <= doc_id && doc_id <= max_doc_id
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Manifest {
     pub schema: CollectionSchema,
