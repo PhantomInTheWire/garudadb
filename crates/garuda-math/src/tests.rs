@@ -1,4 +1,4 @@
-use super::{dot_scalar, score_doc, squared_l2_scalar};
+use super::score_doc;
 use crate::simd;
 use garuda_types::DistanceMetric;
 
@@ -15,13 +15,6 @@ const SCALE_SMALL: f32 = 1.0e-3;
 const SCALE_MEDIUM: f32 = 0.5;
 const SCALE_LARGE: f32 = 8.0;
 const SCALE_XL: f32 = 64.0;
-const CURATED_CASES: &[CaseKind] = &[
-    CaseKind::Alternating,
-    CaseKind::Ramp,
-    CaseKind::SmallPattern,
-    CaseKind::LargePattern,
-    CaseKind::TailHeavy,
-];
 
 #[test]
 fn cosine_scoring_handles_zero_norms() {
@@ -46,9 +39,9 @@ fn l2_scoring_prefers_closer_vectors() {
 #[test]
 fn dispatched_dot_matches_scalar_oracle_for_curated_inputs() {
     for &dim in TEST_DIMS {
-        for case in cases(dim) {
-            let expected = dot_scalar(&case.lhs, &case.rhs);
-            let actual = simd::dot(&case.lhs, &case.rhs);
+        for (lhs, rhs) in cases(dim) {
+            let expected = simd::dot_scalar(&lhs, &rhs);
+            let actual = simd::dot(&lhs, &rhs);
             assert_close(actual, expected, dim, "dot");
         }
     }
@@ -57,9 +50,9 @@ fn dispatched_dot_matches_scalar_oracle_for_curated_inputs() {
 #[test]
 fn dispatched_squared_l2_matches_scalar_oracle_for_curated_inputs() {
     for &dim in TEST_DIMS {
-        for case in cases(dim) {
-            let expected = squared_l2_scalar(&case.lhs, &case.rhs);
-            let actual = simd::squared_l2(&case.lhs, &case.rhs);
+        for (lhs, rhs) in cases(dim) {
+            let expected = simd::squared_l2_scalar(&lhs, &rhs);
+            let actual = simd::squared_l2(&lhs, &rhs);
             assert_close(actual, expected, dim, "squared_l2");
         }
     }
@@ -68,8 +61,8 @@ fn dispatched_squared_l2_matches_scalar_oracle_for_curated_inputs() {
 #[test]
 fn dispatched_metrics_match_scalar_oracle_for_curated_inputs() {
     for &dim in TEST_DIMS {
-        for case in cases(dim) {
-            assert_metric_matches_oracle(&case.lhs, &case.rhs, dim, "curated");
+        for (lhs, rhs) in cases(dim) {
+            assert_metric_matches_oracle(&lhs, &rhs, dim, "curated");
         }
     }
 }
@@ -111,22 +104,8 @@ fn cosine_oracle_returns_zero_when_candidate_is_zero_vector() {
     assert_eq!(actual, 0.0);
 }
 
-struct TestCase {
-    lhs: Vec<f32>,
-    rhs: Vec<f32>,
-}
-
-#[derive(Clone, Copy)]
-enum CaseKind {
-    Alternating,
-    Ramp,
-    SmallPattern,
-    LargePattern,
-    TailHeavy,
-}
-
 fn assert_metric_matches_oracle(lhs: &[f32], rhs: &[f32], dim: usize, label: &str) {
-    let inner_expected = dot_scalar(lhs, rhs);
+    let inner_expected = simd::dot_scalar(lhs, rhs);
     let inner_actual = score_doc(DistanceMetric::InnerProduct, lhs, rhs);
     assert_close(inner_actual, inner_expected, dim, label);
 
@@ -140,19 +119,11 @@ fn assert_metric_matches_oracle(lhs: &[f32], rhs: &[f32], dim: usize, label: &st
 }
 
 fn cosine_similarity_scalar(lhs: &[f32], rhs: &[f32]) -> f32 {
-    let accum = cosine_accum_scalar(lhs, rhs);
+    assert_eq!(lhs.len(), rhs.len());
 
-    if accum.lhs_norm == 0.0 || accum.rhs_norm == 0.0 {
-        return 0.0;
-    }
-
-    accum.dot / (accum.lhs_norm.sqrt() * accum.rhs_norm.sqrt())
-}
-
-fn cosine_accum_scalar(lhs: &[f32], rhs: &[f32]) -> simd::CosineAccum {
-    let mut dot = 0.0;
-    let mut lhs_norm = 0.0;
-    let mut rhs_norm = 0.0;
+    let mut dot = 0.0f32;
+    let mut lhs_norm = 0.0f32;
+    let mut rhs_norm = 0.0f32;
 
     for (left, right) in lhs.iter().zip(rhs.iter()) {
         dot += left * right;
@@ -160,44 +131,34 @@ fn cosine_accum_scalar(lhs: &[f32], rhs: &[f32]) -> simd::CosineAccum {
         rhs_norm += right * right;
     }
 
-    simd::CosineAccum {
-        dot,
-        lhs_norm,
-        rhs_norm,
+    if lhs_norm == 0.0 || rhs_norm == 0.0 {
+        return 0.0;
     }
+
+    dot / (lhs_norm.sqrt() * rhs_norm.sqrt())
 }
 
 fn negative_l2_distance_scalar(lhs: &[f32], rhs: &[f32]) -> f32 {
-    -squared_l2_scalar(lhs, rhs).sqrt()
+    -simd::squared_l2_scalar(lhs, rhs).sqrt()
 }
 
-fn cases(dim: usize) -> Vec<TestCase> {
-    CURATED_CASES.iter().map(|kind| case(*kind, dim)).collect()
-}
-
-fn case(kind: CaseKind, dim: usize) -> TestCase {
-    match kind {
-        CaseKind::Alternating => TestCase {
-            lhs: alternating_vector(dim, 1.0, -1.0),
-            rhs: alternating_vector(dim, -0.5, 2.0),
-        },
-        CaseKind::Ramp => TestCase {
-            lhs: ramp_vector(dim, 0.25, 0.5),
-            rhs: ramp_vector(dim, -0.75, 0.125),
-        },
-        CaseKind::SmallPattern => TestCase {
-            lhs: repeated_pattern(dim, &[SCALE_SMALL, -2.0e-3, 3.0e-3, -4.0e-3, 5.0e-3]),
-            rhs: repeated_pattern(dim, &[-6.0e-3, 7.0e-3, -8.0e-3, 9.0e-3, -1.0e-2]),
-        },
-        CaseKind::LargePattern => TestCase {
-            lhs: repeated_pattern(dim, &[10.0, -20.0, 30.0, -40.0]),
-            rhs: repeated_pattern(dim, &[5.5, -6.5, 7.5, -8.5]),
-        },
-        CaseKind::TailHeavy => TestCase {
-            lhs: tail_heavy_vector(dim),
-            rhs: tail_heavy_rhs(dim),
-        },
-    }
+fn cases(dim: usize) -> Vec<(Vec<f32>, Vec<f32>)> {
+    vec![
+        (
+            alternating_vector(dim, 1.0, -1.0),
+            alternating_vector(dim, -0.5, 2.0),
+        ),
+        (ramp_vector(dim, 0.25, 0.5), ramp_vector(dim, -0.75, 0.125)),
+        (
+            repeated_pattern(dim, &[SCALE_SMALL, -2.0e-3, 3.0e-3, -4.0e-3, 5.0e-3]),
+            repeated_pattern(dim, &[-6.0e-3, 7.0e-3, -8.0e-3, 9.0e-3, -1.0e-2]),
+        ),
+        (
+            repeated_pattern(dim, &[10.0, -20.0, 30.0, -40.0]),
+            repeated_pattern(dim, &[5.5, -6.5, 7.5, -8.5]),
+        ),
+        (tail_heavy_vector(dim), tail_heavy_rhs(dim)),
+    ]
 }
 
 fn alternating_vector(dim: usize, even: f32, odd: f32) -> Vec<f32> {
