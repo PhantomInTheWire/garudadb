@@ -227,7 +227,11 @@ impl HnswIndexParams {
 
 impl HnswGraph {
     pub fn new(node_levels: Vec<HnswLevel>) -> Self {
-        let level_count = node_levels.iter().copied().max().map_or(1, |level| level.get() + 1);
+        let level_count = node_levels
+            .iter()
+            .copied()
+            .max()
+            .map_or(1, |level| level.get() + 1);
         let node_count = node_levels.len();
 
         Self {

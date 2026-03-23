@@ -290,7 +290,10 @@ fn live_record_entries<T>(
     let mut build_entry = build_entry;
     let mut entries = Vec::with_capacity(live_doc_count);
 
-    for record in records.iter().filter(|record| matches!(record.state, RecordState::Live)) {
+    for record in records
+        .iter()
+        .filter(|record| matches!(record.state, RecordState::Live))
+    {
         entries.push(build_entry(record));
     }
 

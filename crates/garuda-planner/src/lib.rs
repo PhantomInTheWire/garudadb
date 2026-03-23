@@ -98,11 +98,9 @@ fn build_filter_plan(filter: Option<FilterExpr>, schema: &CollectionSchema) -> F
         } else {
             let mut residual_terms = residual_terms;
             let first = residual_terms.remove(0);
-            SegmentFilterPlan::Matching(
-                residual_terms.into_iter().fold(first, |lhs, rhs| {
-                    FilterExpr::And(Box::new(lhs), Box::new(rhs))
-                }),
-            )
+            SegmentFilterPlan::Matching(residual_terms.into_iter().fold(first, |lhs, rhs| {
+                FilterExpr::And(Box::new(lhs), Box::new(rhs))
+            }))
         },
     }
 }

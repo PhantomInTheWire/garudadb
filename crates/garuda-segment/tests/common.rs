@@ -1,7 +1,5 @@
 use garuda_segment::{RecordState, StoredRecord};
-use garuda_types::{
-    DenseVector, Doc, DocId, FieldName, InternalDocId, ScalarValue,
-};
+use garuda_types::{DenseVector, Doc, DocId, FieldName, InternalDocId, ScalarValue};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
