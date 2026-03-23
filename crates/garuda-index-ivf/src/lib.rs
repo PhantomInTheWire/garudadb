@@ -7,8 +7,8 @@ use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct IvfBuildEntry {
-    pub doc_id: InternalDocId,
-    pub vector: DenseVector,
+    doc_id: InternalDocId,
+    vector: DenseVector,
 }
 
 impl IvfBuildEntry {
@@ -93,8 +93,6 @@ impl IvfIndex {
     }
 
     pub fn build(config: IvfIndexConfig, entries: Vec<IvfBuildEntry>) -> Result<Self, Status> {
-        validate_entries(config.dimension, &entries)?;
-
         let trained = train_lists(&config, &entries)?;
         Ok(Self {
             config,
@@ -109,7 +107,6 @@ impl IvfIndex {
         entries: Vec<IvfBuildEntry>,
         stored: IvfStoredLists,
     ) -> Result<Self, Status> {
-        validate_entries(config.dimension, &entries)?;
         validate_stored_lists(&config, &entries, &stored)?;
 
         let entry_indexes = build_list_entry_indexes(&entries, &stored.doc_ids_by_list)?;
@@ -179,21 +176,6 @@ impl IvfIndex {
 struct TrainedLists {
     centroids: Vec<DenseVector>,
     list_entry_indexes: Vec<Vec<usize>>,
-}
-
-fn validate_entries(dimension: VectorDimension, entries: &[IvfBuildEntry]) -> Result<(), Status> {
-    for entry in entries {
-        if entry.vector.len() == dimension.get() {
-            continue;
-        }
-
-        return Err(Status::err(
-            StatusCode::InvalidArgument,
-            "ivf index entry dimension does not match index dimension",
-        ));
-    }
-
-    Ok(())
 }
 
 fn train_lists(config: &IvfIndexConfig, entries: &[IvfBuildEntry]) -> Result<TrainedLists, Status> {
