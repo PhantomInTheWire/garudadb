@@ -97,9 +97,7 @@ fn build_hnsw_index(
     meta: &SegmentMeta,
     records: &[StoredRecord],
 ) -> Option<HnswIndex> {
-    let Some(params) = vector_field.indexes.hnsw_params() else {
-        return None;
-    };
+    let params = vector_field.indexes.hnsw_params()?;
 
     let config = hnsw_index_config(vector_field, params);
     let entries = hnsw_build_entries(&config, records, meta.doc_count);

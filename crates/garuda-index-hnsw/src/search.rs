@@ -111,7 +111,7 @@ impl HnswIndex {
             }
         }
 
-        return entry_point;
+        entry_point
     }
 
     pub(crate) fn search_layer(
