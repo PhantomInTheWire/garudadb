@@ -4,8 +4,10 @@ use common::{
     build_doc, collection_name, database, default_options, default_schema, dense_vector, doc_id,
     field_name, seed_collection,
 };
-use garuda_storage::SCALAR_INDEX_DIR_NAME;
-use garuda_types::{Doc, HnswIndexParams, IndexParams, ScalarType, ScalarValue, TopK};
+use garuda_storage::{SCALAR_INDEX_DIR_NAME, segment_ivf_index_path};
+use garuda_types::{
+    Doc, HnswIndexParams, IndexParams, IvfIndexParams, ScalarType, ScalarValue, SegmentId, TopK,
+};
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -317,8 +319,16 @@ fn failed_checkpoint_restores_rewritten_segment_files() {
         .create_collection(default_schema("docs"), default_options())
         .expect("create collection");
     seed_collection(&collection);
+    collection
+        .create_index(
+            &field_name("embedding"),
+            IndexParams::Ivf(IvfIndexParams::default()),
+        )
+        .expect("create ivf index");
 
     let collection_dir = collection.path();
+    let ivf_sidecar_path = segment_ivf_index_path(&collection_dir, SegmentId::new_unchecked(1));
+    let ivf_sidecar_bytes = fs::read(&ivf_sidecar_path).expect("read persisted ivf sidecar");
     for segment_id in ["0", "1", "2"] {
         fs::create_dir_all(collection_dir.join(segment_id)).expect("create segment dir");
     }
@@ -378,6 +388,10 @@ fn failed_checkpoint_restores_rewritten_segment_files() {
     assert_eq!(
         fs::read(&nested_scalar_file).expect("nested scalar file"),
         b"nested"
+    );
+    assert_eq!(
+        fs::read(&ivf_sidecar_path).expect("persisted ivf sidecar"),
+        ivf_sidecar_bytes
     );
 }
 
