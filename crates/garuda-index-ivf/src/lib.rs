@@ -36,8 +36,169 @@ pub struct IvfSearchHit {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct IvfStoredLists {
-    pub centroids: Vec<DenseVector>,
+    pub centroids: IvfCentroids,
     pub doc_ids_by_list: Vec<Vec<InternalDocId>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct IvfCentroids(Vec<DenseVector>);
+
+impl IvfCentroids {
+    fn initialize(metric: DistanceMetric, entries: &[IvfBuildEntry], list_count: usize) -> Self {
+        let mut centroid_indexes = Vec::with_capacity(list_count);
+        centroid_indexes.push(0);
+
+        while centroid_indexes.len() < list_count {
+            let next = Self::next_centroid_index(metric, entries, &centroid_indexes);
+            centroid_indexes.push(next);
+        }
+
+        let mut centroids = Vec::with_capacity(list_count);
+
+        for index in centroid_indexes {
+            centroids.push(entries[index].vector.clone());
+        }
+
+        Self(centroids)
+    }
+
+    fn assign_entries(&self, metric: DistanceMetric, entries: &[IvfBuildEntry]) -> Vec<usize> {
+        let mut assignments = Vec::with_capacity(entries.len());
+
+        for entry in entries {
+            assignments.push(self.nearest(metric, &entry.vector));
+        }
+
+        assignments
+    }
+
+    fn recompute(
+        &self,
+        dimension: VectorDimension,
+        entries: &[IvfBuildEntry],
+        assignments: &[usize],
+    ) -> Self {
+        let list_count = self.len();
+        let dimension = dimension.get();
+        let mut sums = vec![vec![0.0; dimension]; list_count];
+        let mut counts = vec![0usize; list_count];
+
+        for (entry, &list_index) in entries.iter().zip(assignments) {
+            counts[list_index] += 1;
+
+            for (sum, value) in sums[list_index].iter_mut().zip(entry.vector.as_slice()) {
+                *sum += *value;
+            }
+        }
+
+        let mut centroids = Vec::with_capacity(list_count);
+
+        for list_index in 0..list_count {
+            if counts[list_index] == 0 {
+                centroids.push(entries[list_index].vector.clone());
+                continue;
+            }
+
+            centroids.push(centroid_from_sums(
+                &mut sums[list_index],
+                counts[list_index],
+            ));
+        }
+
+        Self(centroids)
+    }
+
+    fn nearest(&self, metric: DistanceMetric, vector: &DenseVector) -> usize {
+        let mut best_index = 0usize;
+        let mut best_score = score_doc(metric, vector.as_slice(), self[0].as_slice());
+
+        for (index, centroid) in self.iter().enumerate().skip(1) {
+            let score = score_doc(metric, vector.as_slice(), centroid.as_slice());
+            if score > best_score {
+                best_index = index;
+                best_score = score;
+            }
+        }
+
+        best_index
+    }
+
+    fn next_centroid_index(
+        metric: DistanceMetric,
+        entries: &[IvfBuildEntry],
+        centroid_indexes: &[usize],
+    ) -> usize {
+        let mut next_index = 0usize;
+        let mut next_score = f32::INFINITY;
+
+        for (entry_index, entry) in entries.iter().enumerate() {
+            if centroid_indexes.contains(&entry_index) {
+                continue;
+            }
+
+            let nearest_score = centroid_indexes
+                .iter()
+                .map(|&centroid_index| {
+                    score_doc(
+                        metric,
+                        entry.vector.as_slice(),
+                        entries[centroid_index].vector.as_slice(),
+                    )
+                })
+                .fold(f32::NEG_INFINITY, f32::max);
+
+            if nearest_score < next_score {
+                next_index = entry_index;
+                next_score = nearest_score;
+            }
+        }
+
+        next_index
+    }
+}
+
+impl From<Vec<DenseVector>> for IvfCentroids {
+    fn from(value: Vec<DenseVector>) -> Self {
+        Self(value)
+    }
+}
+
+impl From<IvfCentroids> for Vec<DenseVector> {
+    fn from(value: IvfCentroids) -> Self {
+        value.0
+    }
+}
+
+impl std::iter::FromIterator<DenseVector> for IvfCentroids {
+    fn from_iter<T: IntoIterator<Item = DenseVector>>(iter: T) -> Self {
+        Self(iter.into_iter().collect())
+    }
+}
+
+impl IntoIterator for IvfCentroids {
+    type Item = DenseVector;
+    type IntoIter = std::vec::IntoIter<DenseVector>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a IvfCentroids {
+    type Item = &'a DenseVector;
+    type IntoIter = std::slice::Iter<'a, DenseVector>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+impl std::ops::Deref for IvfCentroids {
+    type Target = [DenseVector];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -197,7 +358,7 @@ impl WritingIvfIndex {
 impl IvfState {
     fn new(
         entries: Vec<IvfBuildEntry>,
-        centroids: Vec<DenseVector>,
+        centroids: IvfCentroids,
         list_entry_indexes: Vec<Vec<IvfEntryIndex>>,
     ) -> Self {
         assert_eq!(centroids.len(), list_entry_indexes.len(), "ivf list layout");
@@ -218,7 +379,7 @@ impl IvfState {
     }
 
     fn empty() -> Self {
-        Self::new(Vec::new(), Vec::new(), Vec::new())
+        Self::new(Vec::new(), IvfCentroids::default(), Vec::new())
     }
 
     fn search(
@@ -230,11 +391,9 @@ impl IvfState {
     }
 
     fn stored_lists(&self) -> IvfStoredLists {
-        let mut centroids = Vec::with_capacity(self.inverted_lists.len());
         let mut doc_ids_by_list = Vec::with_capacity(self.inverted_lists.len());
 
         for list in &self.inverted_lists {
-            centroids.push(list.centroid.clone());
             let mut doc_ids = Vec::with_capacity(list.entry_indexes.len());
 
             for &entry_index in &list.entry_indexes {
@@ -245,7 +404,11 @@ impl IvfState {
         }
 
         IvfStoredLists {
-            centroids,
+            centroids: self
+                .inverted_lists
+                .iter()
+                .map(|list| list.centroid.clone())
+                .collect(),
             doc_ids_by_list,
         }
     }
@@ -302,25 +465,25 @@ impl IvfState {
 
 #[derive(Clone)]
 struct TrainedLists {
-    centroids: Vec<DenseVector>,
+    centroids: IvfCentroids,
     list_entry_indexes: Vec<Vec<IvfEntryIndex>>,
 }
 
 fn train_lists(config: &IvfIndexConfig, entries: &[IvfBuildEntry]) -> TrainedLists {
     if entries.is_empty() {
         return TrainedLists {
-            centroids: Vec::new(),
+            centroids: IvfCentroids::default(),
             list_entry_indexes: Vec::new(),
         };
     }
 
     let list_count = config.list_count(entries.len());
-    let mut centroids = initialize_centroids(config.metric, entries, list_count);
+    let mut centroids = IvfCentroids::initialize(config.metric, entries, list_count);
     let mut assignments = vec![0usize; entries.len()];
 
     for _ in 0..config.params.training_iterations.get() {
-        assignments = assign_entries(config.metric, entries, &centroids);
-        centroids = recompute_centroids(config.dimension, list_count, entries, &assignments);
+        assignments = centroids.assign_entries(config.metric, entries);
+        centroids = centroids.recompute(config.dimension, entries, &assignments);
     }
 
     let mut list_entry_indexes = vec![Vec::new(); list_count];
@@ -333,41 +496,6 @@ fn train_lists(config: &IvfIndexConfig, entries: &[IvfBuildEntry]) -> TrainedLis
         centroids,
         list_entry_indexes,
     }
-}
-
-fn assign_entries(
-    metric: DistanceMetric,
-    entries: &[IvfBuildEntry],
-    centroids: &[DenseVector],
-) -> Vec<usize> {
-    let mut assignments = Vec::with_capacity(entries.len());
-
-    for entry in entries {
-        assignments.push(nearest_centroid(metric, &entry.vector, centroids));
-    }
-
-    assignments
-}
-
-fn nearest_centroid(
-    metric: DistanceMetric,
-    vector: &DenseVector,
-    centroids: &[DenseVector],
-) -> usize {
-    let mut best_index = 0usize;
-    let mut best_score = score_doc(metric, vector.as_slice(), centroids[0].as_slice());
-
-    for (index, centroid) in centroids.iter().enumerate().skip(1) {
-        let score = score_doc(metric, vector.as_slice(), centroid.as_slice());
-        let is_better = score > best_score;
-
-        if is_better {
-            best_index = index;
-            best_score = score;
-        }
-    }
-
-    best_index
 }
 
 fn nearest_list_centroid(
@@ -391,96 +519,6 @@ fn nearest_list_centroid(
     }
 
     best_index
-}
-
-fn recompute_centroids(
-    dimension: VectorDimension,
-    list_count: usize,
-    entries: &[IvfBuildEntry],
-    assignments: &[usize],
-) -> Vec<DenseVector> {
-    let dimension = dimension.get();
-    let mut sums = vec![vec![0.0; dimension]; list_count];
-    let mut counts = vec![0usize; list_count];
-
-    for (entry, &list_index) in entries.iter().zip(assignments) {
-        counts[list_index] += 1;
-
-        for (sum, value) in sums[list_index].iter_mut().zip(entry.vector.as_slice()) {
-            *sum += *value;
-        }
-    }
-
-    let mut centroids = Vec::with_capacity(list_count);
-
-    for list_index in 0..list_count {
-        if counts[list_index] == 0 {
-            centroids.push(entries[list_index].vector.clone());
-            continue;
-        }
-
-        centroids.push(centroid_from_sums(
-            &mut sums[list_index],
-            counts[list_index],
-        ));
-    }
-
-    centroids
-}
-
-fn initialize_centroids(
-    metric: DistanceMetric,
-    entries: &[IvfBuildEntry],
-    list_count: usize,
-) -> Vec<DenseVector> {
-    let mut centroid_indexes = Vec::with_capacity(list_count);
-    centroid_indexes.push(0);
-
-    while centroid_indexes.len() < list_count {
-        let next = next_centroid_index(metric, entries, &centroid_indexes);
-        centroid_indexes.push(next);
-    }
-
-    let mut centroids = Vec::with_capacity(list_count);
-
-    for index in centroid_indexes {
-        centroids.push(entries[index].vector.clone());
-    }
-
-    centroids
-}
-
-fn next_centroid_index(
-    metric: DistanceMetric,
-    entries: &[IvfBuildEntry],
-    centroid_indexes: &[usize],
-) -> usize {
-    let mut next_index = 0usize;
-    let mut next_score = f32::INFINITY;
-
-    for (entry_index, entry) in entries.iter().enumerate() {
-        if centroid_indexes.contains(&entry_index) {
-            continue;
-        }
-
-        let nearest_score = centroid_indexes
-            .iter()
-            .map(|&centroid_index| {
-                score_doc(
-                    metric,
-                    entry.vector.as_slice(),
-                    entries[centroid_index].vector.as_slice(),
-                )
-            })
-            .fold(f32::NEG_INFINITY, f32::max);
-
-        if nearest_score < next_score {
-            next_index = entry_index;
-            next_score = nearest_score;
-        }
-    }
-
-    next_index
 }
 
 fn centroid_for_list(

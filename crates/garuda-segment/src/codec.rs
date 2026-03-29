@@ -242,7 +242,7 @@ pub fn decode_ivf_index(
 
     reader.finish()?;
     Ok(IvfStoredLists {
-        centroids,
+        centroids: centroids.into(),
         doc_ids_by_list,
     })
 }

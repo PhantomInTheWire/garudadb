@@ -1,5 +1,6 @@
 use garuda_index_ivf::{
-    IvfBuildEntry, IvfIndex, IvfIndexConfig, IvfSearchRequest, IvfStoredLists, WritingIvfIndex,
+    IvfBuildEntry, IvfCentroids, IvfIndex, IvfIndexConfig, IvfSearchRequest, IvfStoredLists,
+    WritingIvfIndex,
 };
 use garuda_types::{
     DenseVector, DistanceMetric, InternalDocId, IvfIndexParams, IvfListCount, IvfProbeCount,
@@ -170,7 +171,7 @@ fn from_parts_rejects_duplicate_doc_ids() {
     let entries = vec![entry(1, [0.0, 0.0]), entry(2, [10.0, 10.0])];
     let duplicate_doc_id = InternalDocId::new(1).expect("doc id");
     let stored = IvfStoredLists {
-        centroids: vec![vector([0.0, 0.0]), vector([10.0, 10.0])],
+        centroids: IvfCentroids::from(vec![vector([0.0, 0.0]), vector([10.0, 10.0])]),
         doc_ids_by_list: vec![vec![duplicate_doc_id], vec![duplicate_doc_id]],
     };
 
@@ -184,7 +185,7 @@ fn from_parts_rejects_missing_doc_ids() {
     let config = config();
     let entries = vec![entry(1, [0.0, 0.0]), entry(2, [10.0, 10.0])];
     let stored = IvfStoredLists {
-        centroids: vec![vector([0.0, 0.0]), vector([10.0, 10.0])],
+        centroids: IvfCentroids::from(vec![vector([0.0, 0.0]), vector([10.0, 10.0])]),
         doc_ids_by_list: vec![vec![InternalDocId::new(1).expect("doc id")], vec![]],
     };
 
