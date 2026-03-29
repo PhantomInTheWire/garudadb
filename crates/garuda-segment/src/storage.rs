@@ -1,6 +1,6 @@
 use crate::codec::{
-    decode_segment, encode_empty_segment, encode_flat_index, encode_hnsw_graph, encode_ivf_index,
-    encode_scalar_index, encode_segment,
+    decode_segment, encode_flat_index, encode_hnsw_graph, encode_ivf_index, encode_scalar_index,
+    encode_segment,
 };
 use crate::index::{
     flat_index_entries, indexed_scalar_fields, load_persisted_search_resources,
@@ -23,7 +23,7 @@ pub fn ensure_segment_files(root: &std::path::Path, segment_id: SegmentId) -> Re
     create_dir_all(&segment_dir, "failed to create segment directory")?;
 
     if !segment_data_path(root, segment_id).exists() {
-        let bytes = encode_empty_segment(&segment_meta(segment_id))?;
+        let bytes = encode_segment(&segment_meta(segment_id), &[])?;
         write_file_atomically(&segment_data_path(root, segment_id), &bytes)?;
     }
 
