@@ -420,13 +420,10 @@ fn build_ivf_index(
     records: &[StoredRecord],
 ) -> Option<IvfIndex> {
     let params = schema.vector.indexes.ivf_params().cloned()?;
-    Some(
-        IvfIndex::build(
-            ivf_index_config(schema, params),
-            ivf_build_entries(schema, records, meta.doc_count),
-        )
-        .expect("validated ivf segment records"),
-    )
+    Some(IvfIndex::build(
+        ivf_index_config(schema, params),
+        ivf_build_entries(schema, records, meta.doc_count),
+    ))
 }
 
 fn live_doc_count(records: &[StoredRecord]) -> usize {
