@@ -33,11 +33,9 @@ fn config_with_iterations(iterations: u32) -> IvfIndexConfig {
 
 fn entry(doc_id: u64, vector: [f32; 2]) -> IvfBuildEntry {
     IvfBuildEntry::new(
-        VectorDimension::new(2).expect("dimension"),
         InternalDocId::new(doc_id).expect("doc id"),
         DenseVector::parse(vector.to_vec()).expect("vector"),
     )
-    .expect("entry")
 }
 
 fn vector(values: [f32; 2]) -> DenseVector {
@@ -171,7 +169,7 @@ fn from_parts_rejects_duplicate_doc_ids() {
     let entries = vec![entry(1, [0.0, 0.0]), entry(2, [10.0, 10.0])];
     let duplicate_doc_id = InternalDocId::new(1).expect("doc id");
     let stored = IvfStoredLists {
-        centroids: IvfCentroids::from(vec![vector([0.0, 0.0]), vector([10.0, 10.0])]),
+        centroids: IvfCentroids::new(vec![vector([0.0, 0.0]), vector([10.0, 10.0])]),
         doc_ids_by_list: vec![vec![duplicate_doc_id], vec![duplicate_doc_id]],
     };
 
@@ -185,7 +183,7 @@ fn from_parts_rejects_missing_doc_ids() {
     let config = config();
     let entries = vec![entry(1, [0.0, 0.0]), entry(2, [10.0, 10.0])];
     let stored = IvfStoredLists {
-        centroids: IvfCentroids::from(vec![vector([0.0, 0.0]), vector([10.0, 10.0])]),
+        centroids: IvfCentroids::new(vec![vector([0.0, 0.0]), vector([10.0, 10.0])]),
         doc_ids_by_list: vec![vec![InternalDocId::new(1).expect("doc id")], vec![]],
     };
 

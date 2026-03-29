@@ -146,10 +146,7 @@ impl SegmentManager {
         }
 
         if let Some(index) = &mut self.writing_segment.ivf_index {
-            index.insert(
-                IvfBuildEntry::new(schema.vector.dimension, doc_id, doc.vector.clone())
-                    .expect("validated ivf writing records"),
-            );
+            index.insert(IvfBuildEntry::new(doc_id, doc.vector.clone()));
         }
 
         for field in &schema.fields {

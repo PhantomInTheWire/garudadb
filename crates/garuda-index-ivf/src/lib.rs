@@ -12,19 +12,8 @@ pub struct IvfBuildEntry {
 }
 
 impl IvfBuildEntry {
-    pub fn new(
-        dimension: VectorDimension,
-        doc_id: InternalDocId,
-        vector: DenseVector,
-    ) -> Result<Self, Status> {
-        if vector.len() != dimension.get() {
-            return Err(Status::err(
-                StatusCode::InvalidArgument,
-                "ivf index entry dimension does not match index dimension",
-            ));
-        }
-
-        Ok(Self { doc_id, vector })
+    pub fn new(doc_id: InternalDocId, vector: DenseVector) -> Self {
+        Self { doc_id, vector }
     }
 }
 
@@ -44,6 +33,22 @@ pub struct IvfStoredLists {
 pub struct IvfCentroids(Vec<DenseVector>);
 
 impl IvfCentroids {
+    pub fn new(centroids: Vec<DenseVector>) -> Self {
+        Self(centroids)
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, DenseVector> {
+        self.0.iter()
+    }
+
     fn initialize(metric: DistanceMetric, entries: &[IvfBuildEntry], list_count: usize) -> Self {
         let mut centroid_indexes = Vec::with_capacity(list_count);
         centroid_indexes.push(0);
@@ -59,14 +64,14 @@ impl IvfCentroids {
             centroids.push(entries[index].vector.clone());
         }
 
-        Self(centroids)
+        Self::new(centroids)
     }
 
     fn assign_entries(&self, metric: DistanceMetric, entries: &[IvfBuildEntry]) -> Vec<usize> {
         let mut assignments = Vec::with_capacity(entries.len());
 
         for entry in entries {
-            assignments.push(self.nearest(metric, &entry.vector));
+            assignments.push(nearest_centroid_index(metric, &entry.vector, self.iter()));
         }
 
         assignments
@@ -105,22 +110,7 @@ impl IvfCentroids {
             ));
         }
 
-        Self(centroids)
-    }
-
-    fn nearest(&self, metric: DistanceMetric, vector: &DenseVector) -> usize {
-        let mut best_index = 0usize;
-        let mut best_score = score_doc(metric, vector.as_slice(), self[0].as_slice());
-
-        for (index, centroid) in self.iter().enumerate().skip(1) {
-            let score = score_doc(metric, vector.as_slice(), centroid.as_slice());
-            if score > best_score {
-                best_index = index;
-                best_score = score;
-            }
-        }
-
-        best_index
+        Self::new(centroids)
     }
 
     fn next_centroid_index(
@@ -155,49 +145,8 @@ impl IvfCentroids {
 
         next_index
     }
-}
-
-impl From<Vec<DenseVector>> for IvfCentroids {
-    fn from(value: Vec<DenseVector>) -> Self {
-        Self(value)
-    }
-}
-
-impl From<IvfCentroids> for Vec<DenseVector> {
-    fn from(value: IvfCentroids) -> Self {
-        value.0
-    }
-}
-
-impl std::iter::FromIterator<DenseVector> for IvfCentroids {
-    fn from_iter<T: IntoIterator<Item = DenseVector>>(iter: T) -> Self {
-        Self(iter.into_iter().collect())
-    }
-}
-
-impl IntoIterator for IvfCentroids {
-    type Item = DenseVector;
-    type IntoIter = std::vec::IntoIter<DenseVector>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
-    }
-}
-
-impl<'a> IntoIterator for &'a IvfCentroids {
-    type Item = &'a DenseVector;
-    type IntoIter = std::slice::Iter<'a, DenseVector>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.iter()
-    }
-}
-
-impl std::ops::Deref for IvfCentroids {
-    type Target = [DenseVector];
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
+    fn into_vec(self) -> Vec<DenseVector> {
+        self.0
     }
 }
 
@@ -278,6 +227,8 @@ struct IvfInvertedList {
 
 impl IvfIndex {
     pub fn build(config: IvfIndexConfig, entries: Vec<IvfBuildEntry>) -> Self {
+        assert_entries_match_dimension(config.dimension, &entries);
+
         let trained = train_lists(&config, &entries);
         Self {
             config,
@@ -364,6 +315,7 @@ impl IvfState {
         assert_eq!(centroids.len(), list_entry_indexes.len(), "ivf list layout");
 
         let inverted_lists = centroids
+            .into_vec()
             .into_iter()
             .zip(list_entry_indexes)
             .map(|(centroid, entry_indexes)| IvfInvertedList {
@@ -404,11 +356,12 @@ impl IvfState {
         }
 
         IvfStoredLists {
-            centroids: self
-                .inverted_lists
-                .iter()
-                .map(|list| list.centroid.clone())
-                .collect(),
+            centroids: IvfCentroids::new(
+                self.inverted_lists
+                    .iter()
+                    .map(|list| list.centroid.clone())
+                    .collect(),
+            ),
             doc_ids_by_list,
         }
     }
@@ -425,32 +378,39 @@ impl IvfState {
         self.inverted_lists.len()
     }
 
+    fn push_new_list(&mut self, entry_index: IvfEntryIndex) {
+        self.inverted_lists.push(IvfInvertedList {
+            centroid: self.entries[entry_index.get()].vector.clone(),
+            entry_indexes: vec![entry_index],
+        });
+    }
+
     fn insert_incremental(&mut self, config: &IvfIndexConfig, entry: IvfBuildEntry) {
+        assert_eq!(
+            entry.vector.len(),
+            config.dimension.get(),
+            "ivf index entry dimension"
+        );
+
         let entry_index = self.entries.len();
         self.entries.push(entry);
         let entry_index = IvfEntryIndex::new(entry_index);
 
         if self.inverted_lists.is_empty() {
-            self.inverted_lists.push(IvfInvertedList {
-                centroid: self.entries[entry_index.get()].vector.clone(),
-                entry_indexes: vec![entry_index],
-            });
+            self.push_new_list(entry_index);
             return;
         }
 
         let list_count = config.list_count(self.entries.len());
         if self.inverted_lists.len() < list_count {
-            self.inverted_lists.push(IvfInvertedList {
-                centroid: self.entries[entry_index.get()].vector.clone(),
-                entry_indexes: vec![entry_index],
-            });
+            self.push_new_list(entry_index);
             return;
         }
 
-        let list_index = nearest_list_centroid(
+        let list_index = nearest_centroid_index(
             config.metric,
             &self.entries[entry_index.get()].vector,
-            &self.inverted_lists,
+            self.inverted_lists.iter().map(|list| &list.centroid),
         );
         self.inverted_lists[list_index]
             .entry_indexes
@@ -498,20 +458,17 @@ fn train_lists(config: &IvfIndexConfig, entries: &[IvfBuildEntry]) -> TrainedLis
     }
 }
 
-fn nearest_list_centroid(
+fn nearest_centroid_index<'a>(
     metric: DistanceMetric,
     vector: &DenseVector,
-    inverted_lists: &[IvfInvertedList],
+    centroids: impl IntoIterator<Item = &'a DenseVector>,
 ) -> usize {
-    let mut best_index = 0usize;
-    let mut best_score = score_doc(
-        metric,
-        vector.as_slice(),
-        inverted_lists[0].centroid.as_slice(),
-    );
+    let mut centroids = centroids.into_iter().enumerate();
+    let (mut best_index, best_centroid) = centroids.next().expect("ivf centroids");
+    let mut best_score = score_doc(metric, vector.as_slice(), best_centroid.as_slice());
 
-    for (index, list) in inverted_lists.iter().enumerate().skip(1) {
-        let score = score_doc(metric, vector.as_slice(), list.centroid.as_slice());
+    for (index, centroid) in centroids {
+        let score = score_doc(metric, vector.as_slice(), centroid.as_slice());
         if score > best_score {
             best_index = index;
             best_score = score;
@@ -548,6 +505,16 @@ fn centroid_from_sums(sums: &mut [f32], count: usize) -> DenseVector {
     }
 
     DenseVector::parse(sums.to_vec()).expect("ivf centroid vector")
+}
+
+fn assert_entries_match_dimension(dimension: VectorDimension, entries: &[IvfBuildEntry]) {
+    for entry in entries {
+        assert_eq!(
+            entry.vector.len(),
+            dimension.get(),
+            "ivf index entry dimension"
+        );
+    }
 }
 
 fn build_list_entry_indexes(
@@ -609,7 +576,7 @@ fn validate_stored_lists(
         ));
     }
 
-    for centroid in &stored.centroids {
+    for centroid in stored.centroids.iter() {
         if centroid.len() == config.dimension.get() {
             continue;
         }
