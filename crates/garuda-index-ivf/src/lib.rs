@@ -116,12 +116,12 @@ struct IvfInvertedList {
 }
 
 impl IvfIndex {
-    pub fn build(config: IvfIndexConfig, entries: Vec<IvfBuildEntry>) -> Result<Self, Status> {
-        let trained = train_lists(&config, &entries)?;
-        Ok(Self {
+    pub fn build(config: IvfIndexConfig, entries: Vec<IvfBuildEntry>) -> Self {
+        let trained = train_lists(&config, &entries);
+        Self {
             config,
             state: IvfState::new(entries, trained.centroids, trained.list_entry_indexes),
-        })
+        }
     }
 
     pub fn from_parts(
@@ -177,7 +177,7 @@ impl WritingIvfIndex {
         index
     }
 
-    pub fn train(self) -> Result<IvfIndex, Status> {
+    pub fn train(self) -> IvfIndex {
         IvfIndex::build(self.config, self.state.entries)
     }
 
@@ -306,12 +306,12 @@ struct TrainedLists {
     list_entry_indexes: Vec<Vec<IvfEntryIndex>>,
 }
 
-fn train_lists(config: &IvfIndexConfig, entries: &[IvfBuildEntry]) -> Result<TrainedLists, Status> {
+fn train_lists(config: &IvfIndexConfig, entries: &[IvfBuildEntry]) -> TrainedLists {
     if entries.is_empty() {
-        return Ok(TrainedLists {
+        return TrainedLists {
             centroids: Vec::new(),
             list_entry_indexes: Vec::new(),
-        });
+        };
     }
 
     let list_count = config.list_count(entries.len());
@@ -329,10 +329,10 @@ fn train_lists(config: &IvfIndexConfig, entries: &[IvfBuildEntry]) -> Result<Tra
         list_entry_indexes[list_index].push(IvfEntryIndex::new(entry_index));
     }
 
-    Ok(TrainedLists {
+    TrainedLists {
         centroids,
         list_entry_indexes,
-    })
+    }
 }
 
 fn assign_entries(

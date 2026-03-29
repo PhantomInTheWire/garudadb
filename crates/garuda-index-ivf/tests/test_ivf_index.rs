@@ -45,8 +45,7 @@ fn vector(values: [f32; 2]) -> DenseVector {
 
 #[test]
 fn search_rejects_dimension_mismatch() {
-    let index = IvfIndex::build(config(), vec![entry(1, [0.0, 0.0]), entry(2, [10.0, 10.0])])
-        .expect("index");
+    let index = IvfIndex::build(config(), vec![entry(1, [0.0, 0.0]), entry(2, [10.0, 10.0])]);
 
     let error = index
         .search(IvfSearchRequest::new(
@@ -69,8 +68,7 @@ fn wider_nprobe_should_not_reduce_recall() {
             entry(3, [10.0, 10.0]),
             entry(4, [10.1, 10.0]),
         ],
-    )
-    .expect("index");
+    );
     let query = vector([0.05, 0.0]);
     let narrow = index.search(IvfSearchRequest::new(
         &query,
@@ -107,14 +105,23 @@ fn build_should_use_deterministic_farthest_initializer() {
             entry(3, [10.0, 0.0]),
             entry(4, [11.0, 0.0]),
         ],
-    )
-    .expect("index");
+    );
     let lists = index.stored_lists();
 
     assert_eq!(lists.centroids.len(), 2);
     assert_eq!(lists.doc_ids_by_list.len(), 2);
     assert_eq!(lists.doc_ids_by_list[0].len(), 2);
     assert_eq!(lists.doc_ids_by_list[1].len(), 2);
+}
+
+#[test]
+fn build_should_allow_empty_inputs() {
+    let index = IvfIndex::build(config(), Vec::new());
+
+    assert!(index.is_empty());
+    assert_eq!(index.list_count(), 0);
+    assert!(index.stored_lists().centroids.is_empty());
+    assert!(index.stored_lists().doc_ids_by_list.is_empty());
 }
 
 #[test]
