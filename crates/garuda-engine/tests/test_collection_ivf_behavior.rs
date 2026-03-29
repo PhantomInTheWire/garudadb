@@ -1,8 +1,8 @@
 mod common;
 
 use common::{
-    build_doc, collection_name, database, default_options, default_schema, dense_vector,
-    doc_id, field_name, seed_collection, seed_more_collection_docs,
+    build_doc, collection_name, database, default_options, default_schema, dense_vector, doc_id,
+    field_name, seed_collection, seed_more_collection_docs,
 };
 use garuda_storage::{WRITING_SEGMENT_ID, segment_ivf_index_path};
 use garuda_types::{
