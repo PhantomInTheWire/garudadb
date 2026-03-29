@@ -93,8 +93,26 @@ pub struct WritingIvfIndex {
 #[derive(Clone, Debug, PartialEq)]
 struct IvfState {
     entries: Vec<IvfBuildEntry>,
-    centroids: Vec<DenseVector>,
-    list_entry_indexes: Vec<Vec<usize>>,
+    inverted_lists: Vec<IvfInvertedList>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct IvfEntryIndex(usize);
+
+impl IvfEntryIndex {
+    fn new(value: usize) -> Self {
+        Self(value)
+    }
+
+    fn get(self) -> usize {
+        self.0
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct IvfInvertedList {
+    centroid: DenseVector,
+    entry_indexes: Vec<IvfEntryIndex>,
 }
 
 impl IvfIndex {
@@ -180,12 +198,22 @@ impl IvfState {
     fn new(
         entries: Vec<IvfBuildEntry>,
         centroids: Vec<DenseVector>,
-        list_entry_indexes: Vec<Vec<usize>>,
+        list_entry_indexes: Vec<Vec<IvfEntryIndex>>,
     ) -> Self {
+        assert_eq!(centroids.len(), list_entry_indexes.len(), "ivf list layout");
+
+        let inverted_lists = centroids
+            .into_iter()
+            .zip(list_entry_indexes)
+            .map(|(centroid, entry_indexes)| IvfInvertedList {
+                centroid,
+                entry_indexes,
+            })
+            .collect();
+
         Self {
             entries,
-            centroids,
-            list_entry_indexes,
+            inverted_lists,
         }
     }
 
@@ -198,30 +226,26 @@ impl IvfState {
         config: &IvfIndexConfig,
         request: IvfSearchRequest<'_>,
     ) -> Result<Vec<IvfSearchHit>, Status> {
-        search_entries(
-            config,
-            &self.entries,
-            &self.centroids,
-            &self.list_entry_indexes,
-            request,
-        )
+        search_entries(config, &self.entries, &self.inverted_lists, request)
     }
 
     fn stored_lists(&self) -> IvfStoredLists {
-        let mut doc_ids_by_list = Vec::with_capacity(self.list_entry_indexes.len());
+        let mut centroids = Vec::with_capacity(self.inverted_lists.len());
+        let mut doc_ids_by_list = Vec::with_capacity(self.inverted_lists.len());
 
-        for list in &self.list_entry_indexes {
-            let mut doc_ids = Vec::with_capacity(list.len());
+        for list in &self.inverted_lists {
+            centroids.push(list.centroid.clone());
+            let mut doc_ids = Vec::with_capacity(list.entry_indexes.len());
 
-            for &entry_index in list {
-                doc_ids.push(self.entries[entry_index].doc_id);
+            for &entry_index in &list.entry_indexes {
+                doc_ids.push(self.entries[entry_index.get()].doc_id);
             }
 
             doc_ids_by_list.push(doc_ids);
         }
 
         IvfStoredLists {
-            centroids: self.centroids.clone(),
+            centroids,
             doc_ids_by_list,
         }
     }
@@ -235,38 +259,43 @@ impl IvfState {
     }
 
     fn list_count(&self) -> usize {
-        self.centroids.len()
+        self.inverted_lists.len()
     }
 
     fn insert_incremental(&mut self, config: &IvfIndexConfig, entry: IvfBuildEntry) {
         let entry_index = self.entries.len();
         self.entries.push(entry);
+        let entry_index = IvfEntryIndex::new(entry_index);
 
-        if self.centroids.is_empty() {
-            self.centroids
-                .push(self.entries[entry_index].vector.clone());
-            self.list_entry_indexes.push(vec![entry_index]);
+        if self.inverted_lists.is_empty() {
+            self.inverted_lists.push(IvfInvertedList {
+                centroid: self.entries[entry_index.get()].vector.clone(),
+                entry_indexes: vec![entry_index],
+            });
             return;
         }
 
         let list_count = config.list_count(self.entries.len());
-        if self.centroids.len() < list_count {
-            self.centroids
-                .push(self.entries[entry_index].vector.clone());
-            self.list_entry_indexes.push(vec![entry_index]);
+        if self.inverted_lists.len() < list_count {
+            self.inverted_lists.push(IvfInvertedList {
+                centroid: self.entries[entry_index.get()].vector.clone(),
+                entry_indexes: vec![entry_index],
+            });
             return;
         }
 
-        let list_index = nearest_centroid(
+        let list_index = nearest_list_centroid(
             config.metric,
-            &self.entries[entry_index].vector,
-            &self.centroids,
+            &self.entries[entry_index.get()].vector,
+            &self.inverted_lists,
         );
-        self.list_entry_indexes[list_index].push(entry_index);
-        self.centroids[list_index] = centroid_for_list(
+        self.inverted_lists[list_index]
+            .entry_indexes
+            .push(entry_index);
+        self.inverted_lists[list_index].centroid = centroid_for_list(
             config.dimension,
             &self.entries,
-            &self.list_entry_indexes[list_index],
+            &self.inverted_lists[list_index].entry_indexes,
         );
     }
 }
@@ -274,7 +303,7 @@ impl IvfState {
 #[derive(Clone)]
 struct TrainedLists {
     centroids: Vec<DenseVector>,
-    list_entry_indexes: Vec<Vec<usize>>,
+    list_entry_indexes: Vec<Vec<IvfEntryIndex>>,
 }
 
 fn train_lists(config: &IvfIndexConfig, entries: &[IvfBuildEntry]) -> Result<TrainedLists, Status> {
@@ -297,7 +326,7 @@ fn train_lists(config: &IvfIndexConfig, entries: &[IvfBuildEntry]) -> Result<Tra
     let mut list_entry_indexes = vec![Vec::new(); list_count];
 
     for (entry_index, &list_index) in assignments.iter().enumerate() {
-        list_entry_indexes[list_index].push(entry_index);
+        list_entry_indexes[list_index].push(IvfEntryIndex::new(entry_index));
     }
 
     Ok(TrainedLists {
@@ -333,6 +362,29 @@ fn nearest_centroid(
         let is_better = score > best_score;
 
         if is_better {
+            best_index = index;
+            best_score = score;
+        }
+    }
+
+    best_index
+}
+
+fn nearest_list_centroid(
+    metric: DistanceMetric,
+    vector: &DenseVector,
+    inverted_lists: &[IvfInvertedList],
+) -> usize {
+    let mut best_index = 0usize;
+    let mut best_score = score_doc(
+        metric,
+        vector.as_slice(),
+        inverted_lists[0].centroid.as_slice(),
+    );
+
+    for (index, list) in inverted_lists.iter().enumerate().skip(1) {
+        let score = score_doc(metric, vector.as_slice(), list.centroid.as_slice());
+        if score > best_score {
             best_index = index;
             best_score = score;
         }
@@ -434,12 +486,15 @@ fn next_centroid_index(
 fn centroid_for_list(
     dimension: VectorDimension,
     entries: &[IvfBuildEntry],
-    entry_indexes: &[usize],
+    entry_indexes: &[IvfEntryIndex],
 ) -> DenseVector {
     let mut sums = vec![0.0; dimension.get()];
 
     for &entry_index in entry_indexes {
-        for (sum, value) in sums.iter_mut().zip(entries[entry_index].vector.as_slice()) {
+        for (sum, value) in sums
+            .iter_mut()
+            .zip(entries[entry_index.get()].vector.as_slice())
+        {
             *sum += *value;
         }
     }
@@ -460,7 +515,7 @@ fn centroid_from_sums(sums: &mut [f32], count: usize) -> DenseVector {
 fn build_list_entry_indexes(
     entries: &[IvfBuildEntry],
     doc_ids_by_list: &[Vec<InternalDocId>],
-) -> Result<Vec<Vec<usize>>, Status> {
+) -> Result<Vec<Vec<IvfEntryIndex>>, Status> {
     let mut entry_index_by_doc_id = HashMap::with_capacity(entries.len());
 
     for (entry_index, entry) in entries.iter().enumerate() {
@@ -480,7 +535,7 @@ fn build_list_entry_indexes(
                 ));
             };
 
-            indexes.push(entry_index);
+            indexes.push(IvfEntryIndex::new(entry_index));
         }
 
         list_entry_indexes.push(indexes);
@@ -533,8 +588,7 @@ fn validate_stored_lists(
 fn search_entries(
     config: &IvfIndexConfig,
     entries: &[IvfBuildEntry],
-    centroids: &[DenseVector],
-    list_entry_indexes: &[Vec<usize>],
+    inverted_lists: &[IvfInvertedList],
     request: IvfSearchRequest<'_>,
 ) -> Result<Vec<IvfSearchHit>, Status> {
     if request.query_vector.len() != config.dimension.get() {
@@ -548,15 +602,15 @@ fn search_entries(
         return Ok(Vec::new());
     }
 
-    let mut list_scores = Vec::with_capacity(centroids.len());
+    let mut list_scores = Vec::with_capacity(inverted_lists.len());
 
-    for (list_index, centroid) in centroids.iter().enumerate() {
+    for (list_index, list) in inverted_lists.iter().enumerate() {
         list_scores.push((
             list_index,
             score_doc(
                 config.metric,
                 request.query_vector.as_slice(),
-                centroid.as_slice(),
+                list.centroid.as_slice(),
             ),
         ));
     }
@@ -572,8 +626,8 @@ fn search_entries(
     let mut hits = Vec::new();
 
     for (list_index, _) in list_scores {
-        for &entry_index in &list_entry_indexes[list_index] {
-            let entry = &entries[entry_index];
+        for &entry_index in &inverted_lists[list_index].entry_indexes {
+            let entry = &entries[entry_index.get()];
             hits.push(IvfSearchHit {
                 doc_id: entry.doc_id,
                 score: score_doc(
