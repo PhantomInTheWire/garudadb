@@ -162,7 +162,7 @@ fn build_writing_ivf_index(schema: &CollectionSchema, records: &[StoredRecord]) 
         .cloned()
         .expect("ivf index must be enabled");
     let config = ivf_index_config(schema, params);
-    let entries = ivf_build_entries(schema, records, live_doc_count(records));
+    let entries = ivf_build_entries(records, live_doc_count(records));
     WritingIvfIndex::from_entries_incremental(config, entries)
 }
 
@@ -229,7 +229,7 @@ fn load_ivf_index(
     let bytes = read_file(&segment_ivf_index_path(root, segment_id))?;
     let stored = crate::codec::decode_ivf_index(&bytes, &schema.vector)?;
     let config = ivf_index_config(schema, params);
-    let entries = ivf_build_entries(schema, records, meta.doc_count);
+    let entries = ivf_build_entries(records, meta.doc_count);
 
     if entries.len() != meta.doc_count {
         return Err(Status::err(
@@ -362,7 +362,6 @@ pub(crate) fn hnsw_build_entries(
 }
 
 pub(crate) fn ivf_build_entries(
-    schema: &CollectionSchema,
     records: &[StoredRecord],
     live_doc_count: usize,
 ) -> Vec<IvfBuildEntry> {
@@ -373,14 +372,7 @@ pub(crate) fn ivf_build_entries(
             continue;
         }
 
-        entries.push(
-            IvfBuildEntry::new(
-                schema.vector.dimension,
-                record.doc_id,
-                record.doc.vector.clone(),
-            )
-            .expect("validated segment records should match the vector field dimension"),
-        );
+        entries.push(IvfBuildEntry::new(record.doc_id, record.doc.vector.clone()));
     }
 
     entries
@@ -422,7 +414,7 @@ fn build_ivf_index(
     let params = schema.vector.indexes.ivf_params().cloned()?;
     Some(IvfIndex::build(
         ivf_index_config(schema, params),
-        ivf_build_entries(schema, records, meta.doc_count),
+        ivf_build_entries(records, meta.doc_count),
     ))
 }
 

@@ -1,7 +1,7 @@
 use crate::doc_codec::{read_doc, write_doc};
 use crate::{RecordState, StoredRecord};
 use garuda_index_flat::{FlatIndex, FlatIndexEntry};
-use garuda_index_ivf::IvfStoredLists;
+use garuda_index_ivf::{IvfCentroids, IvfStoredLists};
 use garuda_index_scalar::{ScalarIndex, ScalarIndexData};
 use garuda_storage::{BinaryReader, BinaryWriter, read_segment_meta, write_segment_meta};
 use garuda_types::{
@@ -144,7 +144,7 @@ pub fn encode_ivf_index(
     writer.write_u64(params.training_iterations.get() as u64);
     writer.write_len(lists.centroids.len())?;
 
-    for centroid in &lists.centroids {
+    for centroid in lists.centroids.iter() {
         writer.write_len(centroid.len())?;
 
         for value in centroid.as_slice() {
@@ -242,7 +242,7 @@ pub fn decode_ivf_index(
 
     reader.finish()?;
     Ok(IvfStoredLists {
-        centroids: centroids.into(),
+        centroids: IvfCentroids::new(centroids),
         doc_ids_by_list,
     })
 }
