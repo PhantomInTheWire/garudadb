@@ -249,6 +249,7 @@ impl IvfIndex {
         assert_entries_match_dimension(config.dimension, &entries);
 
         let trained = train_lists(&config, &entries);
+
         Self {
             config,
             state: IvfState::new(entries, trained.centroids, trained.list_entry_indexes),
@@ -459,7 +460,6 @@ fn train_lists(config: &IvfIndexConfig, entries: &[IvfBuildEntry]) -> TrainedLis
     let centroids = initialize_centroids(config, entries);
     let (centroids, assignments) = run_lloyd_iterations(config, entries, centroids);
     let list_entry_indexes = materialize_list_entry_indexes(config, entries, &assignments);
-
     TrainedLists { centroids, list_entry_indexes }
 }
 
@@ -508,7 +508,6 @@ fn materialize_list_entry_indexes(
 
     list_entry_indexes
 }
-
 fn nearest_centroid_index<'a>(
     metric: DistanceMetric,
     vector: &DenseVector,

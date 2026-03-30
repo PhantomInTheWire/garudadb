@@ -2,6 +2,11 @@ use crate::types::{
     IvfSegmentSearchRequest, PersistedSegment, RecordState, SegmentFilter, SegmentSearchHit,
     SegmentSearchRequest, StoredRecord, WritingSegment,
 };
+
+#[cfg(test)]
+#[path = "search_candidate_nprobe_tests.rs"]
+mod search_candidate_nprobe_tests;
+
 use garuda_index_flat::FlatSearchHit;
 use garuda_index_hnsw::HnswHit;
 use garuda_index_ivf::{IvfIndex, IvfSearchHit, WritingIvfIndex};
@@ -316,6 +321,15 @@ fn search_candidate_nprobe(
         return nprobe;
     }
 
-    let widened = (list_count as u32).max(nprobe.get());
+    if list_count <= candidate_top_k.get() {
+        return IvfProbeCount::new(list_count as u32).expect("small list count should fit nprobe");
+    }
+
+    let requested_nprobe = nprobe.get() as usize;
+    let candidate_multiplier = candidate_top_k.get().div_ceil(top_k.get());
+    let widened = requested_nprobe
+        .saturating_mul(candidate_multiplier)
+        .min(list_count) as u32;
+
     IvfProbeCount::new(widened).expect("candidate nprobe should stay valid")
 }
