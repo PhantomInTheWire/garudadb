@@ -152,7 +152,9 @@ fn reopened_read_only_collection_rejects_mutating_operations() {
     assert_eq!(insert_results[0].status.code, StatusCode::PermissionDenied);
     assert_eq!(insert_results[0].status.message, "collection is read-only");
 
-    let flush_status = reopened.flush().expect_err("flush should reject read-only collections");
+    let flush_status = reopened
+        .flush()
+        .expect_err("flush should reject read-only collections");
     assert_eq!(flush_status.code, StatusCode::PermissionDenied);
     assert_eq!(flush_status.message, "collection is read-only");
 
@@ -161,6 +163,45 @@ fn reopened_read_only_collection_rejects_mutating_operations() {
         .expect_err("delete_by_filter should reject read-only collections");
     assert_eq!(delete_status.code, StatusCode::PermissionDenied);
     assert_eq!(delete_status.message, "collection is read-only");
+}
+
+#[test]
+fn read_only_collection_reopen_should_fail_when_pending_wal_exists() {
+    let (root, db) = database("create-open-read-only-pending-wal");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create base collection");
+
+    let inserted = collection.insert(vec![common::build_doc(
+        "doc-1",
+        1,
+        "alpha",
+        0.9,
+        [1.0, 0.0, 0.0, 0.0],
+    )]);
+    assert!(inserted[0].status.is_ok());
+    drop(collection);
+
+    let collection_path = root.join("docs");
+    let mut manifest = VersionManager::new(&collection_path)
+        .read_latest_manifest()
+        .expect("read manifest");
+    manifest.options.access_mode = garuda_types::AccessMode::ReadOnly;
+    VersionManager::new(&collection_path)
+        .write_manifest(&manifest)
+        .expect("write read-only manifest");
+
+    let reopened = db.open_collection(&collection_name("docs"));
+    match reopened {
+        Ok(_) => panic!("read-only reopen should reject pending WAL ops"),
+        Err(status) => {
+            assert_eq!(status.code, StatusCode::FailedPrecondition);
+            assert_eq!(
+                status.message,
+                "read-only collection cannot reopen with pending WAL operations"
+            );
+        }
+    }
 }
 
 fn schema_with_vector_name(name: &str, vector_name: &str) -> CollectionSchema {
