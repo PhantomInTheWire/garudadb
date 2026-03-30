@@ -10,8 +10,8 @@ use garuda_storage::{
     VersionManager, WRITING_SEGMENT_ID, read_delete_snapshot, read_id_map_snapshot,
 };
 use garuda_types::{
-    CollectionOptions, CollectionSchema, InternalDocId, Manifest, ManifestVersionId, SegmentId,
-    SnapshotId, Status,
+    AccessMode, CollectionOptions, CollectionSchema, InternalDocId, Manifest, ManifestVersionId,
+    SegmentId, SnapshotId, Status, StatusCode,
 };
 use std::path::{Path, PathBuf};
 
@@ -63,6 +63,12 @@ pub(crate) fn load_collection_state(path: PathBuf) -> Result<CollectionRuntime, 
     };
 
     let wal_ops = read_wal_ops(&state.path, WRITING_SEGMENT_ID)?;
+    if matches!(state.options.access_mode, AccessMode::ReadOnly) && !wal_ops.is_empty() {
+        return Err(Status::err(
+            StatusCode::FailedPrecondition,
+            "read-only collection cannot reopen with pending WAL operations",
+        ));
+    }
     replay_wal_ops(&mut state, wal_ops)?;
 
     Ok(state)
