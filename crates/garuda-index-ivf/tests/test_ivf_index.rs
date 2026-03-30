@@ -42,6 +42,27 @@ fn vector(values: [f32; 2]) -> DenseVector {
     DenseVector::parse(values.to_vec()).expect("vector")
 }
 
+fn stored_list_sse(index: &IvfIndex, values_by_doc_id: &[(u64, f32)]) -> f32 {
+    let lists = index.stored_lists();
+    let values_by_doc_id = values_by_doc_id
+        .iter()
+        .map(|(doc_id, value)| (InternalDocId::new(*doc_id).expect("doc id"), *value))
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut sse = 0.0;
+
+    for (centroid, doc_ids) in lists.centroids.iter().zip(lists.doc_ids_by_list.iter()) {
+        let centroid_value = centroid.as_slice()[0];
+
+        for doc_id in doc_ids {
+            let value = values_by_doc_id[doc_id];
+            let delta = value - centroid_value;
+            sse += delta * delta;
+        }
+    }
+
+    sse
+}
+
 #[test]
 fn search_rejects_dimension_mismatch() {
     let index = IvfIndex::build(config(), vec![entry(1, [0.0, 0.0]), entry(2, [10.0, 10.0])]);
@@ -111,6 +132,22 @@ fn build_should_use_deterministic_farthest_initializer() {
     assert_eq!(lists.doc_ids_by_list.len(), 2);
     assert_eq!(lists.doc_ids_by_list[0].len(), 2);
     assert_eq!(lists.doc_ids_by_list[1].len(), 2);
+}
+
+#[test]
+fn mean_anchored_initializer_should_improve_first_entry_anchor_fixture() {
+    let entries = vec![
+        entry(1, [1.0, 0.0]),
+        entry(2, [0.0, 0.0]),
+        entry(3, [2.0, 0.0]),
+        entry(4, [3.0, 0.0]),
+    ];
+    let index = IvfIndex::build(config(), entries.as_slice().to_vec());
+
+    assert_eq!(
+        stored_list_sse(&index, &[(1, 1.0), (2, 0.0), (3, 2.0), (4, 3.0)]),
+        1.0
+    );
 }
 
 #[test]

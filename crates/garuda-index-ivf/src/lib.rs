@@ -51,7 +51,7 @@ impl IvfCentroids {
 
     fn initialize(metric: DistanceMetric, entries: &[IvfBuildEntry], list_count: usize) -> Self {
         let mut centroid_indexes = Vec::with_capacity(list_count);
-        centroid_indexes.push(0);
+        centroid_indexes.push(Self::initial_centroid_index(metric, entries));
 
         while centroid_indexes.len() < list_count {
             let next = Self::next_centroid_index(metric, entries, &centroid_indexes);
@@ -65,6 +65,28 @@ impl IvfCentroids {
         }
 
         Self::new(centroids)
+    }
+
+    fn initial_centroid_index(metric: DistanceMetric, entries: &[IvfBuildEntry]) -> usize {
+        let mut sums = vec![0.0; entries[0].vector.len()];
+
+        for entry in entries {
+            add_to_sums(&mut sums, entry.vector.as_slice());
+        }
+
+        let mean = centroid_from_sums(&mut sums, entries.len());
+        let mut best_index = 0usize;
+        let mut best_score = score_doc(metric, entries[0].vector.as_slice(), mean.as_slice());
+
+        for (entry_index, entry) in entries.iter().enumerate().skip(1) {
+            let score = score_doc(metric, entry.vector.as_slice(), mean.as_slice());
+            if score < best_score {
+                best_index = entry_index;
+                best_score = score;
+            }
+        }
+
+        best_index
     }
 
     fn assign_entries(&self, metric: DistanceMetric, entries: &[IvfBuildEntry]) -> Vec<usize> {
@@ -90,10 +112,7 @@ impl IvfCentroids {
 
         for (entry, &list_index) in entries.iter().zip(assignments) {
             counts[list_index] += 1;
-
-            for (sum, value) in sums[list_index].iter_mut().zip(entry.vector.as_slice()) {
-                *sum += *value;
-            }
+            add_to_sums(&mut sums[list_index], entry.vector.as_slice());
         }
 
         let mut centroids = Vec::with_capacity(list_count);
@@ -437,25 +456,57 @@ fn train_lists(config: &IvfIndexConfig, entries: &[IvfBuildEntry]) -> TrainedLis
         };
     }
 
-    let list_count = config.list_count(entries.len());
-    let mut centroids = IvfCentroids::initialize(config.metric, entries, list_count);
+    let centroids = initialize_centroids(config, entries);
+    let (centroids, assignments) = run_lloyd_iterations(config, entries, centroids);
+    let list_entry_indexes = materialize_list_entry_indexes(config, entries, &assignments);
+
+    TrainedLists { centroids, list_entry_indexes }
+}
+
+fn initialize_centroids(config: &IvfIndexConfig, entries: &[IvfBuildEntry]) -> IvfCentroids {
+    IvfCentroids::initialize(config.metric, entries, config.list_count(entries.len()))
+}
+
+fn assign_entries(config: &IvfIndexConfig, entries: &[IvfBuildEntry], centroids: &IvfCentroids) -> Vec<usize> {
+    centroids.assign_entries(config.metric, entries)
+}
+
+fn recompute_centroids(
+    config: &IvfIndexConfig,
+    entries: &[IvfBuildEntry],
+    assignments: &[usize],
+    centroids: &IvfCentroids,
+) -> IvfCentroids {
+    centroids.recompute(config.dimension, entries, assignments)
+}
+
+fn run_lloyd_iterations(
+    config: &IvfIndexConfig,
+    entries: &[IvfBuildEntry],
+    mut centroids: IvfCentroids,
+) -> (IvfCentroids, Vec<usize>) {
     let mut assignments = vec![0usize; entries.len()];
 
     for _ in 0..config.params.training_iterations.get() {
-        assignments = centroids.assign_entries(config.metric, entries);
-        centroids = centroids.recompute(config.dimension, entries, &assignments);
+        assignments = assign_entries(config, entries, &centroids);
+        centroids = recompute_centroids(config, entries, &assignments, &centroids);
     }
 
-    let mut list_entry_indexes = vec![Vec::new(); list_count];
+    (centroids, assignments)
+}
+
+fn materialize_list_entry_indexes(
+    config: &IvfIndexConfig,
+    entries: &[IvfBuildEntry],
+    assignments: &[usize],
+) -> Vec<Vec<IvfEntryIndex>> {
+    let mut list_entry_indexes = vec![Vec::new(); config.list_count(entries.len())];
 
     for (entry_index, &list_index) in assignments.iter().enumerate() {
         list_entry_indexes[list_index].push(IvfEntryIndex::new(entry_index));
     }
 
-    TrainedLists {
-        centroids,
-        list_entry_indexes,
-    }
+    list_entry_indexes
 }
 
 fn nearest_centroid_index<'a>(
@@ -486,15 +537,16 @@ fn centroid_for_list(
     let mut sums = vec![0.0; dimension.get()];
 
     for &entry_index in entry_indexes {
-        for (sum, value) in sums
-            .iter_mut()
-            .zip(entries[entry_index.get()].vector.as_slice())
-        {
-            *sum += *value;
-        }
+        add_to_sums(&mut sums, entries[entry_index.get()].vector.as_slice());
     }
 
     centroid_from_sums(&mut sums, entry_indexes.len())
+}
+
+fn add_to_sums(sums: &mut [f32], values: &[f32]) {
+    sums.iter_mut()
+        .zip(values)
+        .for_each(|(sum, value)| *sum += *value);
 }
 
 fn centroid_from_sums(sums: &mut [f32], count: usize) -> DenseVector {
