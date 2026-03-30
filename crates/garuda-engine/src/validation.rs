@@ -55,15 +55,7 @@ pub(crate) fn validate_scalar_value(
         ));
     }
 
-    let valid = matches!(
-        (expected, value),
-        (ScalarType::Bool, ScalarValue::Bool(_))
-            | (ScalarType::Int64, ScalarValue::Int64(_))
-            | (ScalarType::Float64, ScalarValue::Float64(_))
-            | (ScalarType::String, ScalarValue::String(_))
-    );
-
-    if valid {
+    if scalar_value_matches_type(expected, value) {
         return Ok(());
     }
 
@@ -71,6 +63,16 @@ pub(crate) fn validate_scalar_value(
         StatusCode::InvalidArgument,
         "scalar field type does not match schema",
     ))
+}
+
+pub(crate) fn scalar_value_matches_type(expected: ScalarType, value: &ScalarValue) -> bool {
+    matches!(
+        (expected, value),
+        (ScalarType::Bool, ScalarValue::Bool(_))
+            | (ScalarType::Int64, ScalarValue::Int64(_))
+            | (ScalarType::Float64, ScalarValue::Float64(_))
+            | (ScalarType::String, ScalarValue::String(_))
+    )
 }
 
 fn validate_required_vector(

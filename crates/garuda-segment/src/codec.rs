@@ -67,11 +67,7 @@ pub fn encode_flat_index(
 
     for entry in entries {
         writer.write_u64(entry.doc_id.get());
-        writer.write_len(entry.vector.len())?;
-
-        for value in entry.vector.as_slice() {
-            writer.write_f32(*value);
-        }
+        writer.write_f32_slice(entry.vector.as_slice())?;
     }
 
     Ok(writer.finish())
@@ -112,14 +108,10 @@ pub fn decode_flat_index(
 
     for _ in 0..entry_count {
         let doc_id = InternalDocId::new(reader.read_u64()?)?;
-        let vector_len = reader.read_len()?;
-        let mut vector = Vec::with_capacity(vector_len);
-
-        for _ in 0..vector_len {
-            vector.push(reader.read_f32()?);
-        }
-
-        entries.push(FlatIndexEntry::new(doc_id, DenseVector::parse(vector)?));
+        entries.push(FlatIndexEntry::new(
+            doc_id,
+            DenseVector::parse(reader.read_f32_vec()?)?,
+        ));
     }
 
     reader.finish()?;
@@ -145,21 +137,13 @@ pub fn encode_ivf_index(
     writer.write_len(lists.centroids.len())?;
 
     for centroid in lists.centroids.iter() {
-        writer.write_len(centroid.len())?;
-
-        for value in centroid.as_slice() {
-            writer.write_f32(*value);
-        }
+        writer.write_f32_slice(centroid.as_slice())?;
     }
 
     writer.write_len(lists.doc_ids_by_list.len())?;
 
     for doc_ids in lists.doc_ids_by_list {
-        writer.write_len(doc_ids.len())?;
-
-        for doc_id in doc_ids {
-            writer.write_u64(doc_id.get());
-        }
+        writer.write_internal_doc_ids(&doc_ids)?;
     }
 
     Ok(writer.finish())
@@ -216,28 +200,14 @@ pub fn decode_ivf_index(
     let mut centroids = Vec::with_capacity(centroid_count);
 
     for _ in 0..centroid_count {
-        let vector_len = reader.read_len()?;
-        let mut vector = Vec::with_capacity(vector_len);
-
-        for _ in 0..vector_len {
-            vector.push(reader.read_f32()?);
-        }
-
-        centroids.push(DenseVector::parse(vector)?);
+        centroids.push(DenseVector::parse(reader.read_f32_vec()?)?);
     }
 
     let list_count = reader.read_len()?;
     let mut doc_ids_by_list = Vec::with_capacity(list_count);
 
     for _ in 0..list_count {
-        let doc_count = reader.read_len()?;
-        let mut doc_ids = Vec::with_capacity(doc_count);
-
-        for _ in 0..doc_count {
-            doc_ids.push(InternalDocId::new(reader.read_u64()?)?);
-        }
-
-        doc_ids_by_list.push(doc_ids);
+        doc_ids_by_list.push(reader.read_internal_doc_ids()?);
     }
 
     reader.finish()?;
@@ -342,15 +312,8 @@ pub fn encode_scalar_index(index: &ScalarIndex, entry_count: usize) -> Result<Ve
             true_doc_ids,
         } => {
             writer.write_u8(0);
-            writer.write_len(false_doc_ids.len())?;
-            for doc_id in false_doc_ids {
-                writer.write_u64(doc_id.get());
-            }
-
-            writer.write_len(true_doc_ids.len())?;
-            for doc_id in true_doc_ids {
-                writer.write_u64(doc_id.get());
-            }
+            writer.write_internal_doc_ids(&false_doc_ids)?;
+            writer.write_internal_doc_ids(&true_doc_ids)?;
         }
         ScalarIndexData::Int64(postings) => {
             writer.write_u8(1);
@@ -358,7 +321,7 @@ pub fn encode_scalar_index(index: &ScalarIndex, entry_count: usize) -> Result<Ve
 
             for (value, doc_ids) in postings {
                 writer.write_i64(value);
-                write_posting_list(&mut writer, &doc_ids)?;
+                writer.write_internal_doc_ids(&doc_ids)?;
             }
         }
         ScalarIndexData::Float64(postings) => {
@@ -367,7 +330,7 @@ pub fn encode_scalar_index(index: &ScalarIndex, entry_count: usize) -> Result<Ve
 
             for (value, doc_ids) in postings {
                 writer.write_f64(value);
-                write_posting_list(&mut writer, &doc_ids)?;
+                writer.write_internal_doc_ids(&doc_ids)?;
             }
         }
         ScalarIndexData::String(postings) => {
@@ -376,7 +339,7 @@ pub fn encode_scalar_index(index: &ScalarIndex, entry_count: usize) -> Result<Ve
 
             for (value, doc_ids) in postings {
                 writer.write_string(&value)?;
-                write_posting_list(&mut writer, &doc_ids)?;
+                writer.write_internal_doc_ids(&doc_ids)?;
             }
         }
     }
@@ -401,12 +364,21 @@ pub fn decode_scalar_index(
 
     let index = match reader.read_u8()? {
         0 => ScalarIndex::from_data(ScalarIndexData::Bool {
-            false_doc_ids: read_posting_list(&mut reader)?,
-            true_doc_ids: read_posting_list(&mut reader)?,
+            false_doc_ids: reader.read_internal_doc_ids()?,
+            true_doc_ids: reader.read_internal_doc_ids()?,
         }),
-        1 => ScalarIndex::from_data(ScalarIndexData::Int64(read_i64_postings(&mut reader)?)),
-        2 => ScalarIndex::from_data(ScalarIndexData::Float64(read_f64_postings(&mut reader)?)),
-        3 => ScalarIndex::from_data(ScalarIndexData::String(read_string_postings(&mut reader)?)),
+        1 => ScalarIndex::from_data(ScalarIndexData::Int64(read_postings(
+            &mut reader,
+            |reader| reader.read_i64(),
+        )?)),
+        2 => ScalarIndex::from_data(ScalarIndexData::Float64(read_postings(
+            &mut reader,
+            |reader| reader.read_f64(),
+        )?)),
+        3 => ScalarIndex::from_data(ScalarIndexData::String(read_postings(
+            &mut reader,
+            |reader| reader.read_string(),
+        )?)),
         _ => {
             return Err(Status::err(
                 StatusCode::Internal,
@@ -428,54 +400,16 @@ pub fn decode_scalar_index(
     ))
 }
 
-fn write_posting_list(writer: &mut BinaryWriter, doc_ids: &[InternalDocId]) -> Result<(), Status> {
-    writer.write_len(doc_ids.len())?;
-
-    for doc_id in doc_ids {
-        writer.write_u64(doc_id.get());
-    }
-
-    Ok(())
-}
-
-fn read_posting_list(reader: &mut BinaryReader<'_>) -> Result<Vec<InternalDocId>, Status> {
+fn read_postings<T>(
+    reader: &mut BinaryReader<'_>,
+    mut read_value: impl FnMut(&mut BinaryReader<'_>) -> Result<T, Status>,
+) -> Result<Vec<(T, Vec<InternalDocId>)>, Status> {
     let posting_count = reader.read_len()?;
-    let mut doc_ids = Vec::with_capacity(posting_count);
+    let mut postings = Vec::with_capacity(posting_count);
 
     for _ in 0..posting_count {
-        doc_ids.push(InternalDocId::new(reader.read_u64()?)?);
+        postings.push((read_value(reader)?, reader.read_internal_doc_ids()?));
     }
 
-    Ok(doc_ids)
-}
-
-macro_rules! read_postings {
-    ($reader:expr, $read_value:ident) => {{
-        let posting_count = $reader.read_len()?;
-        let mut postings = Vec::with_capacity(posting_count);
-
-        for _ in 0..posting_count {
-            postings.push(($reader.$read_value()?, read_posting_list($reader)?));
-        }
-
-        Ok(postings)
-    }};
-}
-
-fn read_i64_postings(
-    reader: &mut BinaryReader<'_>,
-) -> Result<Vec<(i64, Vec<InternalDocId>)>, Status> {
-    read_postings!(reader, read_i64)
-}
-
-fn read_f64_postings(
-    reader: &mut BinaryReader<'_>,
-) -> Result<Vec<(f64, Vec<InternalDocId>)>, Status> {
-    read_postings!(reader, read_f64)
-}
-
-fn read_string_postings(
-    reader: &mut BinaryReader<'_>,
-) -> Result<Vec<(String, Vec<InternalDocId>)>, Status> {
-    read_postings!(reader, read_string)
+    Ok(postings)
 }
