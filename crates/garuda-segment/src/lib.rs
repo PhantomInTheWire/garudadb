@@ -1,3 +1,5 @@
+//! Segment persistence, WAL handling, and search entry points.
+
 mod codec;
 mod doc_codec;
 mod index;

@@ -1,3 +1,5 @@
+//! Scalar index implementations used for prefiltering and predicate matching.
+
 use garuda_types::{
     FieldName, InternalDocId, ScalarCompareOp, ScalarPredicate, ScalarPrefilter, ScalarType,
     ScalarValue,

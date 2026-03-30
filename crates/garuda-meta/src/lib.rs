@@ -1,3 +1,5 @@
+//! Metadata stores for document IDs, deletions, and scalar fields.
+
 use garuda_types::{DocId, FilterExpr, InternalDocId, ScalarValue, StringMatchExpr};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};

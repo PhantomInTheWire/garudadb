@@ -1,3 +1,5 @@
+//! Vector scoring helpers shared by the indexing crates.
+
 use garuda_types::DistanceMetric;
 
 mod simd;

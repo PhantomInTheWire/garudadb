@@ -119,6 +119,46 @@ fn reopen_rejects_invalid_schema_in_persisted_manifest() {
     }
 }
 
+#[test]
+fn reopened_read_only_collection_rejects_mutating_operations() {
+    let (root, db) = database("create-open-read-only-enforced");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create base collection");
+    collection.flush().expect("flush");
+    drop(collection);
+
+    let collection_path = root.join("docs");
+    let mut manifest = VersionManager::new(&collection_path)
+        .read_latest_manifest()
+        .expect("read manifest");
+    manifest.options.access_mode = garuda_types::AccessMode::ReadOnly;
+    VersionManager::new(&collection_path)
+        .write_manifest(&manifest)
+        .expect("write read-only manifest");
+
+    let reopened = db
+        .open_collection(&collection_name("docs"))
+        .expect("reopen read-only collection");
+
+    let insert_results = reopened.insert(vec![common::build_doc(
+        "doc-1",
+        1,
+        "alpha",
+        0.9,
+        [1.0, 0.0, 0.0, 0.0],
+    )]);
+    assert_eq!(insert_results.len(), 1);
+    assert_eq!(insert_results[0].status.code, StatusCode::PermissionDenied);
+    assert_eq!(insert_results[0].status.message, "collection is read-only");
+
+    let delete_status = reopened
+        .delete_by_filter("category = 'alpha'")
+        .expect_err("delete_by_filter should reject read-only collections");
+    assert_eq!(delete_status.code, StatusCode::PermissionDenied);
+    assert_eq!(delete_status.message, "collection is read-only");
+}
+
 fn schema_with_vector_name(name: &str, vector_name: &str) -> CollectionSchema {
     let mut schema = default_schema(name);
     schema.vector.name = common::field_name(vector_name);
