@@ -1,3 +1,5 @@
+//! Low-level storage codecs, file layout helpers, and snapshot utilities.
+
 mod binary_codec;
 mod codec;
 mod io;

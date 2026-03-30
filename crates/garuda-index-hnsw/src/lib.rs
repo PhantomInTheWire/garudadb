@@ -1,3 +1,5 @@
+//! HNSW index construction and approximate nearest-neighbor search.
+
 use garuda_math::score_doc;
 use garuda_types::{
     DenseVector, DistanceMetric, HNSW_MAX_GRAPH_LEVEL, HnswEfConstruction, HnswEfSearch, HnswGraph,

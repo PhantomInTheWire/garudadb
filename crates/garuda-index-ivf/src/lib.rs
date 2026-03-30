@@ -1,3 +1,5 @@
+//! IVF index construction, centroid assignment, and list search.
+
 use garuda_math::score_doc;
 use garuda_types::{
     DenseVector, DistanceMetric, InternalDocId, IvfIndexParams, IvfProbeCount, Status, StatusCode,

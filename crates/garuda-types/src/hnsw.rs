@@ -1,3 +1,5 @@
+//! Strongly typed HNSW configuration and persisted graph metadata.
+
 use crate::{Status, StatusCode};
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
@@ -6,10 +8,12 @@ use std::num::NonZeroU32;
 pub struct NodeIndex(usize);
 
 impl NodeIndex {
+    #[must_use]
     pub fn new(value: usize) -> Self {
         Self(value)
     }
 
+    #[must_use]
     pub fn get(self) -> usize {
         self.0
     }
@@ -19,10 +23,12 @@ impl NodeIndex {
 pub struct HnswLevel(usize);
 
 impl HnswLevel {
+    #[must_use]
     pub fn new(value: usize) -> Self {
         Self(value)
     }
 
+    #[must_use]
     pub fn get(self) -> usize {
         self.0
     }
@@ -46,6 +52,12 @@ macro_rules! hnsw_non_zero_u32_newtype {
         pub struct $name(NonZeroU32);
 
         impl $name {
+            /// Creates a validated non-zero HNSW parameter.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`StatusCode::InvalidArgument`] when `value` is zero or
+            /// violates the type-specific validation rules.
             pub fn new(value: u32) -> Result<Self, Status> {
                 let value = NonZeroU32::new(value).ok_or_else(|| {
                     Status::err(StatusCode::InvalidArgument, $invalid_message)
@@ -58,6 +70,12 @@ macro_rules! hnsw_non_zero_u32_newtype {
                 Ok(Self(value))
             }
 
+            /// Restores a persisted HNSW parameter from an on-disk `u64`.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`StatusCode::Internal`] when the persisted value does
+            /// not fit in `u32` or violates the type's invariants.
             pub fn from_persisted_u64(value: u64) -> Result<Self, Status> {
                 let value = u32::try_from(value).map_err(|_| {
                     Status::err(StatusCode::Internal, $persisted_overflow_message)
@@ -67,6 +85,7 @@ macro_rules! hnsw_non_zero_u32_newtype {
                     .map_err(|_| Status::err(StatusCode::Internal, $persisted_invalid_message))
             }
 
+            #[must_use]
             pub fn get(self) -> u32 {
                 self.0.get()
             }
@@ -87,6 +106,7 @@ pub struct HnswNeighborLimits {
 }
 
 impl HnswNeighborLimits {
+    #[must_use]
     pub fn new(max_neighbors: HnswM) -> Self {
         let upper_levels = max_neighbors.get() as usize;
 
@@ -153,6 +173,12 @@ pub struct HnswNeighborConfig {
 }
 
 impl HnswNeighborConfig {
+    /// Builds validated neighbor limits for an HNSW graph.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StatusCode::InvalidArgument`] when
+    /// `min_neighbor_count > max_neighbors`.
     pub fn new(
         max_neighbors: HnswM,
         min_neighbor_count: HnswMinNeighborCount,
@@ -170,10 +196,12 @@ impl HnswNeighborConfig {
         })
     }
 
+    #[must_use]
     pub fn max_neighbors(self) -> HnswM {
         self.max_neighbors
     }
 
+    #[must_use]
     pub fn min_neighbor_count(self) -> HnswMinNeighborCount {
         self.min_neighbor_count
     }
@@ -206,26 +234,42 @@ pub struct HnswIndexParams {
 impl Default for HnswIndexParams {
     fn default() -> Self {
         Self {
-            max_neighbors: HnswM::new(16).expect("default hnsw max_neighbors should be valid"),
-            scaling_factor: HnswScalingFactor::new(50)
-                .expect("default hnsw scaling_factor should be valid"),
-            ef_construction: HnswEfConstruction::new(200)
-                .expect("default hnsw ef_construction should be valid"),
-            prune_width: HnswPruneWidth::new(16).expect("default hnsw prune_width should be valid"),
-            min_neighbor_count: HnswMinNeighborCount::new(8)
-                .expect("default hnsw min_neighbor_count should be valid"),
-            ef_search: HnswEfSearch::new(64).expect("default hnsw ef_search should be valid"),
+            max_neighbors: default_hnsw_param(16, HnswM::new, "default hnsw max_neighbors"),
+            scaling_factor: default_hnsw_param(
+                50,
+                HnswScalingFactor::new,
+                "default hnsw scaling_factor",
+            ),
+            ef_construction: default_hnsw_param(
+                200,
+                HnswEfConstruction::new,
+                "default hnsw ef_construction",
+            ),
+            prune_width: default_hnsw_param(16, HnswPruneWidth::new, "default hnsw prune_width"),
+            min_neighbor_count: default_hnsw_param(
+                8,
+                HnswMinNeighborCount::new,
+                "default hnsw min_neighbor_count",
+            ),
+            ef_search: default_hnsw_param(64, HnswEfSearch::new, "default hnsw ef_search"),
         }
     }
 }
 
 impl HnswIndexParams {
+    /// Derives the neighbor configuration used by graph construction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StatusCode::InvalidArgument`] when the configured minimum
+    /// neighbor count exceeds `max_neighbors`.
     pub fn neighbor_config(&self) -> Result<HnswNeighborConfig, Status> {
         HnswNeighborConfig::new(self.max_neighbors, self.min_neighbor_count)
     }
 }
 
 impl HnswGraph {
+    #[must_use]
     pub fn new(node_levels: Vec<HnswLevel>) -> Self {
         let level_count = node_levels
             .iter()
@@ -240,6 +284,13 @@ impl HnswGraph {
         }
     }
 
+    /// Rebuilds a persisted graph after validating its shape.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StatusCode::Internal`] when the persisted node levels,
+    /// adjacency lists, or neighbor counts are inconsistent with the provided
+    /// metadata.
     pub fn from_parts(
         node_levels: Vec<HnswLevel>,
         levels: Vec<HnswLevelAdjacency>,
@@ -254,6 +305,7 @@ impl HnswGraph {
         Ok(graph)
     }
 
+    #[must_use]
     pub fn node_count(&self) -> usize {
         self.node_levels.len()
     }
@@ -271,7 +323,7 @@ impl HnswGraph {
             .iter()
             .copied()
             .max()
-            .expect("hnsw graph max node level")
+            .unwrap_or_else(|| unreachable!("validated hnsw graph always contains a node"))
     }
 
     pub fn max_level(&self) -> HnswLevel {
@@ -419,4 +471,17 @@ impl HnswGraph {
 
         Ok(())
     }
+}
+
+fn default_hnsw_param<T>(
+    value: u32,
+    build: impl Fn(u32) -> Result<T, Status>,
+    parameter_name: &'static str,
+) -> T {
+    build(value).unwrap_or_else(|status| {
+        panic!(
+            "{parameter_name} should always be valid, but got {} ({:?})",
+            status.message, status.code
+        )
+    })
 }

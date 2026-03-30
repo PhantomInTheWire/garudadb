@@ -1,3 +1,5 @@
+//! Shared domain types used across Garuda's engine, storage, and index crates.
+
 mod hnsw;
 mod ids;
 mod ivf;

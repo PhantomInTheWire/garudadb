@@ -1,3 +1,5 @@
+//! Engine APIs for opening collections, applying writes, and executing queries.
+
 mod checkpoint_service;
 mod filter;
 mod filter_parser;
@@ -37,8 +39,9 @@ use validation::validate_field_default;
 use write_service::{WriteCommand, apply_delete_by_filter, apply_write_command};
 
 use garuda_types::{
-    CollectionName, CollectionOptions, CollectionSchema, CollectionStats, Doc, DocId, FieldName,
-    IndexKind, IndexParams, OptimizeOptions, ScalarFieldSchema, Status, VectorQuery, WriteResult,
+    AccessMode, CollectionName, CollectionOptions, CollectionSchema, CollectionStats, Doc, DocId,
+    FieldName, IndexKind, IndexParams, OptimizeOptions, ScalarFieldSchema, Status, StatusCode,
+    VectorQuery, WriteResult,
 };
 
 #[derive(Clone)]
@@ -213,6 +216,7 @@ impl Collection {
 
     pub fn delete_by_filter(&self, raw_filter: &str) -> Result<(), Status> {
         let mut state = self.write_state();
+        ensure_collection_is_writable(&state)?;
         apply_delete_by_filter(&mut state, raw_filter)
     }
 
@@ -244,7 +248,10 @@ impl Collection {
         &self,
         mutate: impl FnOnce(&mut CollectionRuntime) -> Result<(), Status>,
     ) -> Result<(), Status> {
-        self.with_checkpoint(mutate)
+        self.with_checkpoint(|state| {
+            ensure_collection_is_writable(state)?;
+            mutate(state)
+        })
     }
 
     fn with_checkpoint(
@@ -265,6 +272,10 @@ impl Collection {
 
     fn apply_write_command(&self, command: WriteCommand) -> Vec<WriteResult> {
         let mut state = self.write_state();
+        if let Err(status) = ensure_collection_is_writable(&state) {
+            return write_results_for_denied_command(command, status);
+        }
+
         apply_write_command(&mut state, command)
     }
 
@@ -279,6 +290,30 @@ impl Collection {
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
+}
+
+fn ensure_collection_is_writable(state: &CollectionRuntime) -> Result<(), Status> {
+    if matches!(state.options.access_mode, AccessMode::ReadOnly) {
+        return Err(Status::err(
+            StatusCode::PermissionDenied,
+            "collection is read-only",
+        ));
+    }
+
+    Ok(())
+}
+
+fn write_results_for_denied_command(command: WriteCommand, status: Status) -> Vec<WriteResult> {
+    let ids = match command {
+        WriteCommand::Insert(docs) | WriteCommand::Upsert(docs) | WriteCommand::Update(docs) => {
+            docs.into_iter().map(|doc| doc.id).collect()
+        }
+        WriteCommand::Delete(ids) => ids,
+    };
+
+    ids.into_iter()
+        .map(|id| WriteResult::err(id, status.code.clone(), status.message.clone()))
+        .collect()
 }
 
 fn fetch_doc(state: &CollectionRuntime, id: &DocId) -> Option<Doc> {

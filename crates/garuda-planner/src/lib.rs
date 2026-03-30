@@ -1,3 +1,5 @@
+//! Query planning helpers that map user requests to segment execution plans.
+
 use garuda_types::{
     CollectionSchema, FieldName, FilterExpr, HnswEfSearch, IndexKind, IvfProbeCount,
     QueryVectorSource, ScalarCompareOp, ScalarFieldSchema, ScalarPredicate, ScalarPrefilter,

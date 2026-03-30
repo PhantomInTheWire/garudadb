@@ -1,3 +1,5 @@
+//! Flat vector indexing and exhaustive search primitives.
+
 use garuda_math::score_doc;
 use garuda_types::{
     DenseVector, DistanceMetric, InternalDocId, Status, StatusCode, TopK, VectorDimension,

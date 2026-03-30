@@ -7,6 +7,7 @@ pub enum StatusCode {
     InvalidArgument,
     NotFound,
     AlreadyExists,
+    PermissionDenied,
     FailedPrecondition,
     Internal,
 }
