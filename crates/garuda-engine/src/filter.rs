@@ -1,3 +1,4 @@
+use crate::validation::scalar_value_matches_type;
 use garuda_types::{
     CollectionSchema, FilterExpr, ScalarFieldSchema, ScalarType, ScalarValue, Status, StatusCode,
 };
@@ -51,15 +52,7 @@ fn validate_string_field(field_schema: &ScalarFieldSchema) -> Result<(), Status>
 }
 
 fn validate_filter_value(expected_type: ScalarType, value: &ScalarValue) -> Result<(), Status> {
-    let valid = matches!(
-        (expected_type, value),
-        (ScalarType::Bool, ScalarValue::Bool(_))
-            | (ScalarType::Int64, ScalarValue::Int64(_))
-            | (ScalarType::Float64, ScalarValue::Float64(_))
-            | (ScalarType::String, ScalarValue::String(_))
-    );
-
-    if valid {
+    if scalar_value_matches_type(expected_type, value) {
         return Ok(());
     }
 

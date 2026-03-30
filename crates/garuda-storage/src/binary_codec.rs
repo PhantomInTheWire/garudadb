@@ -84,6 +84,22 @@ impl BinaryWriter {
             None => self.write_bool(false),
         }
     }
+
+    pub fn write_f32_slice(&mut self, values: &[f32]) -> Result<(), Status> {
+        self.write_len(values.len())?;
+        for &value in values {
+            self.write_f32(value);
+        }
+        Ok(())
+    }
+
+    pub fn write_internal_doc_ids(&mut self, doc_ids: &[InternalDocId]) -> Result<(), Status> {
+        self.write_len(doc_ids.len())?;
+        for doc_id in doc_ids {
+            self.write_u64(doc_id.get());
+        }
+        Ok(())
+    }
 }
 
 pub struct BinaryReader<'a> {
@@ -224,6 +240,24 @@ impl<'a> BinaryReader<'a> {
         }
 
         Ok(Some(self.read_f32()?))
+    }
+
+    pub fn read_f32_vec(&mut self) -> Result<Vec<f32>, Status> {
+        let len = self.read_len()?;
+        let mut values = Vec::with_capacity(len);
+        for _ in 0..len {
+            values.push(self.read_f32()?);
+        }
+        Ok(values)
+    }
+
+    pub fn read_internal_doc_ids(&mut self) -> Result<Vec<InternalDocId>, Status> {
+        let len = self.read_len()?;
+        let mut doc_ids = Vec::with_capacity(len);
+        for _ in 0..len {
+            doc_ids.push(InternalDocId::new(self.read_u64()?)?);
+        }
+        Ok(doc_ids)
     }
 
     fn read_exact(&mut self, len: usize) -> Result<&'a [u8], Status> {

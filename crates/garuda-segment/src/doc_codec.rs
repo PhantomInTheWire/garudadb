@@ -28,11 +28,7 @@ pub(crate) fn write_doc(writer: &mut BinaryWriter, doc: &Doc) -> Result<(), Stat
         write_scalar_value(writer, value)?;
     }
 
-    writer.write_len(doc.vector.len())?;
-    for value in doc.vector.as_slice() {
-        writer.write_f32(*value);
-    }
-
+    writer.write_f32_slice(doc.vector.as_slice())?;
     writer.write_optional_f32(doc.score);
     Ok(())
 }
@@ -46,19 +42,13 @@ pub(crate) fn read_doc(reader: &mut BinaryReader<'_>) -> Result<Doc, Status> {
         fields.insert(reader.read_string()?, read_scalar_value(reader)?);
     }
 
-    let vector_len = reader.read_len()?;
-    let mut vector = Vec::with_capacity(vector_len);
-
-    for _ in 0..vector_len {
-        vector.push(reader.read_f32()?);
-    }
-
+    let vector = DenseVector::parse(reader.read_f32_vec()?)?;
     let score = reader.read_optional_f32()?;
 
     Ok(Doc {
         id,
         fields,
-        vector: DenseVector::parse(vector)?,
+        vector,
         score,
     })
 }
