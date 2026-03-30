@@ -114,6 +114,20 @@ fn build_should_use_deterministic_farthest_initializer() {
 }
 
 #[test]
+fn repeated_builds_should_produce_identical_stored_lists() {
+    let entries = vec![
+        entry(1, [0.0, 0.0]),
+        entry(2, [1.0, 0.0]),
+        entry(3, [10.0, 0.0]),
+        entry(4, [11.0, 0.0]),
+    ];
+    let left = IvfIndex::build(config(), entries.clone()).stored_lists();
+    let right = IvfIndex::build(config(), entries).stored_lists();
+
+    assert_eq!(left, right);
+}
+
+#[test]
 fn build_should_allow_empty_inputs() {
     let index = IvfIndex::build(config(), Vec::new());
 
