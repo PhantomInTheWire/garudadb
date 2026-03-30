@@ -6,8 +6,8 @@ use common::{
 };
 use garuda_storage::{WRITING_SEGMENT_ID, segment_ivf_index_path};
 use garuda_types::{
-    IndexKind, IndexParams, IvfIndexParams, IvfListCount, IvfProbeCount,
-    IvfTrainingIterations, VectorIndexState, VectorQuery, VectorSearch,
+    IndexKind, IndexParams, IvfIndexParams, IvfListCount, IvfProbeCount, IvfTrainingIterations,
+    VectorIndexState, VectorQuery, VectorSearch,
 };
 
 const FIRST_PERSISTED_SEGMENT_ID: garuda_types::SegmentId =
@@ -243,7 +243,10 @@ fn flush_should_make_retrained_persisted_ivf_the_canonical_result() {
     let after_reopen = reopened.query(query).expect("query after reopen");
 
     assert_eq!(
-        after_flush.iter().map(|doc| doc.id.clone()).collect::<Vec<_>>(),
+        after_flush
+            .iter()
+            .map(|doc| doc.id.clone())
+            .collect::<Vec<_>>(),
         after_reopen
             .iter()
             .map(|doc| doc.id.clone())
@@ -410,7 +413,10 @@ fn ivf_with_more_lists_than_live_docs_should_roundtrip_flush_and_reopen() {
 
     assert_eq!(
         before.iter().map(|doc| doc.id.clone()).collect::<Vec<_>>(),
-        after_flush.iter().map(|doc| doc.id.clone()).collect::<Vec<_>>()
+        after_flush
+            .iter()
+            .map(|doc| doc.id.clone())
+            .collect::<Vec<_>>()
     );
     assert_eq!(
         before.iter().map(|doc| doc.id.clone()).collect::<Vec<_>>(),

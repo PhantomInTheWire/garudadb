@@ -460,14 +460,21 @@ fn train_lists(config: &IvfIndexConfig, entries: &[IvfBuildEntry]) -> TrainedLis
     let centroids = initialize_centroids(config, entries);
     let (centroids, assignments) = run_lloyd_iterations(config, entries, centroids);
     let list_entry_indexes = materialize_list_entry_indexes(config, entries, &assignments);
-    TrainedLists { centroids, list_entry_indexes }
+    TrainedLists {
+        centroids,
+        list_entry_indexes,
+    }
 }
 
 fn initialize_centroids(config: &IvfIndexConfig, entries: &[IvfBuildEntry]) -> IvfCentroids {
     IvfCentroids::initialize(config.metric, entries, config.list_count(entries.len()))
 }
 
-fn assign_entries(config: &IvfIndexConfig, entries: &[IvfBuildEntry], centroids: &IvfCentroids) -> Vec<usize> {
+fn assign_entries(
+    config: &IvfIndexConfig,
+    entries: &[IvfBuildEntry],
+    centroids: &IvfCentroids,
+) -> Vec<usize> {
     centroids.assign_entries(config.metric, entries)
 }
 
