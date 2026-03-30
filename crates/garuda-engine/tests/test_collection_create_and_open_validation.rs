@@ -152,6 +152,10 @@ fn reopened_read_only_collection_rejects_mutating_operations() {
     assert_eq!(insert_results[0].status.code, StatusCode::PermissionDenied);
     assert_eq!(insert_results[0].status.message, "collection is read-only");
 
+    let flush_status = reopened.flush().expect_err("flush should reject read-only collections");
+    assert_eq!(flush_status.code, StatusCode::PermissionDenied);
+    assert_eq!(flush_status.message, "collection is read-only");
+
     let delete_status = reopened
         .delete_by_filter("category = 'alpha'")
         .expect_err("delete_by_filter should reject read-only collections");

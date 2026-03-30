@@ -241,7 +241,10 @@ impl Collection {
     }
 
     fn checkpoint(&self) -> Result<(), Status> {
-        self.with_checkpoint(|_| Ok(()))
+        self.with_checkpoint(|state| {
+            ensure_collection_is_writable(state)?;
+            Ok(())
+        })
     }
 
     fn mutate_and_checkpoint(
