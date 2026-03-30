@@ -196,6 +196,62 @@ fn ivf_writing_segment_should_preserve_results_after_flush() {
 }
 
 #[test]
+fn flush_should_make_retrained_persisted_ivf_the_canonical_result() {
+    let (_root, db) = database("ivf-flush-canonical-retrain");
+    let mut schema = default_schema("docs");
+    schema.vector.indexes = VectorIndexState::IvfOnly(IvfIndexParams {
+        n_list: IvfListCount::new(2).expect("valid list count"),
+        n_probe: IvfProbeCount::new(1).expect("valid nprobe"),
+        training_iterations: IvfTrainingIterations::new(4).expect("valid iterations"),
+    });
+    let mut options = default_options();
+    options.segment_max_docs = 100;
+
+    let collection = db
+        .create_collection(schema, options)
+        .expect("create collection");
+
+    let results = collection.insert(vec![
+        build_doc("doc-1", 1, "alpha", 0.9, [1.0, 0.0, 0.0, 0.0]),
+        build_doc("doc-2", 2, "alpha", 0.8, [0.9, 0.1, 0.0, 0.0]),
+        build_doc("doc-3", 3, "beta", 0.7, [0.0, 1.0, 0.0, 0.0]),
+        build_doc("doc-4", 4, "gamma", 0.6, [0.0, 0.0, 1.0, 0.0]),
+    ]);
+    assert!(results.iter().all(|result| result.status.is_ok()));
+
+    let mut query = VectorQuery::by_vector(
+        field_name("embedding"),
+        dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
+        common::top_k(4),
+    );
+    query.search = VectorSearch::Ivf {
+        nprobe: IvfProbeCount::new(1).expect("valid nprobe"),
+    };
+
+    let before_flush = collection.query(query.clone()).expect("query before flush");
+    assert_eq!(before_flush.len(), 2);
+
+    collection.flush().expect("flush");
+
+    let after_flush = collection.query(query.clone()).expect("query after flush");
+    assert_eq!(after_flush.len(), 2);
+
+    drop(collection);
+    let reopened = db
+        .open_collection(&collection_name("docs"))
+        .expect("reopen collection");
+    let after_reopen = reopened.query(query).expect("query after reopen");
+
+    assert_eq!(
+        after_flush.iter().map(|doc| doc.id.clone()).collect::<Vec<_>>(),
+        after_reopen
+            .iter()
+            .map(|doc| doc.id.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn delete_on_persisted_segment_with_small_nprobe_still_returns_live_hit() {
     let (_root, db) = database("ivf-persisted-delete-small-nprobe");
     let collection = db
