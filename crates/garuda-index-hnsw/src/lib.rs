@@ -356,7 +356,8 @@ impl HnswIndex {
             index.insert_node(node, entry_point, max_level);
 
             let node_level = index.graph.node_level(node);
-            if node_level > max_level {
+            if node_level > max_level || (node_level == max_level && node.get() > entry_point.get())
+            {
                 entry_point = node;
                 max_level = node_level;
             }
