@@ -142,7 +142,7 @@ fn build_flat_index(
     Some(index)
 }
 
-fn build_hnsw_index(
+pub(crate) fn build_hnsw_index(
     schema: &CollectionSchema,
     meta: &SegmentMeta,
     records: &[StoredRecord],
@@ -406,7 +406,7 @@ pub(crate) fn persistable_flat_entries_from_writing(
     index.entries().to_vec()
 }
 
-fn build_ivf_index(
+pub(crate) fn build_ivf_index(
     schema: &CollectionSchema,
     meta: &SegmentMeta,
     records: &[StoredRecord],

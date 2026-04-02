@@ -477,12 +477,14 @@ fn remove_should_return_empty_when_all_docs_are_deleted() {
 
     let mut index = HnswIndex::build(
         config.clone(),
-        vec![HnswBuildEntry::new(
-            &config,
-            InternalDocId::new(1).expect("doc id"),
-            DenseVector::parse(vec![1.0, 0.0]).expect("vector"),
-        )
-        .expect("entry")],
+        vec![
+            HnswBuildEntry::new(
+                &config,
+                InternalDocId::new(1).expect("doc id"),
+                DenseVector::parse(vec![1.0, 0.0]).expect("vector"),
+            )
+            .expect("entry"),
+        ],
     );
 
     assert_eq!(
