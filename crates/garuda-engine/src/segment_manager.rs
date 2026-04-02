@@ -1,7 +1,7 @@
 use garuda_index_ivf::IvfBuildEntry;
 use garuda_meta::MetadataStore;
 use garuda_segment::{
-    segment_file_name, segment_meta, PersistedSegment, RecordState, StoredRecord, WritingSegment,
+    PersistedSegment, RecordState, StoredRecord, WritingSegment, segment_file_name, segment_meta,
 };
 use garuda_storage::WRITING_SEGMENT_ID;
 use garuda_types::{CollectionSchema, Doc, InternalDocId, SegmentId};
