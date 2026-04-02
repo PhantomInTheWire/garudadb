@@ -1,7 +1,7 @@
 use garuda_index_ivf::IvfBuildEntry;
 use garuda_meta::MetadataStore;
 use garuda_segment::{
-    PersistedSegment, RecordState, StoredRecord, WritingSegment, segment_file_name, segment_meta,
+    segment_file_name, segment_meta, PersistedSegment, RecordState, StoredRecord, WritingSegment,
 };
 use garuda_storage::WRITING_SEGMENT_ID;
 use garuda_types::{CollectionSchema, Doc, InternalDocId, SegmentId};
@@ -171,14 +171,7 @@ impl SegmentManager {
     }
 
     pub(crate) fn mark_writing_deleted(&mut self, doc_id: InternalDocId) -> bool {
-        let Some(record) = live_record_by_internal_id(&mut self.writing_segment.records, doc_id)
-        else {
-            return false;
-        };
-
-        record.state = RecordState::Deleted;
-        self.writing_segment.sync_meta();
-        true
+        self.writing_segment.mark_deleted(doc_id)
     }
 
     pub(crate) fn mark_deleted(
@@ -196,13 +189,9 @@ impl SegmentManager {
             }
 
             let segment = &mut self.persisted_segments[index];
-            let Some(record) = live_record_by_internal_id(&mut segment.records, doc_id) else {
-                continue;
-            };
-
-            record.state = RecordState::Deleted;
-            segment.rebuild_search_resources(schema);
-            return true;
+            if segment.mark_deleted_and_refresh(doc_id, schema) {
+                return true;
+            }
         }
 
         false
@@ -314,21 +303,6 @@ fn record_in_segment_by_internal_id(
     records
         .iter()
         .find(|record| record.doc_id == doc_id && matches!(record.state, RecordState::Live))
-}
-
-fn live_record_by_internal_id(
-    records: &mut [StoredRecord],
-    doc_id: InternalDocId,
-) -> Option<&mut StoredRecord> {
-    for record in records {
-        if record.doc_id != doc_id || matches!(record.state, RecordState::Deleted) {
-            continue;
-        }
-
-        return Some(record);
-    }
-
-    None
 }
 
 fn seal_segment(
