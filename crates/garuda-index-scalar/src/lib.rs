@@ -82,6 +82,18 @@ impl ScalarIndex {
         }
     }
 
+    pub fn remove(&mut self, doc_id: InternalDocId, value: &ScalarValue) -> bool {
+        match (self, value) {
+            (Self::Bool(index), ScalarValue::Bool(value)) => index.remove(doc_id, *value),
+            (Self::Int64(index), ScalarValue::Int64(value)) => index.remove(doc_id, value),
+            (Self::Float64(index), ScalarValue::Float64(value)) => {
+                index.remove(doc_id, &FloatKey::new(*value))
+            }
+            (Self::String(index), ScalarValue::String(value)) => index.remove(doc_id, value),
+            _ => panic!("scalar index value type should match schema"),
+        }
+    }
+
     pub fn data(&self) -> ScalarIndexData {
         match self {
             Self::Bool(index) => ScalarIndexData::Bool {
@@ -183,6 +195,18 @@ impl BoolScalarIndex {
 
         self.false_doc_ids.iter().copied().collect()
     }
+
+    fn remove(&mut self, doc_id: InternalDocId, value: bool) -> bool {
+        let docs = if value {
+            &mut self.true_doc_ids
+        } else {
+            &mut self.false_doc_ids
+        };
+
+        let original_len = docs.len();
+        docs.retain(|&id| id != doc_id);
+        docs.len() != original_len
+    }
 }
 
 impl<K> OrderedScalarIndex<K>
@@ -249,6 +273,22 @@ where
         }
 
         doc_ids
+    }
+
+    fn remove(&mut self, doc_id: InternalDocId, key: &K) -> bool {
+        let Some(postings) = self.postings.get_mut(key) else {
+            return false;
+        };
+
+        let original_len = postings.len();
+        postings.retain(|&id| id != doc_id);
+        let removed = postings.len() != original_len;
+
+        if postings.is_empty() {
+            self.postings.remove(key);
+        }
+
+        removed
     }
 }
 

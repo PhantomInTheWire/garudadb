@@ -67,6 +67,12 @@ impl FlatIndex {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+
+    pub fn remove(&mut self, doc_id: InternalDocId) -> bool {
+        let original_len = self.entries.len();
+        self.entries.retain(|entry| entry.doc_id != doc_id);
+        self.entries.len() != original_len
+    }
 }
 
 impl WritingFlatIndex {
@@ -97,6 +103,12 @@ impl WritingFlatIndex {
 
     pub fn entries(&self) -> &[FlatIndexEntry] {
         &self.entries
+    }
+
+    pub fn remove(&mut self, doc_id: InternalDocId) -> bool {
+        let original_len = self.entries.len();
+        self.entries.retain(|entry| entry.doc_id != doc_id);
+        self.entries.len() != original_len
     }
 }
 
