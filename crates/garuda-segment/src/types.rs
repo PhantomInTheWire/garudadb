@@ -5,7 +5,7 @@ use garuda_index_ivf::{IvfIndex, WritingIvfIndex};
 use garuda_index_scalar::ScalarIndex;
 use garuda_types::{
     CollectionSchema, DenseVector, DistanceMetric, Doc, FieldName, FilterExpr, HnswEfSearch,
-    InternalDocId, IvfProbeCount, SegmentId, SegmentMeta, Status, StatusCode, TopK,
+    InternalDocId, IvfProbeCount, RemoveResult, SegmentId, SegmentMeta, Status, StatusCode, TopK,
 };
 use std::collections::BTreeMap;
 
@@ -158,15 +158,15 @@ impl WritingSegment {
         self.records[record_index].state = RecordState::Deleted;
 
         if let Some(index) = &mut self.flat_index {
-            index.remove(doc_id);
+            assert_eq!(index.remove(doc_id), RemoveResult::Removed);
         }
 
         if let Some(index) = &mut self.ivf_index {
-            index.remove(doc_id);
+            assert_eq!(index.remove(doc_id), RemoveResult::Removed);
         }
 
         if let Some(index) = &mut self.hnsw_index {
-            index.remove(doc_id);
+            assert_eq!(index.remove(doc_id), RemoveResult::Removed);
         }
 
         remove_from_scalar_indexes(&mut self.scalar_indexes, doc_id, scalar_fields);
@@ -217,15 +217,15 @@ impl PersistedSegment {
         self.records[record_index].state = RecordState::Deleted;
 
         if let Some(index) = &mut self.flat_index {
-            index.remove(doc_id);
+            assert_eq!(index.remove(doc_id), RemoveResult::Removed);
         }
 
         if let Some(index) = &mut self.ivf_index {
-            index.remove(doc_id);
+            assert_eq!(index.remove(doc_id), RemoveResult::Removed);
         }
 
         if let Some(index) = &mut self.hnsw_index {
-            index.remove(doc_id);
+            assert_eq!(index.remove(doc_id), RemoveResult::Removed);
         }
 
         remove_from_scalar_indexes(&mut self.scalar_indexes, doc_id, scalar_fields);
@@ -262,7 +262,7 @@ fn remove_from_scalar_indexes(
         let index = scalar_indexes
             .get_mut(&field)
             .expect("enabled scalar index should exist");
-        index.remove(doc_id, &value);
+        assert_eq!(index.remove(doc_id, &value), RemoveResult::Removed);
     }
 }
 

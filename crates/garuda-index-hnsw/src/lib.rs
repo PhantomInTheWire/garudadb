@@ -147,8 +147,8 @@ use garuda_math::score_doc;
 use garuda_types::{
     DenseVector, DistanceMetric, HnswEfConstruction, HnswEfSearch, HnswGraph, HnswLevel, HnswM,
     HnswMinNeighborCount, HnswNeighborConfig, HnswNeighborLimits, HnswPruneWidth,
-    HnswScalingFactor, InternalDocId, NodeIndex, Status, StatusCode, TopK, VectorDimension,
-    HNSW_MAX_GRAPH_LEVEL,
+    HnswScalingFactor, InternalDocId, NodeIndex, RemoveResult, Status, StatusCode, TopK,
+    VectorDimension, HNSW_MAX_GRAPH_LEVEL,
 };
 use std::collections::HashMap;
 
@@ -404,14 +404,14 @@ impl HnswIndex {
         self.insert_node(node, entry_point, max_level);
     }
 
-    pub fn remove(&mut self, doc_id: InternalDocId) -> bool {
+    pub fn remove(&mut self, doc_id: InternalDocId) -> RemoveResult {
         let Some(node) = self.node_by_doc_id.remove(&doc_id) else {
-            return false;
+            return RemoveResult::Missing;
         };
 
         assert!(self.is_active(node), "hnsw removed doc should be active");
         self.node_states[node.get()] = HnswNodeState::Deleted;
-        true
+        RemoveResult::Removed
     }
 
     pub fn entries(&self) -> &[HnswBuildEntry] {
@@ -516,7 +516,7 @@ impl WritingHnswIndex {
             .search(HnswSearchRequest::new(query_vector, top_k, ef_search))
     }
 
-    pub fn remove(&mut self, doc_id: InternalDocId) -> bool {
+    pub fn remove(&mut self, doc_id: InternalDocId) -> RemoveResult {
         self.index.remove(doc_id)
     }
 

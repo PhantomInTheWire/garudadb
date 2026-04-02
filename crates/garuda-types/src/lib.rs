@@ -63,6 +63,18 @@ pub enum DistanceMetric {
     L2,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RemoveResult {
+    Removed,
+    Missing,
+}
+
+impl RemoveResult {
+    pub fn is_removed(self) -> bool {
+        matches!(self, Self::Removed)
+    }
+}
+
 impl DistanceMetric {
     pub fn to_tag(self) -> u8 {
         match self {
