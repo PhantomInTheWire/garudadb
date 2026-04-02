@@ -150,8 +150,10 @@
 //! - Determinism is deliberate: level sampling is hash-based, comparisons use
 //!   total float ordering, and equal scores break by lower `doc_id`.
 //! - The implementation is single-threaded and in-memory.
-//! - There is no lazy deletion, tombstone-aware graph maintenance, or heuristic
-//!   that depends on external randomness.
+//! - Deletion is lazy at the storage level (`NodeIndex` slots are not compacted
+//!   in-place), but traversal and local graph repair are deletion-aware.
+//! - There is no background compactor inside this crate and no heuristic that
+//!   depends on external randomness.
 //! - The crate aims for a predictable HNSW core that is easy to rebuild from the
 //!   segment's live vectors and easy to validate when loaded from disk.
 //! - Deletion currently marks nodes inactive and filters traversal/results; graph

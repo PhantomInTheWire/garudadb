@@ -219,6 +219,7 @@ pub struct IvfIndex {
     config: IvfIndexConfig,
     state: IvfState,
     churn_events: usize,
+    retrain_state: IvfRetrainState,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -226,6 +227,13 @@ pub struct WritingIvfIndex {
     config: IvfIndexConfig,
     state: IvfState,
     churn_events: usize,
+    retrain_state: IvfRetrainState,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum IvfRetrainState {
+    Ready,
+    Pending,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -271,6 +279,7 @@ impl IvfIndex {
             config,
             state: IvfState::new(entries, trained.centroids, trained.list_entry_indexes),
             churn_events: 0,
+            retrain_state: IvfRetrainState::Ready,
         }
     }
 
@@ -286,6 +295,7 @@ impl IvfIndex {
             config,
             state: IvfState::new(entries, stored.centroids, entry_indexes),
             churn_events: 0,
+            retrain_state: IvfRetrainState::Ready,
         })
     }
 
@@ -313,7 +323,11 @@ impl IvfIndex {
         let removed = self.state.remove_incremental(&self.config, doc_id);
         if removed.is_removed() {
             self.churn_events += 1;
-            maybe_retrain_after_churn(&self.config, &mut self.state, &mut self.churn_events);
+            mark_retrain_pending_after_churn(
+                &self.state,
+                &mut self.churn_events,
+                &mut self.retrain_state,
+            );
         }
 
         removed
@@ -326,6 +340,7 @@ impl WritingIvfIndex {
             config,
             state: IvfState::empty(),
             churn_events: 0,
+            retrain_state: IvfRetrainState::Ready,
         }
     }
 
@@ -352,6 +367,12 @@ impl WritingIvfIndex {
     }
 
     pub fn insert(&mut self, entry: IvfBuildEntry) {
+        if matches!(self.retrain_state, IvfRetrainState::Pending) {
+            self.state = self.state.retrained(&self.config);
+            self.retrain_state = IvfRetrainState::Ready;
+            self.churn_events = 0;
+        }
+
         self.state.insert_incremental(&self.config, entry);
     }
 
@@ -359,7 +380,11 @@ impl WritingIvfIndex {
         let removed = self.state.remove_incremental(&self.config, doc_id);
         if removed.is_removed() {
             self.churn_events += 1;
-            maybe_retrain_after_churn(&self.config, &mut self.state, &mut self.churn_events);
+            mark_retrain_pending_after_churn(
+                &self.state,
+                &mut self.churn_events,
+                &mut self.retrain_state,
+            );
         }
 
         removed
@@ -566,14 +591,15 @@ impl IvfState {
     }
 }
 
-fn maybe_retrain_after_churn(
-    config: &IvfIndexConfig,
-    state: &mut IvfState,
+fn mark_retrain_pending_after_churn(
+    state: &IvfState,
     churn_events: &mut usize,
+    retrain_state: &mut IvfRetrainState,
 ) {
     let live_len = state.len();
     if live_len == 0 {
         *churn_events = 0;
+        *retrain_state = IvfRetrainState::Ready;
         return;
     }
 
@@ -587,7 +613,7 @@ fn maybe_retrain_after_churn(
         return;
     }
 
-    *state = state.retrained(config);
+    *retrain_state = IvfRetrainState::Pending;
     *churn_events = 0;
 }
 

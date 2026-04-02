@@ -426,3 +426,71 @@ fn ivf_with_more_lists_than_live_docs_should_roundtrip_flush_and_reopen() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn ivf_delete_churn_should_keep_query_results_live_only() {
+    let (_root, db) = database("ivf-delete-churn-quality");
+    let mut schema = default_schema("docs");
+    schema.vector.indexes = VectorIndexState::IvfOnly(IvfIndexParams::default());
+    let mut options = default_options();
+    options.segment_max_docs = 256;
+
+    let collection = db
+        .create_collection(schema, options)
+        .expect("create collection");
+
+    let mut docs = Vec::new();
+    for raw in 1..=64u64 {
+        let id = format!("doc-{raw}");
+        if raw <= 32 {
+            docs.push(build_doc(
+                &id,
+                raw as i64,
+                "alpha",
+                0.5,
+                [1.0, 0.0, (raw as f32) * 0.001, 0.0],
+            ));
+            continue;
+        }
+
+        docs.push(build_doc(
+            &id,
+            raw as i64,
+            "beta",
+            0.5,
+            [0.0, 1.0, (raw as f32) * 0.001, 0.0],
+        ));
+    }
+    let inserted = collection.insert(docs);
+    assert!(inserted.iter().all(|result| result.status.is_ok()));
+    collection.flush().expect("flush");
+
+    collection
+        .create_index(
+            &field_name("embedding"),
+            IndexParams::Ivf(IvfIndexParams::default()),
+        )
+        .expect("create ivf index");
+
+    let mut deleted_doc_ids = Vec::new();
+    for raw in 1..=40u64 {
+        deleted_doc_ids.push(doc_id(&format!("doc-{raw}")));
+    }
+    let deleted = collection.delete(deleted_doc_ids.clone());
+    assert!(deleted.iter().all(|result| result.status.is_ok()));
+
+    let mut query = VectorQuery::by_vector(
+        field_name("embedding"),
+        dense_vector(vec![0.0, 1.0, 0.0, 0.0]),
+        common::top_k(5),
+    );
+    query.search = VectorSearch::Ivf {
+        nprobe: IvfProbeCount::new(1).expect("valid nprobe"),
+    };
+
+    let results = collection.query(query).expect("query after churn delete");
+    assert_eq!(results.len(), 5);
+    for doc in &results {
+        assert!(!deleted_doc_ids.contains(&doc.id));
+    }
+}
