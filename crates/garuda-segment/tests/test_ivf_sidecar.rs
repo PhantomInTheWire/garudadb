@@ -1,6 +1,6 @@
 use garuda_segment::{
-    read_persisted_segment, search_persisted, segment_meta, write_persisted_segment,
     IvfSegmentSearchRequest, PersistedSegment, SegmentFilter, SegmentSearchRequest, WritingSegment,
+    read_persisted_segment, search_persisted, segment_meta, write_persisted_segment,
 };
 use garuda_storage::{read_file, segment_ivf_index_path};
 use garuda_types::{
@@ -140,9 +140,10 @@ fn write_persisted_segment_should_compact_ivf_sidecar_after_incremental_delete()
     .expect("search reopened segment");
 
     assert_eq!(hits.len(), 2);
-    assert!(hits
-        .iter()
-        .all(|hit| hit.record.doc.id != DocId::parse("doc-2").expect("valid doc id")));
+    assert!(
+        hits.iter()
+            .all(|hit| hit.record.doc.id != DocId::parse("doc-2").expect("valid doc id"))
+    );
 }
 
 #[test]

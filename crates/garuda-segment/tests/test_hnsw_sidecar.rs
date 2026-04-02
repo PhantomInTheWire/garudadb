@@ -3,8 +3,8 @@ mod common;
 use common::{field_name, stored_record, temp_root};
 use garuda_index_scalar::prefilter_doc_ids;
 use garuda_segment::{
-    read_persisted_segment, search_persisted, segment_meta, write_persisted_segment,
     HnswSegmentSearchRequest, PersistedSegment, RecordState, SegmentFilter, SegmentSearchRequest,
+    read_persisted_segment, search_persisted, segment_meta, write_persisted_segment,
 };
 use garuda_storage::{read_file, segment_hnsw_index_path};
 use garuda_types::{
@@ -258,9 +258,10 @@ fn write_persisted_segment_should_compact_hnsw_sidecar_after_incremental_delete(
     .expect("search reopened segment");
 
     assert_eq!(hits.len(), 2);
-    assert!(hits
-        .iter()
-        .all(|hit| hit.record.doc.id != DocId::parse("doc-2").expect("valid doc id")));
+    assert!(
+        hits.iter()
+            .all(|hit| hit.record.doc.id != DocId::parse("doc-2").expect("valid doc id"))
+    );
 }
 
 #[test]

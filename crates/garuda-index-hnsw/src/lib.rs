@@ -112,8 +112,9 @@
 //! - `remove(doc_id)` marks the node inactive and unlinks it from all neighbors
 //!   on levels up to that node's top level.
 //! - For each affected level, the implementation collects both former active
-//!   outgoing neighbors of the removed node and active incoming neighbors that
-//!   still point to it, then performs local score-ordered pairing.
+//!   outgoing neighbors of the removed node and active incoming neighbors from
+//!   a maintained runtime reverse-edge index, then performs local
+//!   score-ordered pairing.
 //! - Pair priority is: higher vector similarity first, then lower doc-id
 //!   tie-break.
 //! - Selected pairs are linked bidirectionally while respecting per-level
@@ -130,8 +131,12 @@
 //!   code re-runs the same pruning logic over `existing_neighbors + new_node`
 //!   and replaces the neighbor list with the pruned result.
 //! - Deleted neighbors are ignored during reverse-edge candidate pruning.
-//! - This keeps edge counts bounded and makes reverse links follow the same
-//!   selection policy as forward links.
+//! - Runtime state also maintains a derived incoming-edge index for each level
+//!   so delete repair can find nodes that still point at a target without
+//!   scanning every active node.
+//! - This keeps edge counts bounded, makes reverse links follow the same
+//!   selection policy as forward links, and keeps incoming-neighbor lookup
+//!   proportional to in-degree.
 //!
 //! 11. Entry point semantics
 //! - Build tracks insertion descent from the current top-level entry point
@@ -148,7 +153,8 @@
 //! - Validation checks entry count, level count, presence of a top-level node,
 //!   per-level adjacency shape, per-level neighbor limits, out-of-bounds edges,
 //!   and edges that point above either endpoint's sampled level.
-//! - `HnswIndex::from_parts` then pairs that graph with rebuilt live entries.
+//! - `HnswIndex::from_parts` then pairs that graph with rebuilt live entries
+//!   and reconstructs its runtime reverse-edge index from outgoing adjacency.
 //!
 //! 13. Determinism and non-goals
 //! - Determinism is deliberate: level sampling is hash-based, comparisons use
@@ -162,6 +168,8 @@
 //!   segment's live vectors and easy to validate when loaded from disk.
 //! - Deletion currently marks nodes inactive and filters traversal/results; graph
 //!   neighborhood repair is local and degree-aware.
+//! - The incoming-edge index is derived runtime state owned by `HnswIndex`, not
+//!   part of the persisted `HnswGraph` format.
 
 use garuda_math::score_doc;
 use garuda_types::{
@@ -309,6 +317,7 @@ pub struct HnswIndex {
     config: HnswIndexConfig,
     entries: Vec<HnswBuildEntry>,
     graph: HnswGraph,
+    reverse_edges: Vec<Vec<Vec<NodeIndex>>>,
     node_states: Vec<HnswNodeState>,
     node_by_doc_id: HashMap<InternalDocId, NodeIndex>,
     active_entry_point: Option<(NodeIndex, HnswLevel)>,
@@ -326,6 +335,7 @@ impl HnswIndex {
             config,
             entries: Vec::new(),
             graph: HnswGraph::new(Vec::new()),
+            reverse_edges: Vec::new(),
             node_states: Vec::new(),
             node_by_doc_id: HashMap::new(),
             active_entry_point: None,
@@ -338,6 +348,7 @@ impl HnswIndex {
             config,
             graph: HnswGraph::new(node_levels),
             entries,
+            reverse_edges: Vec::new(),
             node_states: Vec::new(),
             node_by_doc_id: HashMap::new(),
             active_entry_point: None,
@@ -345,6 +356,7 @@ impl HnswIndex {
 
         index.node_states = vec![HnswNodeState::Active; index.entries.len()];
         index.rebuild_node_by_doc_id();
+        index.rebuild_reverse_edges();
 
         if index.entries.is_empty() {
             return index;
@@ -376,12 +388,14 @@ impl HnswIndex {
             config,
             entries,
             graph,
+            reverse_edges: Vec::new(),
             node_states: Vec::new(),
             node_by_doc_id: HashMap::new(),
             active_entry_point: None,
         };
         index.node_states = vec![HnswNodeState::Active; index.entries.len()];
         index.rebuild_node_by_doc_id();
+        index.rebuild_reverse_edges();
         index
     }
 
@@ -395,13 +409,15 @@ impl HnswIndex {
 
     pub fn insert(&mut self, entry: HnswBuildEntry) {
         if self.active_len() == 0 {
-            let node = self.graph.push_node(sample_node_level(
+            let node_level = sample_node_level(
                 &self.config,
                 NodeIndex::new(self.entries.len()),
                 entry.doc_id(),
-            ));
+            );
+            let node = self.graph.push_node(node_level);
             self.entries.push(entry);
             self.node_states.push(HnswNodeState::Active);
+            self.extend_reverse_edges_for_new_node(node_level);
             let replaced = self
                 .node_by_doc_id
                 .insert(self.entries[node.get()].doc_id(), node);
@@ -416,13 +432,15 @@ impl HnswIndex {
         let (entry_point, max_level) = self
             .active_entry_point_and_level()
             .expect("hnsw insert should have active entry point");
-        let node = self.graph.push_node(sample_node_level(
+        let node_level = sample_node_level(
             &self.config,
             NodeIndex::new(self.entries.len()),
             entry.doc_id(),
-        ));
+        );
+        let node = self.graph.push_node(node_level);
         self.entries.push(entry);
         self.node_states.push(HnswNodeState::Active);
+        self.extend_reverse_edges_for_new_node(node_level);
         let replaced = self
             .node_by_doc_id
             .insert(self.entries[node.get()].doc_id(), node);
@@ -512,6 +530,50 @@ impl HnswIndex {
         }
 
         self.refresh_active_entry_point();
+    }
+
+    fn rebuild_reverse_edges(&mut self) {
+        self.reverse_edges =
+            vec![vec![Vec::new(); self.graph.node_count()]; self.graph.level_count()];
+
+        for raw_node in 0..self.graph.node_count() {
+            let node = NodeIndex::new(raw_node);
+            let node_level = self.graph.node_level(node).get();
+            for raw_level in 0..=node_level {
+                let level = HnswLevel::new(raw_level);
+                for &neighbor in self.graph.neighbors(level, node) {
+                    self.reverse_edges[level.get()][neighbor.get()].push(node);
+                }
+            }
+        }
+    }
+
+    fn extend_reverse_edges_for_new_node(&mut self, node_level: HnswLevel) {
+        while self.reverse_edges.len() <= node_level.get() {
+            self.reverse_edges.push(Vec::new());
+        }
+
+        for incoming_by_node in &mut self.reverse_edges {
+            incoming_by_node.resize_with(self.graph.node_count(), Vec::new);
+        }
+    }
+
+    fn replace_neighbors(&mut self, level: HnswLevel, node: NodeIndex, neighbors: Vec<NodeIndex>) {
+        let old_neighbors = self.graph.neighbors(level, node).to_vec();
+
+        for &old_neighbor in &old_neighbors {
+            self.reverse_edges[level.get()][old_neighbor.get()].retain(|&source| source != node);
+        }
+
+        self.graph.replace_neighbors(level, node, neighbors);
+
+        let new_neighbors = self.graph.neighbors(level, node).to_vec();
+        for neighbor in new_neighbors {
+            let incoming = &mut self.reverse_edges[level.get()][neighbor.get()];
+            if !incoming.contains(&node) {
+                incoming.push(node);
+            }
+        }
     }
 
     fn maybe_update_active_entry_point(&mut self, node: NodeIndex) {

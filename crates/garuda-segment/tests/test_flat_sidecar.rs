@@ -3,8 +3,8 @@ mod common;
 use common::{field_name, stored_record, temp_root};
 use garuda_index_scalar::prefilter_doc_ids;
 use garuda_segment::{
-    read_persisted_segment, search_persisted, segment_meta, write_persisted_segment,
     FlatSearchRequest, PersistedSegment, SegmentFilter, SegmentSearchRequest,
+    read_persisted_segment, search_persisted, segment_meta, write_persisted_segment,
 };
 use garuda_storage::{read_file, segment_flat_index_path, segment_scalar_index_path};
 use garuda_types::{
