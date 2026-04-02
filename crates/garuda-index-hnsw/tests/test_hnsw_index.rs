@@ -403,6 +403,96 @@ fn build_respects_prune_width_when_selecting_neighbors() {
 }
 
 #[test]
+fn remove_should_hide_deleted_doc_from_search_results() {
+    let config = HnswIndexConfig::new(
+        VectorDimension::new(2).expect("dimension"),
+        DistanceMetric::InnerProduct,
+        HnswBuildConfig::new(
+            HnswNeighborConfig::new(
+                HnswM::new(2).expect("max neighbors"),
+                HnswMinNeighborCount::new(1).expect("min neighbors"),
+            )
+            .expect("neighbor config"),
+            HnswScalingFactor::new(2).expect("scaling factor"),
+            HnswEfConstruction::new(8).expect("ef construction"),
+            HnswPruneWidth::new(8).expect("prune width"),
+        ),
+    );
+
+    let mut index = HnswIndex::build(
+        config.clone(),
+        vec![
+            HnswBuildEntry::new(
+                &config,
+                InternalDocId::new(1).expect("doc id"),
+                DenseVector::parse(vec![1.0, 0.0]).expect("vector"),
+            )
+            .expect("entry"),
+            HnswBuildEntry::new(
+                &config,
+                InternalDocId::new(2).expect("doc id"),
+                DenseVector::parse(vec![0.0, 1.0]).expect("vector"),
+            )
+            .expect("entry"),
+        ],
+    );
+
+    assert!(index.remove(InternalDocId::new(1).expect("doc id")));
+    assert!(!index.remove(InternalDocId::new(1).expect("doc id")));
+
+    let hits = index
+        .search(HnswSearchRequest::new(
+            &DenseVector::parse(vec![1.0, 0.0]).expect("query"),
+            TopK::new(2).expect("top k"),
+            HnswEfSearch::new(8).expect("ef search"),
+        ))
+        .expect("search");
+
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].doc_id, InternalDocId::new(2).expect("doc id"));
+}
+
+#[test]
+fn remove_should_return_empty_when_all_docs_are_deleted() {
+    let config = HnswIndexConfig::new(
+        VectorDimension::new(2).expect("dimension"),
+        DistanceMetric::InnerProduct,
+        HnswBuildConfig::new(
+            HnswNeighborConfig::new(
+                HnswM::new(2).expect("max neighbors"),
+                HnswMinNeighborCount::new(1).expect("min neighbors"),
+            )
+            .expect("neighbor config"),
+            HnswScalingFactor::new(2).expect("scaling factor"),
+            HnswEfConstruction::new(8).expect("ef construction"),
+            HnswPruneWidth::new(8).expect("prune width"),
+        ),
+    );
+
+    let mut index = HnswIndex::build(
+        config.clone(),
+        vec![HnswBuildEntry::new(
+            &config,
+            InternalDocId::new(1).expect("doc id"),
+            DenseVector::parse(vec![1.0, 0.0]).expect("vector"),
+        )
+        .expect("entry")],
+    );
+
+    assert!(index.remove(InternalDocId::new(1).expect("doc id")));
+
+    let hits = index
+        .search(HnswSearchRequest::new(
+            &DenseVector::parse(vec![1.0, 0.0]).expect("query"),
+            TopK::new(1).expect("top k"),
+            HnswEfSearch::new(8).expect("ef search"),
+        ))
+        .expect("search");
+
+    assert!(hits.is_empty());
+}
+
+#[test]
 fn build_uses_graph_search_to_choose_insertion_neighbors() {
     let config = HnswIndexConfig::new(
         VectorDimension::new(2).unwrap(),

@@ -120,7 +120,7 @@ impl CollectionRuntime {
             return false;
         }
 
-        if !self.segments.mark_deleted(doc_id, &self.schema) {
+        if !self.segments.mark_deleted(doc_id) {
             return false;
         }
 

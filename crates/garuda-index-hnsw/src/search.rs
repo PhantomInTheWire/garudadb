@@ -1,7 +1,7 @@
 use crate::{
-    HnswHit, HnswIndex, HnswSearchRequest,
     compare::compare_score_then_doc_id,
     heap::{ScoredNode, WorstScoredNode},
+    HnswHit, HnswIndex, HnswSearchRequest,
 };
 use garuda_types::{DenseVector, HnswLevel, NodeIndex, Status, StatusCode};
 use std::collections::{BinaryHeap, HashSet};
@@ -21,14 +21,13 @@ impl HnswIndex {
             ));
         }
 
-        let entries_are_empty = self.entries.is_empty();
-        if entries_are_empty {
+        if self.active_len() == 0 {
             return Ok(Vec::new());
         }
 
         let request_limit = request.limit.get();
         let ef_search = request.ef_search.get() as usize;
-        let entries_len = self.entries.len();
+        let entries_len = self.active_len();
 
         let candidate_limit = request_limit.max(ef_search).min(entries_len);
 
@@ -45,10 +44,11 @@ impl HnswIndex {
     }
 
     fn search_entry_point(&self, query_vector: &DenseVector) -> NodeIndex {
-        let mut entry_point = self.graph.entry_point();
-        let max_level = self.graph.max_level().get();
+        let (mut entry_point, top_level) = self
+            .active_entry_point_and_level()
+            .expect("hnsw search should have active entry point");
 
-        for level in (1..=max_level).rev() {
+        for level in (1..=top_level.get()).rev() {
             entry_point = self.select_entry_point(HnswLevel::new(level), query_vector, entry_point);
         }
 
@@ -84,12 +84,20 @@ impl HnswIndex {
         query_vector: &DenseVector,
         mut entry_point: NodeIndex,
     ) -> NodeIndex {
+        assert!(
+            self.is_active(entry_point),
+            "hnsw select entry point should be active"
+        );
         let mut best_score = self.score_node(query_vector, entry_point);
 
         loop {
             let mut improved = false;
 
             for &neighbor in self.graph.neighbors(level, entry_point) {
+                if !self.is_active(neighbor) {
+                    continue;
+                }
+
                 let score = self.score_node(query_vector, neighbor);
 
                 let neighbor_doc_id = self.doc_id(neighbor);
@@ -121,6 +129,11 @@ impl HnswIndex {
         query_vector: &DenseVector,
         candidate_limit: usize,
     ) -> Vec<ScoredNode> {
+        assert!(
+            self.is_active(entry_point),
+            "hnsw search-layer entry point should be active"
+        );
+
         let mut visited = HashSet::with_capacity(candidate_limit);
         let mut candidates = BinaryHeap::new();
         let mut results = BinaryHeap::new();
@@ -142,6 +155,10 @@ impl HnswIndex {
 
             let neighbors = self.graph.neighbors(level, candidate.index);
             for &neighbor in neighbors {
+                if !self.is_active(neighbor) {
+                    continue;
+                }
+
                 if !visited.insert(neighbor) {
                     continue;
                 }

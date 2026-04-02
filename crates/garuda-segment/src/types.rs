@@ -1,6 +1,4 @@
-use crate::index::{
-    build_persisted_hnsw_resource, build_persisted_search_resources, build_writing_search_resources,
-};
+use crate::index::{build_persisted_search_resources, build_writing_search_resources};
 use garuda_index_flat::{FlatIndex, WritingFlatIndex};
 use garuda_index_hnsw::{HnswIndex, WritingHnswIndex};
 use garuda_index_ivf::{IvfIndex, WritingIvfIndex};
@@ -167,6 +165,10 @@ impl WritingSegment {
             index.remove(doc_id);
         }
 
+        if let Some(index) = &mut self.hnsw_index {
+            index.remove(doc_id);
+        }
+
         remove_from_scalar_indexes(&mut self.scalar_indexes, doc_id, scalar_fields);
 
         self.sync_meta();
@@ -203,11 +205,7 @@ impl PersistedSegment {
         self.scalar_indexes = resources.scalar_indexes;
     }
 
-    pub fn mark_deleted_and_refresh(
-        &mut self,
-        doc_id: InternalDocId,
-        schema: &CollectionSchema,
-    ) -> bool {
+    pub fn mark_deleted(&mut self, doc_id: InternalDocId) -> bool {
         let Some(record_index) = self.records.iter().position(|record| {
             record.doc_id == doc_id && matches!(record.state, RecordState::Live)
         }) else {
@@ -226,16 +224,13 @@ impl PersistedSegment {
             index.remove(doc_id);
         }
 
-        remove_from_scalar_indexes(&mut self.scalar_indexes, doc_id, scalar_fields);
+        if let Some(index) = &mut self.hnsw_index {
+            index.remove(doc_id);
+        }
 
-        self.rebuild_hnsw_search_resource(schema);
+        remove_from_scalar_indexes(&mut self.scalar_indexes, doc_id, scalar_fields);
         self.sync_meta();
         true
-    }
-
-    pub fn rebuild_hnsw_search_resource(&mut self, schema: &CollectionSchema) {
-        self.sync_meta();
-        self.hnsw_index = build_persisted_hnsw_resource(schema, &self.meta, &self.records);
     }
 }
 

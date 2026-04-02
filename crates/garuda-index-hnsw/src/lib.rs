@@ -44,6 +44,8 @@
 //!   reuses the current graph entry point plus current max level.
 //! - The first inserted node becomes a one-node graph.
 //! - Later inserts use the same insertion routine as bulk build.
+//! - Runtime state tracks active nodes by `doc_id`, so deletions can mark nodes
+//!   inactive without rebuilding the full graph.
 //!
 //! 5. Greedy descent for entry-point selection
 //! - `select_entry_point` is the standard greedy walk within one level.
@@ -71,13 +73,14 @@
 //!
 //! 7. Query-time search
 //! - `search` validates query dimension, returns early on an empty index, and
-//!   computes `candidate_limit = min(len, max(top_k, ef_search))`.
+//!   computes `candidate_limit = min(active_len, max(top_k, ef_search))`.
 //! - It greedily descends from the graph entry point to a level-0 entry point.
 //! - It runs `search_layer` on level 0.
 //! - It converts nodes back into `HnswHit { doc_id, score }`, sorts by score
 //!   descending and `doc_id` ascending, and truncates to `top_k`.
 //! - Deterministic tie-breaking is therefore preserved in both traversal and
 //!   final output ordering.
+//! - Inactive nodes are skipped during traversal and are never returned.
 //!
 //! 8. Build-time neighbor selection
 //! - For each level from the node's insertion top level down to level 0,
@@ -115,11 +118,11 @@
 //!   selection policy as forward links.
 //!
 //! 11. Entry point semantics
-//! - `HnswGraph::entry_point()` returns the last node that appears on the graph's
-//!   highest level.
-//! - That matches build behavior because nodes are appended and a newly created
-//!   top-level node becomes the newest node on the max level.
-//! - Query-time search always starts from that node.
+//! - Build still uses `HnswGraph::entry_point()` for insertion descent.
+//! - Query-time search picks the highest-level active node (and breaks ties by
+//!   newest node index), then descends greedily from there.
+//! - This keeps query entry-point selection valid after deletions mark nodes
+//!   inactive.
 //!
 //! 12. Persisted graph invariants
 //! - `HnswGraph::from_parts` validates persisted structure before the graph is
@@ -137,13 +140,17 @@
 //!   that depends on external randomness.
 //! - The crate aims for a predictable HNSW core that is easy to rebuild from the
 //!   segment's live vectors and easy to validate when loaded from disk.
+//! - Deletion currently marks nodes inactive and filters traversal/results; graph
+//!   neighborhood repair is a separate step.
 
 use garuda_math::score_doc;
 use garuda_types::{
-    DenseVector, DistanceMetric, HNSW_MAX_GRAPH_LEVEL, HnswEfConstruction, HnswEfSearch, HnswGraph,
-    HnswLevel, HnswM, HnswMinNeighborCount, HnswNeighborConfig, HnswNeighborLimits, HnswPruneWidth,
+    DenseVector, DistanceMetric, HnswEfConstruction, HnswEfSearch, HnswGraph, HnswLevel, HnswM,
+    HnswMinNeighborCount, HnswNeighborConfig, HnswNeighborLimits, HnswPruneWidth,
     HnswScalingFactor, InternalDocId, NodeIndex, Status, StatusCode, TopK, VectorDimension,
+    HNSW_MAX_GRAPH_LEVEL,
 };
+use std::collections::HashMap;
 
 mod build;
 mod compare;
@@ -282,6 +289,14 @@ pub struct HnswIndex {
     config: HnswIndexConfig,
     entries: Vec<HnswBuildEntry>,
     graph: HnswGraph,
+    node_states: Vec<HnswNodeState>,
+    node_by_doc_id: HashMap<InternalDocId, NodeIndex>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HnswNodeState {
+    Active,
+    Deleted,
 }
 
 impl HnswIndex {
@@ -290,6 +305,8 @@ impl HnswIndex {
             config,
             entries: Vec::new(),
             graph: HnswGraph::new(Vec::new()),
+            node_states: Vec::new(),
+            node_by_doc_id: HashMap::new(),
         }
     }
 
@@ -299,7 +316,12 @@ impl HnswIndex {
             config,
             graph: HnswGraph::new(node_levels),
             entries,
+            node_states: Vec::new(),
+            node_by_doc_id: HashMap::new(),
         };
+
+        index.node_states = vec![HnswNodeState::Active; index.entries.len()];
+        index.rebuild_node_by_doc_id();
 
         if index.entries.is_empty() {
             return index;
@@ -327,11 +349,16 @@ impl HnswIndex {
         entries: Vec<HnswBuildEntry>,
         graph: HnswGraph,
     ) -> Self {
-        Self {
+        let mut index = Self {
             config,
             entries,
             graph,
-        }
+            node_states: Vec::new(),
+            node_by_doc_id: HashMap::new(),
+        };
+        index.node_states = vec![HnswNodeState::Active; index.entries.len()];
+        index.rebuild_node_by_doc_id();
+        index
     }
 
     pub fn config(&self) -> &HnswIndexConfig {
@@ -347,6 +374,14 @@ impl HnswIndex {
             let level = sample_node_level(&self.config, NodeIndex::new(0), entry.doc_id());
             self.graph.push_node(level);
             self.entries.push(entry);
+            self.node_states.push(HnswNodeState::Active);
+            let replaced = self
+                .node_by_doc_id
+                .insert(self.entries[0].doc_id(), NodeIndex::new(0));
+            assert!(
+                replaced.is_none(),
+                "hnsw first insert should not replace doc id"
+            );
             return;
         }
 
@@ -358,7 +393,25 @@ impl HnswIndex {
             entry.doc_id(),
         ));
         self.entries.push(entry);
+        self.node_states.push(HnswNodeState::Active);
+        let replaced = self
+            .node_by_doc_id
+            .insert(self.entries[node.get()].doc_id(), node);
+        assert!(
+            replaced.is_none(),
+            "hnsw insert should not replace existing doc id"
+        );
         self.insert_node(node, entry_point, max_level);
+    }
+
+    pub fn remove(&mut self, doc_id: InternalDocId) -> bool {
+        let Some(node) = self.node_by_doc_id.remove(&doc_id) else {
+            return false;
+        };
+
+        assert!(self.is_active(node), "hnsw removed doc should be active");
+        self.node_states[node.get()] = HnswNodeState::Deleted;
+        true
     }
 
     pub fn entries(&self) -> &[HnswBuildEntry] {
@@ -388,6 +441,56 @@ impl HnswIndex {
             self.vector(node).as_slice(),
         )
     }
+
+    fn is_active(&self, node: NodeIndex) -> bool {
+        matches!(self.node_states[node.get()], HnswNodeState::Active)
+    }
+
+    fn active_len(&self) -> usize {
+        self.node_by_doc_id.len()
+    }
+
+    fn active_entry_point_and_level(&self) -> Option<(NodeIndex, HnswLevel)> {
+        if self.node_by_doc_id.is_empty() {
+            return None;
+        }
+
+        for level in (0..=self.graph.max_level().get()).rev() {
+            let level = HnswLevel::new(level);
+
+            for raw_node in (0..self.entries.len()).rev() {
+                let node = NodeIndex::new(raw_node);
+                if self.graph.node_level(node) < level || !self.is_active(node) {
+                    continue;
+                }
+
+                return Some((node, level));
+            }
+        }
+
+        unreachable!("hnsw active node set should contain at least one active node")
+    }
+
+    fn rebuild_node_by_doc_id(&mut self) {
+        assert_eq!(
+            self.node_states.len(),
+            self.entries.len(),
+            "hnsw node states should align with entries"
+        );
+        self.node_by_doc_id.clear();
+        self.node_by_doc_id.reserve(self.entries.len());
+
+        for (raw_node, entry) in self.entries.iter().enumerate() {
+            if !matches!(self.node_states[raw_node], HnswNodeState::Active) {
+                continue;
+            }
+
+            let replaced = self
+                .node_by_doc_id
+                .insert(entry.doc_id(), NodeIndex::new(raw_node));
+            assert!(replaced.is_none(), "hnsw active doc ids should be unique");
+        }
+    }
 }
 
 impl WritingHnswIndex {
@@ -411,6 +514,10 @@ impl WritingHnswIndex {
     ) -> Result<Vec<HnswHit>, Status> {
         self.index
             .search(HnswSearchRequest::new(query_vector, top_k, ef_search))
+    }
+
+    pub fn remove(&mut self, doc_id: InternalDocId) -> bool {
+        self.index.remove(doc_id)
     }
 
     pub fn graph(&self) -> &HnswGraph {
