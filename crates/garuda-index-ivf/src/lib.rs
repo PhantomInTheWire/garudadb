@@ -355,7 +355,7 @@ impl WritingIvfIndex {
     }
 
     pub fn train(self) -> IvfIndex {
-        IvfIndex::build(self.config, self.state.entries)
+        IvfIndex::build(self.config, self.state.live_entries())
     }
 
     pub fn search(&self, request: IvfSearchRequest<'_>) -> Result<Vec<IvfSearchHit>, Status> {
@@ -507,7 +507,7 @@ impl IvfState {
             return;
         }
 
-        let list_count = config.list_count(self.entries.len());
+        let list_count = config.list_count(self.len());
         if self.inverted_lists.len() < list_count {
             let list_index = self.push_new_list(entry_index);
             self.entry_slots[entry_index.get()] = IvfEntrySlot::Live { list_index };

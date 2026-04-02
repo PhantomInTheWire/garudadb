@@ -31,6 +31,18 @@ fn config_with_iterations(iterations: u32) -> IvfIndexConfig {
     )
 }
 
+fn config_with_list_count(n_list: u32) -> IvfIndexConfig {
+    IvfIndexConfig::new(
+        VectorDimension::new(2).expect("dimension"),
+        DistanceMetric::L2,
+        IvfIndexParams {
+            n_list: IvfListCount::new(n_list).expect("list count"),
+            n_probe: IvfProbeCount::new(1).expect("probe count"),
+            training_iterations: IvfTrainingIterations::new(4).expect("iterations"),
+        },
+    )
+}
+
 fn entry(doc_id: u64, vector: [f32; 2]) -> IvfBuildEntry {
     IvfBuildEntry::new(
         InternalDocId::new(doc_id).expect("doc id"),
@@ -276,6 +288,71 @@ fn writing_index_remove_should_hide_deleted_doc_from_search_and_stored_lists() {
         hits.iter()
             .all(|hit| hit.doc_id != InternalDocId::new(2).expect("doc id"))
     );
+}
+
+#[test]
+fn writing_index_train_should_exclude_removed_docs() {
+    let mut writing = WritingIvfIndex::from_entries_incremental(
+        config(),
+        vec![
+            entry(1, [0.0, 0.0]),
+            entry(2, [0.1, 0.0]),
+            entry(3, [10.0, 10.0]),
+            entry(4, [10.1, 10.0]),
+        ],
+    );
+
+    assert_eq!(
+        writing.remove(InternalDocId::new(2).expect("doc id")),
+        RemoveResult::Removed
+    );
+
+    let index = writing.train();
+    let hits = index
+        .search(IvfSearchRequest::new(
+            &vector([0.0, 0.0]),
+            TopK::new(4).expect("top k"),
+            IvfProbeCount::new(2).expect("probe count"),
+        ))
+        .expect("search");
+
+    assert!(
+        hits.iter()
+            .all(|hit| hit.doc_id != InternalDocId::new(2).expect("doc id"))
+    );
+
+    let lists = index.stored_lists();
+    assert!(
+        lists
+            .doc_ids_by_list
+            .iter()
+            .flatten()
+            .all(|&doc_id| doc_id != InternalDocId::new(2).expect("doc id"))
+    );
+}
+
+#[test]
+fn writing_index_insert_should_not_inflate_list_count_from_deleted_slots() {
+    let mut index = WritingIvfIndex::from_entries_incremental(
+        config_with_list_count(8),
+        vec![
+            entry(1, [0.0, 0.0]),
+            entry(2, [1.0, 0.0]),
+            entry(3, [2.0, 0.0]),
+            entry(4, [3.0, 0.0]),
+            entry(5, [4.0, 0.0]),
+            entry(6, [5.0, 0.0]),
+        ],
+    );
+    assert_eq!(index.list_count(), 6);
+
+    assert_eq!(
+        index.remove(InternalDocId::new(1).expect("doc id")),
+        RemoveResult::Removed
+    );
+
+    index.insert(entry(7, [6.0, 0.0]));
+    assert_eq!(index.list_count(), 6);
 }
 
 #[test]
