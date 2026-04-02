@@ -502,6 +502,71 @@ fn remove_should_return_empty_when_all_docs_are_deleted() {
 }
 
 #[test]
+fn remove_should_repair_former_neighbors_with_bidirectional_link() {
+    let config = HnswIndexConfig::new(
+        VectorDimension::new(2).expect("dimension"),
+        DistanceMetric::InnerProduct,
+        HnswBuildConfig::new(
+            HnswNeighborConfig::new(
+                HnswM::new(2).expect("max neighbors"),
+                HnswMinNeighborCount::new(1).expect("min neighbors"),
+            )
+            .expect("neighbor config"),
+            HnswScalingFactor::new(2).expect("scaling factor"),
+            HnswEfConstruction::new(8).expect("ef construction"),
+            HnswPruneWidth::new(8).expect("prune width"),
+        ),
+    );
+
+    let entries = vec![
+        HnswBuildEntry::new(
+            &config,
+            InternalDocId::new(1).expect("doc id"),
+            DenseVector::parse(vec![1.0, 0.0]).expect("vector"),
+        )
+        .expect("entry"),
+        HnswBuildEntry::new(
+            &config,
+            InternalDocId::new(2).expect("doc id"),
+            DenseVector::parse(vec![0.9, 0.1]).expect("vector"),
+        )
+        .expect("entry"),
+        HnswBuildEntry::new(
+            &config,
+            InternalDocId::new(3).expect("doc id"),
+            DenseVector::parse(vec![1.0, 0.0]).expect("vector"),
+        )
+        .expect("entry"),
+    ];
+    let graph = HnswGraph::from_parts(
+        vec![HnswLevel::new(0), HnswLevel::new(0), HnswLevel::new(0)],
+        vec![vec![
+            vec![NodeIndex::new(1)],
+            vec![NodeIndex::new(0), NodeIndex::new(2)],
+            vec![NodeIndex::new(1)],
+        ]],
+        3,
+        HnswNeighborLimits::new(HnswM::new(2).expect("max neighbors")),
+    )
+    .expect("graph");
+    let mut index = HnswIndex::from_parts(config, entries, graph);
+
+    assert_eq!(
+        index.remove(InternalDocId::new(2).expect("doc id")),
+        RemoveResult::Removed
+    );
+
+    let neighbors0 = index
+        .graph()
+        .neighbors(HnswLevel::new(0), NodeIndex::new(0));
+    let neighbors2 = index
+        .graph()
+        .neighbors(HnswLevel::new(0), NodeIndex::new(2));
+    assert_eq!(neighbors0, &[NodeIndex::new(2)]);
+    assert_eq!(neighbors2, &[NodeIndex::new(0)]);
+}
+
+#[test]
 fn build_uses_graph_search_to_choose_insertion_neighbors() {
     let config = HnswIndexConfig::new(
         VectorDimension::new(2).unwrap(),
