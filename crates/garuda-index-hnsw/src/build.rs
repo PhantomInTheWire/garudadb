@@ -117,6 +117,10 @@ impl HnswIndex {
 
         let node_vector = self.vector(node);
         for &existing_neighbor in neighbors {
+            if !self.is_active(existing_neighbor) {
+                continue;
+            }
+
             candidates.push(ScoredNode {
                 index: existing_neighbor,
                 score: self.score_node(node_vector, existing_neighbor),

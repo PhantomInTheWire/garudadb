@@ -129,11 +129,13 @@
 //! - Reverse-edge insertion is not append-only. If the neighbor is full, the
 //!   code re-runs the same pruning logic over `existing_neighbors + new_node`
 //!   and replaces the neighbor list with the pruned result.
+//! - Deleted neighbors are ignored during reverse-edge candidate pruning.
 //! - This keeps edge counts bounded and makes reverse links follow the same
 //!   selection policy as forward links.
 //!
 //! 11. Entry point semantics
-//! - Build still uses `HnswGraph::entry_point()` for insertion descent.
+//! - Build tracks insertion descent from the current top-level entry point
+//!   selected during build progression.
 //! - Runtime state caches an active entry point at the current highest level.
 //! - Query-time search starts from the cached active entry point and descends
 //!   greedily from there.

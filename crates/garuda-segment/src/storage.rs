@@ -15,7 +15,7 @@ use garuda_storage::{
     segment_flat_index_path, segment_hnsw_index_path, segment_ivf_index_path,
     segment_scalar_index_dir, segment_scalar_index_path, segment_wal_path, write_file_atomically,
 };
-use garuda_types::{CollectionSchema, DocId, FieldName, SegmentId, SegmentMeta, Status};
+use garuda_types::{CollectionSchema, DocId, FieldName, HnswGraph, SegmentId, SegmentMeta, Status};
 use std::collections::BTreeMap;
 
 pub fn ensure_segment_files(root: &std::path::Path, segment_id: SegmentId) -> Result<(), Status> {
@@ -57,11 +57,7 @@ pub fn write_persisted_segment(
         &segment_hnsw_index_path(root, segment.meta.id),
         should_persist_hnsw(schema, segment.meta.doc_count),
         || {
-            let existing_graph = segment
-                .hnsw_index
-                .as_ref()
-                .expect("enabled persisted hnsw state should exist")
-                .graph();
+            let existing_graph = segment.hnsw_index.as_ref().map(|index| index.graph());
             hnsw_sidecar_bytes(
                 schema,
                 &segment.meta,
@@ -124,11 +120,7 @@ pub fn write_writing_segment(
         &segment_hnsw_index_path(root, segment.meta.id),
         should_persist_hnsw(schema, segment.meta.doc_count),
         || {
-            let existing_graph = segment
-                .hnsw_index
-                .as_ref()
-                .expect("enabled writing hnsw state should exist")
-                .graph();
+            let existing_graph = segment.hnsw_index.as_ref().map(|index| index.graph());
             hnsw_sidecar_bytes(
                 schema,
                 &segment.meta,
@@ -255,7 +247,7 @@ fn hnsw_sidecar_bytes(
     meta: &SegmentMeta,
     records: &[StoredRecord],
     has_deletes: bool,
-    existing_graph: &garuda_types::HnswGraph,
+    existing_graph: Option<&HnswGraph>,
 ) -> Result<Vec<u8>, Status> {
     if has_deletes {
         let index = build_hnsw_index(schema, meta, records)
@@ -263,6 +255,7 @@ fn hnsw_sidecar_bytes(
         return encode_hnsw_graph(index.graph());
     }
 
+    let existing_graph = existing_graph.expect("enabled hnsw state should exist when no deletes");
     encode_hnsw_graph(existing_graph)
 }
 
