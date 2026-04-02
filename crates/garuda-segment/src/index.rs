@@ -1,4 +1,4 @@
-use crate::codec::{decode_flat_index, decode_hnsw_graph, decode_scalar_index};
+use crate::codec::{decode_flat_index, decode_hnsw_graph, decode_ivf_index, decode_scalar_index};
 use crate::types::{RecordState, StoredRecord, WritingSegment};
 use garuda_index_flat::{FlatIndex, FlatIndexEntry, WritingFlatIndex};
 use garuda_index_hnsw::{
@@ -227,7 +227,7 @@ fn load_ivf_index(
     };
 
     let bytes = read_file(&segment_ivf_index_path(root, segment_id))?;
-    let stored = crate::codec::decode_ivf_index(&bytes, &schema.vector)?;
+    let stored = decode_ivf_index(&bytes, &schema.vector)?;
     let config = ivf_index_config(schema, params);
     let entries = ivf_build_entries(records, meta.doc_count);
 

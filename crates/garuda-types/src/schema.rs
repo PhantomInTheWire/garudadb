@@ -1,6 +1,6 @@
 use crate::{
-    CollectionName, DistanceMetric, FieldName, HnswIndexParams, IvfIndexParams, Status, StatusCode,
-    VectorDimension,
+    CollectionName, DistanceMetric, FieldName, HnswIndexParams, IvfIndexParams, ScalarValue,
+    Status, StatusCode, VectorDimension,
 };
 use serde::{Deserialize, Serialize};
 
@@ -301,7 +301,7 @@ pub struct ScalarFieldSchema {
     pub field_type: ScalarType,
     pub index: ScalarIndexState,
     pub nullability: Nullability,
-    pub default_value: Option<crate::ScalarValue>,
+    pub default_value: Option<ScalarValue>,
 }
 
 impl ScalarFieldSchema {
