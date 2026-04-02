@@ -89,6 +89,17 @@ pub(crate) fn build_persisted_search_resources(
     }
 }
 
+pub(crate) fn build_persisted_vector_resources(
+    schema: &CollectionSchema,
+    meta: &SegmentMeta,
+    records: &[StoredRecord],
+) -> (Option<HnswIndex>, Option<IvfIndex>) {
+    (
+        build_hnsw_index(schema, meta, records),
+        build_ivf_index(schema, meta, records),
+    )
+}
+
 pub(crate) fn load_persisted_search_resources(
     root: &std::path::Path,
     segment_id: SegmentId,
