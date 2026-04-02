@@ -31,28 +31,18 @@ impl HnswIndex {
             for &neighbor in &affected_neighbors {
                 self.unlink_edge(level, neighbor, node);
             }
-            self.graph.replace_neighbors(level, node, Vec::new());
+            self.replace_neighbors(level, node, Vec::new());
 
             self.repair_neighbors(level, &affected_neighbors);
         }
     }
 
     fn incoming_active_neighbors(&self, level: HnswLevel, node: NodeIndex) -> Vec<NodeIndex> {
-        let mut incoming = Vec::new();
-
-        for &candidate in self.node_by_doc_id.values() {
-            if self.graph.node_level(candidate) < level {
-                continue;
-            }
-
-            if !self.graph.neighbors(level, candidate).contains(&node) {
-                continue;
-            }
-
-            incoming.push(candidate);
-        }
-
-        incoming
+        self.reverse_edges[level.get()][node.get()]
+            .iter()
+            .copied()
+            .filter(|&candidate| self.is_active(candidate))
+            .collect()
     }
 
     pub(crate) fn insert_node(
@@ -103,7 +93,7 @@ impl HnswIndex {
             self.add_reverse_neighbor(level, neighbor, node);
         }
 
-        self.graph.replace_neighbors(level, node, neighbors);
+        self.replace_neighbors(level, node, neighbors);
     }
 
     fn add_reverse_neighbor(&mut self, level: HnswLevel, node: NodeIndex, neighbor: NodeIndex) {
@@ -133,7 +123,7 @@ impl HnswIndex {
         });
 
         let neighbors = self.prune_to_max_neighbors(level, node, candidates);
-        self.graph.replace_neighbors(level, node, neighbors);
+        self.replace_neighbors(level, node, neighbors);
     }
 
     fn unlink_edge(&mut self, level: HnswLevel, from: NodeIndex, to: NodeIndex) {
@@ -144,7 +134,7 @@ impl HnswIndex {
             return;
         }
 
-        self.graph.replace_neighbors(level, from, neighbors);
+        self.replace_neighbors(level, from, neighbors);
     }
 
     fn repair_neighbors(&mut self, level: HnswLevel, neighbors: &[NodeIndex]) {
@@ -240,13 +230,13 @@ impl HnswIndex {
         let mut left_neighbors = self.graph.neighbors(level, left).to_vec();
         if !left_neighbors.contains(&right) {
             left_neighbors.push(right);
-            self.graph.replace_neighbors(level, left, left_neighbors);
+            self.replace_neighbors(level, left, left_neighbors);
         }
 
         let mut right_neighbors = self.graph.neighbors(level, right).to_vec();
         if !right_neighbors.contains(&left) {
             right_neighbors.push(left);
-            self.graph.replace_neighbors(level, right, right_neighbors);
+            self.replace_neighbors(level, right, right_neighbors);
         }
     }
 
