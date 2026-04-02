@@ -3,8 +3,8 @@ mod common;
 use common::{field_name, stored_record, temp_root};
 use garuda_index_scalar::prefilter_doc_ids;
 use garuda_segment::{
-    FlatSearchRequest, PersistedSegment, SegmentFilter, SegmentSearchRequest,
     read_persisted_segment, search_persisted, segment_meta, write_persisted_segment,
+    FlatSearchRequest, PersistedSegment, SegmentFilter, SegmentSearchRequest,
 };
 use garuda_storage::{read_file, segment_flat_index_path, segment_scalar_index_path};
 use garuda_types::{
@@ -196,6 +196,25 @@ fn persisted_scalar_sidecar_roundtrips() {
 
     assert_eq!(matching.len(), 1);
     assert!(matching.contains(&InternalDocId::new(1).expect("valid doc id")));
+}
+
+#[test]
+fn read_persisted_segment_skips_flat_sidecar_when_doc_count_is_zero() {
+    let root = temp_root("segment-flat-sidecar-empty");
+    let schema = schema(VectorIndexState::DefaultFlat, ScalarIndexState::None);
+    let mut segment = PersistedSegment::new(
+        segment_meta(SegmentId::new_unchecked(1)),
+        vec![stored_record(1, "doc-1", "alpha", [1.0, 0.0, 0.0, 0.0])],
+        &schema,
+    );
+
+    assert!(segment.mark_deleted(InternalDocId::new(1).expect("doc id")));
+    write_persisted_segment(&root, &segment, &schema).expect("write segment");
+
+    let reopened =
+        read_persisted_segment(&root, &segment.meta, &schema).expect("reopen empty segment");
+    assert_eq!(reopened.meta.doc_count, 0);
+    assert!(reopened.flat_index.is_none());
 }
 
 #[test]
