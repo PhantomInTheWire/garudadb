@@ -7,8 +7,8 @@ use crate::index::{
     load_persisted_search_resources, persistable_flat_entries_from_writing, should_persist_flat,
     should_persist_hnsw, should_persist_ivf,
 };
-use crate::types::{sync_segment_meta_fields, PersistedSegment, StoredRecord, WritingSegment};
-use crate::{reset_wal, segment_meta, RecordState};
+use crate::types::{PersistedSegment, StoredRecord, WritingSegment, sync_segment_meta_fields};
+use crate::{RecordState, reset_wal, segment_meta};
 use garuda_index_scalar::ScalarIndex;
 use garuda_storage::{
     create_dir_all, read_file, remove_path_if_exists, segment_data_path, segment_dir,
