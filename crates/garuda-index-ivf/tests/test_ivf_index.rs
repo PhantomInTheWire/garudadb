@@ -4,7 +4,7 @@ use garuda_index_ivf::{
 };
 use garuda_types::{
     DenseVector, DistanceMetric, InternalDocId, IvfIndexParams, IvfListCount, IvfProbeCount,
-    IvfTrainingIterations, StatusCode, TopK, VectorDimension,
+    IvfTrainingIterations, RemoveResult, StatusCode, TopK, VectorDimension,
 };
 
 fn config() -> IvfIndexConfig {
@@ -105,14 +105,12 @@ fn wider_nprobe_should_not_reduce_recall() {
     let wide = wide.expect("wide search");
 
     assert!(wide.len() >= narrow.len());
-    assert!(
-        wide.iter()
-            .any(|hit| hit.doc_id == InternalDocId::new(1).expect("doc id"))
-    );
-    assert!(
-        wide.iter()
-            .any(|hit| hit.doc_id == InternalDocId::new(2).expect("doc id"))
-    );
+    assert!(wide
+        .iter()
+        .any(|hit| hit.doc_id == InternalDocId::new(1).expect("doc id")));
+    assert!(wide
+        .iter()
+        .any(|hit| hit.doc_id == InternalDocId::new(2).expect("doc id")));
 }
 
 #[test]
@@ -207,11 +205,9 @@ fn writing_index_insert_should_keep_existing_hits_stable() {
     assert_eq!(before[0].doc_id, InternalDocId::new(1).expect("doc id"));
     assert_eq!(before[1].doc_id, InternalDocId::new(2).expect("doc id"));
     assert_eq!(after[0].doc_id, InternalDocId::new(1).expect("doc id"));
-    assert!(
-        after
-            .iter()
-            .any(|hit| hit.doc_id == InternalDocId::new(5).expect("doc id"))
-    );
+    assert!(after
+        .iter()
+        .any(|hit| hit.doc_id == InternalDocId::new(5).expect("doc id")));
 }
 
 #[test]
@@ -255,8 +251,14 @@ fn writing_index_remove_should_hide_deleted_doc_from_search_and_stored_lists() {
         ],
     );
 
-    assert!(index.remove(InternalDocId::new(2).expect("doc id")));
-    assert!(!index.remove(InternalDocId::new(2).expect("doc id")));
+    assert_eq!(
+        index.remove(InternalDocId::new(2).expect("doc id")),
+        RemoveResult::Removed
+    );
+    assert_eq!(
+        index.remove(InternalDocId::new(2).expect("doc id")),
+        RemoveResult::Missing
+    );
 
     let hits = index
         .search(IvfSearchRequest::new(
@@ -266,10 +268,9 @@ fn writing_index_remove_should_hide_deleted_doc_from_search_and_stored_lists() {
         ))
         .expect("search");
 
-    assert!(
-        hits.iter()
-            .all(|hit| hit.doc_id != InternalDocId::new(2).expect("doc id"))
-    );
+    assert!(hits
+        .iter()
+        .all(|hit| hit.doc_id != InternalDocId::new(2).expect("doc id")));
 }
 
 #[test]
@@ -284,8 +285,14 @@ fn persisted_index_remove_should_hide_deleted_doc_from_search_and_stored_lists()
         ],
     );
 
-    assert!(index.remove(InternalDocId::new(2).expect("doc id")));
-    assert!(!index.remove(InternalDocId::new(2).expect("doc id")));
+    assert_eq!(
+        index.remove(InternalDocId::new(2).expect("doc id")),
+        RemoveResult::Removed
+    );
+    assert_eq!(
+        index.remove(InternalDocId::new(2).expect("doc id")),
+        RemoveResult::Missing
+    );
 
     let hits = index
         .search(IvfSearchRequest::new(
@@ -295,17 +302,14 @@ fn persisted_index_remove_should_hide_deleted_doc_from_search_and_stored_lists()
         ))
         .expect("search");
 
-    assert!(
-        hits.iter()
-            .all(|hit| hit.doc_id != InternalDocId::new(2).expect("doc id"))
-    );
+    assert!(hits
+        .iter()
+        .all(|hit| hit.doc_id != InternalDocId::new(2).expect("doc id")));
 
     let lists = index.stored_lists();
-    assert!(
-        lists
-            .doc_ids_by_list
-            .iter()
-            .flatten()
-            .all(|&doc_id| doc_id != InternalDocId::new(2).expect("doc id"))
-    );
+    assert!(lists
+        .doc_ids_by_list
+        .iter()
+        .flatten()
+        .all(|&doc_id| doc_id != InternalDocId::new(2).expect("doc id")));
 }

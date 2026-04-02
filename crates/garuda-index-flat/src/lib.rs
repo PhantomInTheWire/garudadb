@@ -2,7 +2,8 @@
 
 use garuda_math::score_doc;
 use garuda_types::{
-    DenseVector, DistanceMetric, InternalDocId, Status, StatusCode, TopK, VectorDimension,
+    DenseVector, DistanceMetric, InternalDocId, RemoveResult, Status, StatusCode, TopK,
+    VectorDimension,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -68,10 +69,14 @@ impl FlatIndex {
         self.entries.is_empty()
     }
 
-    pub fn remove(&mut self, doc_id: InternalDocId) -> bool {
+    pub fn remove(&mut self, doc_id: InternalDocId) -> RemoveResult {
         let original_len = self.entries.len();
         self.entries.retain(|entry| entry.doc_id != doc_id);
-        self.entries.len() != original_len
+        if self.entries.len() == original_len {
+            return RemoveResult::Missing;
+        }
+
+        RemoveResult::Removed
     }
 }
 
@@ -105,10 +110,14 @@ impl WritingFlatIndex {
         &self.entries
     }
 
-    pub fn remove(&mut self, doc_id: InternalDocId) -> bool {
+    pub fn remove(&mut self, doc_id: InternalDocId) -> RemoveResult {
         let original_len = self.entries.len();
         self.entries.retain(|entry| entry.doc_id != doc_id);
-        self.entries.len() != original_len
+        if self.entries.len() == original_len {
+            return RemoveResult::Missing;
+        }
+
+        RemoveResult::Removed
     }
 }
 

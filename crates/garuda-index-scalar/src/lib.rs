@@ -1,8 +1,8 @@
 //! Scalar index implementations used for prefiltering and predicate matching.
 
 use garuda_types::{
-    FieldName, InternalDocId, ScalarCompareOp, ScalarPredicate, ScalarPrefilter, ScalarType,
-    ScalarValue,
+    FieldName, InternalDocId, RemoveResult, ScalarCompareOp, ScalarPredicate, ScalarPrefilter,
+    ScalarType, ScalarValue,
 };
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashSet};
@@ -82,7 +82,7 @@ impl ScalarIndex {
         }
     }
 
-    pub fn remove(&mut self, doc_id: InternalDocId, value: &ScalarValue) -> bool {
+    pub fn remove(&mut self, doc_id: InternalDocId, value: &ScalarValue) -> RemoveResult {
         match (self, value) {
             (Self::Bool(index), ScalarValue::Bool(value)) => index.remove(doc_id, *value),
             (Self::Int64(index), ScalarValue::Int64(value)) => index.remove(doc_id, value),
@@ -196,7 +196,7 @@ impl BoolScalarIndex {
         self.false_doc_ids.iter().copied().collect()
     }
 
-    fn remove(&mut self, doc_id: InternalDocId, value: bool) -> bool {
+    fn remove(&mut self, doc_id: InternalDocId, value: bool) -> RemoveResult {
         let docs = if value {
             &mut self.true_doc_ids
         } else {
@@ -205,7 +205,11 @@ impl BoolScalarIndex {
 
         let original_len = docs.len();
         docs.retain(|&id| id != doc_id);
-        docs.len() != original_len
+        if docs.len() == original_len {
+            return RemoveResult::Missing;
+        }
+
+        RemoveResult::Removed
     }
 }
 
@@ -275,9 +279,9 @@ where
         doc_ids
     }
 
-    fn remove(&mut self, doc_id: InternalDocId, key: &K) -> bool {
+    fn remove(&mut self, doc_id: InternalDocId, key: &K) -> RemoveResult {
         let Some(postings) = self.postings.get_mut(key) else {
-            return false;
+            return RemoveResult::Missing;
         };
 
         let original_len = postings.len();
@@ -288,7 +292,11 @@ where
             self.postings.remove(key);
         }
 
-        removed
+        if removed {
+            return RemoveResult::Removed;
+        }
+
+        RemoveResult::Missing
     }
 }
 

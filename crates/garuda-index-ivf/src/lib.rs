@@ -2,8 +2,8 @@
 
 use garuda_math::score_doc;
 use garuda_types::{
-    DenseVector, DistanceMetric, InternalDocId, IvfIndexParams, IvfProbeCount, Status, StatusCode,
-    TopK, VectorDimension,
+    DenseVector, DistanceMetric, InternalDocId, IvfIndexParams, IvfProbeCount, RemoveResult,
+    Status, StatusCode, TopK, VectorDimension,
 };
 use std::collections::HashMap;
 
@@ -309,9 +309,9 @@ impl IvfIndex {
         self.state.list_count()
     }
 
-    pub fn remove(&mut self, doc_id: InternalDocId) -> bool {
+    pub fn remove(&mut self, doc_id: InternalDocId) -> RemoveResult {
         let removed = self.state.remove_incremental(&self.config, doc_id);
-        if removed {
+        if removed.is_removed() {
             self.churn_events += 1;
             maybe_retrain_after_churn(&self.config, &mut self.state, &mut self.churn_events);
         }
@@ -355,9 +355,9 @@ impl WritingIvfIndex {
         self.state.insert_incremental(&self.config, entry);
     }
 
-    pub fn remove(&mut self, doc_id: InternalDocId) -> bool {
+    pub fn remove(&mut self, doc_id: InternalDocId) -> RemoveResult {
         let removed = self.state.remove_incremental(&self.config, doc_id);
-        if removed {
+        if removed.is_removed() {
             self.churn_events += 1;
             maybe_retrain_after_churn(&self.config, &mut self.state, &mut self.churn_events);
         }
@@ -505,9 +505,13 @@ impl IvfState {
         self.entry_slots[entry_index.get()] = IvfEntrySlot::Live { list_index };
     }
 
-    fn remove_incremental(&mut self, config: &IvfIndexConfig, doc_id: InternalDocId) -> bool {
+    fn remove_incremental(
+        &mut self,
+        config: &IvfIndexConfig,
+        doc_id: InternalDocId,
+    ) -> RemoveResult {
         let Some(entry_index) = self.entry_index_by_doc_id.remove(&doc_id) else {
-            return false;
+            return RemoveResult::Missing;
         };
 
         let raw_entry_index = entry_index.get();
@@ -527,11 +531,11 @@ impl IvfState {
         );
 
         if list.entry_indexes.is_empty() {
-            return true;
+            return RemoveResult::Removed;
         }
 
         list.centroid = centroid_for_list(config.dimension, &self.entries, &list.entry_indexes);
-        true
+        RemoveResult::Removed
     }
 
     fn empty_list_count(&self) -> usize {

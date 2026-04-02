@@ -4,7 +4,7 @@ use garuda_index_hnsw::{
 use garuda_types::{
     DenseVector, DistanceMetric, HnswEfConstruction, HnswEfSearch, HnswGraph, HnswLevel, HnswM,
     HnswMinNeighborCount, HnswNeighborConfig, HnswNeighborLimits, HnswPruneWidth,
-    HnswScalingFactor, InternalDocId, NodeIndex, TopK, VectorDimension,
+    HnswScalingFactor, InternalDocId, NodeIndex, RemoveResult, TopK, VectorDimension,
 };
 
 #[test]
@@ -437,8 +437,14 @@ fn remove_should_hide_deleted_doc_from_search_results() {
         ],
     );
 
-    assert!(index.remove(InternalDocId::new(1).expect("doc id")));
-    assert!(!index.remove(InternalDocId::new(1).expect("doc id")));
+    assert_eq!(
+        index.remove(InternalDocId::new(1).expect("doc id")),
+        RemoveResult::Removed
+    );
+    assert_eq!(
+        index.remove(InternalDocId::new(1).expect("doc id")),
+        RemoveResult::Missing
+    );
 
     let hits = index
         .search(HnswSearchRequest::new(
@@ -479,7 +485,10 @@ fn remove_should_return_empty_when_all_docs_are_deleted() {
         .expect("entry")],
     );
 
-    assert!(index.remove(InternalDocId::new(1).expect("doc id")));
+    assert_eq!(
+        index.remove(InternalDocId::new(1).expect("doc id")),
+        RemoveResult::Removed
+    );
 
     let hits = index
         .search(HnswSearchRequest::new(
