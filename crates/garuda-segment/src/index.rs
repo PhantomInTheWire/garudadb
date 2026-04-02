@@ -172,7 +172,7 @@ fn load_flat_index(
     meta: &SegmentMeta,
     schema: &CollectionSchema,
 ) -> Result<Option<FlatIndex>, Status> {
-    if !schema.vector.indexes.has_flat() {
+    if !should_persist_flat(schema, meta.doc_count) {
         return Ok(None);
     }
 
@@ -196,9 +196,14 @@ fn load_hnsw_index(
     records: &[StoredRecord],
     schema: &CollectionSchema,
 ) -> Result<Option<HnswIndex>, Status> {
-    let Some(params) = schema.vector.indexes.hnsw_params() else {
+    if !should_persist_hnsw(schema, meta.doc_count) {
         return Ok(None);
-    };
+    }
+    let params = schema
+        .vector
+        .indexes
+        .hnsw_params()
+        .expect("hnsw index should be enabled");
 
     let bytes = read_file(&segment_hnsw_index_path(root, segment_id))?;
     let graph = decode_hnsw_graph(&bytes, &schema.vector, meta.doc_count)?;
@@ -222,9 +227,15 @@ fn load_ivf_index(
     records: &[StoredRecord],
     schema: &CollectionSchema,
 ) -> Result<Option<IvfIndex>, Status> {
-    let Some(params) = schema.vector.indexes.ivf_params().cloned() else {
+    if !should_persist_ivf(schema, meta.doc_count) {
         return Ok(None);
-    };
+    }
+    let params = schema
+        .vector
+        .indexes
+        .ivf_params()
+        .cloned()
+        .expect("ivf index should be enabled");
 
     let bytes = read_file(&segment_ivf_index_path(root, segment_id))?;
     let stored = decode_ivf_index(&bytes, &schema.vector)?;
