@@ -274,6 +274,51 @@ fn upsert_on_writing_segment_updates_hnsw_results() {
     assert_eq!(results[0].id.as_str(), "doc-2");
 }
 
+#[test]
+fn hnsw_delete_churn_should_keep_live_cluster_reachable_with_small_ef_search() {
+    let (_root, db) = database("hnsw-delete-churn-quality");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+    seed_collection(&collection);
+    common::seed_more_collection_docs(&collection);
+    collection.flush().expect("flush");
+
+    collection
+        .create_index(
+            &field_name("embedding"),
+            IndexParams::Hnsw(HnswIndexParams::default()),
+        )
+        .expect("create hnsw index");
+
+    let deleted = collection.delete(vec![
+        doc_id("doc-1"),
+        doc_id("doc-2"),
+        doc_id("doc-4"),
+        doc_id("doc-5"),
+        doc_id("doc-8"),
+    ]);
+    assert!(deleted.iter().all(|result| result.status.is_ok()));
+
+    let mut query = VectorQuery::by_vector(
+        field_name("embedding"),
+        dense_vector(vec![0.0, 1.0, 0.0, 0.0]),
+        top_k(3),
+    );
+    query.search = garuda_types::VectorSearch::Hnsw {
+        ef_search: HnswEfSearch::new(1).expect("valid ef_search"),
+    };
+
+    let results = collection.query(query).expect("query after churn delete");
+    assert_eq!(
+        results
+            .iter()
+            .map(|doc| doc.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["doc-3", "doc-6", "doc-7"]
+    );
+}
+
 fn hnsw_params(
     max_neighbors: u32,
     scaling_factor: u32,
