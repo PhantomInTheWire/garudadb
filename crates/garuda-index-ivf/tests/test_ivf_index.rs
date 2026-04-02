@@ -356,6 +356,44 @@ fn writing_index_insert_should_not_inflate_list_count_from_deleted_slots() {
 }
 
 #[test]
+fn writing_index_insert_after_removing_all_should_reset_runtime_state() {
+    let mut index = WritingIvfIndex::from_entries_incremental(
+        config_with_list_count(8),
+        vec![
+            entry(1, [0.0, 0.0]),
+            entry(2, [1.0, 0.0]),
+            entry(3, [2.0, 0.0]),
+        ],
+    );
+
+    assert_eq!(
+        index.remove(InternalDocId::new(1).expect("doc id")),
+        RemoveResult::Removed
+    );
+    assert_eq!(
+        index.remove(InternalDocId::new(2).expect("doc id")),
+        RemoveResult::Removed
+    );
+    assert_eq!(
+        index.remove(InternalDocId::new(3).expect("doc id")),
+        RemoveResult::Removed
+    );
+
+    index.insert(entry(4, [3.0, 0.0]));
+    assert_eq!(index.list_count(), 1);
+
+    let hits = index
+        .search(IvfSearchRequest::new(
+            &vector([3.0, 0.0]),
+            TopK::new(2).expect("top k"),
+            IvfProbeCount::new(1).expect("probe count"),
+        ))
+        .expect("search");
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].doc_id, InternalDocId::new(4).expect("doc id"));
+}
+
+#[test]
 fn persisted_index_remove_should_hide_deleted_doc_from_search_and_stored_lists() {
     let mut index = IvfIndex::build(
         config(),

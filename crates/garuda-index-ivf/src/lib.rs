@@ -324,7 +324,7 @@ impl IvfIndex {
         if removed.is_removed() {
             self.churn_events += 1;
             mark_retrain_pending_after_churn(
-                &self.state,
+                &mut self.state,
                 &mut self.churn_events,
                 &mut self.retrain_state,
             );
@@ -381,7 +381,7 @@ impl WritingIvfIndex {
         if removed.is_removed() {
             self.churn_events += 1;
             mark_retrain_pending_after_churn(
-                &self.state,
+                &mut self.state,
                 &mut self.churn_events,
                 &mut self.retrain_state,
             );
@@ -589,15 +589,23 @@ impl IvfState {
 
         entries
     }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.inverted_lists.clear();
+        self.entry_index_by_doc_id.clear();
+        self.entry_slots.clear();
+    }
 }
 
 fn mark_retrain_pending_after_churn(
-    state: &IvfState,
+    state: &mut IvfState,
     churn_events: &mut usize,
     retrain_state: &mut IvfRetrainState,
 ) {
     let live_len = state.len();
     if live_len == 0 {
+        state.clear();
         *churn_events = 0;
         *retrain_state = IvfRetrainState::Ready;
         return;
