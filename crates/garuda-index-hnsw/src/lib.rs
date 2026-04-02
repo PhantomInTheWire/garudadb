@@ -386,23 +386,27 @@ impl HnswIndex {
     }
 
     pub fn insert(&mut self, entry: HnswBuildEntry) {
-        if self.entries.is_empty() {
-            let level = sample_node_level(&self.config, NodeIndex::new(0), entry.doc_id());
-            self.graph.push_node(level);
+        if self.active_len() == 0 {
+            let node = self.graph.push_node(sample_node_level(
+                &self.config,
+                NodeIndex::new(self.entries.len()),
+                entry.doc_id(),
+            ));
             self.entries.push(entry);
             self.node_states.push(HnswNodeState::Active);
             let replaced = self
                 .node_by_doc_id
-                .insert(self.entries[0].doc_id(), NodeIndex::new(0));
+                .insert(self.entries[node.get()].doc_id(), node);
             assert!(
                 replaced.is_none(),
-                "hnsw first insert should not replace doc id"
+                "hnsw first active insert should not replace doc id"
             );
             return;
         }
 
-        let entry_point = self.graph.entry_point();
-        let max_level = self.graph.max_level();
+        let (entry_point, max_level) = self
+            .active_entry_point_and_level()
+            .expect("hnsw insert should have active entry point");
         let node = self.graph.push_node(sample_node_level(
             &self.config,
             NodeIndex::new(self.entries.len()),

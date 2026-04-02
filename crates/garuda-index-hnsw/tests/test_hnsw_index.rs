@@ -613,3 +613,77 @@ fn build_uses_graph_search_to_choose_insertion_neighbors() {
         &[NodeIndex::new(0)]
     );
 }
+
+#[test]
+fn insert_after_deleting_graph_entry_point_should_not_panic() {
+    let config = HnswIndexConfig::new(
+        VectorDimension::new(2).expect("dimension"),
+        DistanceMetric::InnerProduct,
+        HnswBuildConfig::new(
+            HnswNeighborConfig::new(
+                HnswM::new(2).expect("max neighbors"),
+                HnswMinNeighborCount::new(1).expect("min neighbors"),
+            )
+            .expect("neighbor config"),
+            HnswScalingFactor::new(2).expect("scaling factor"),
+            HnswEfConstruction::new(8).expect("ef construction"),
+            HnswPruneWidth::new(8).expect("prune width"),
+        ),
+    );
+
+    let entries = vec![
+        HnswBuildEntry::new(
+            &config,
+            InternalDocId::new(1).expect("doc id"),
+            DenseVector::parse(vec![1.0, 0.0]).expect("vector"),
+        )
+        .expect("entry"),
+        HnswBuildEntry::new(
+            &config,
+            InternalDocId::new(2).expect("doc id"),
+            DenseVector::parse(vec![0.0, 1.0]).expect("vector"),
+        )
+        .expect("entry"),
+    ];
+    let graph = HnswGraph::from_parts(
+        vec![HnswLevel::new(0), HnswLevel::new(1)],
+        vec![
+            vec![vec![NodeIndex::new(1)], vec![NodeIndex::new(0)]],
+            vec![vec![], vec![]],
+        ],
+        2,
+        HnswNeighborLimits::new(HnswM::new(2).expect("max neighbors")),
+    )
+    .expect("graph");
+    let mut index = HnswIndex::from_parts(config.clone(), entries, graph);
+
+    assert_eq!(
+        index.remove(InternalDocId::new(2).expect("doc id")),
+        RemoveResult::Removed
+    );
+
+    index.insert(
+        HnswBuildEntry::new(
+            &config,
+            InternalDocId::new(3).expect("doc id"),
+            DenseVector::parse(vec![1.0, 0.0]).expect("vector"),
+        )
+        .expect("entry"),
+    );
+
+    let hits = index
+        .search(HnswSearchRequest::new(
+            &DenseVector::parse(vec![1.0, 0.0]).expect("query"),
+            TopK::new(2).expect("top k"),
+            HnswEfSearch::new(8).expect("ef search"),
+        ))
+        .expect("search");
+    assert!(
+        hits.iter()
+            .any(|hit| hit.doc_id == InternalDocId::new(3).expect("doc id"))
+    );
+    assert!(
+        hits.iter()
+            .all(|hit| hit.doc_id != InternalDocId::new(2).expect("doc id"))
+    );
+}
