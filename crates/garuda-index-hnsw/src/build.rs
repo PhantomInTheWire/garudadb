@@ -6,6 +6,33 @@ use garuda_math::score_doc;
 use garuda_types::{InternalDocId, NodeIndex};
 
 impl HnswIndex {
+    pub(crate) fn remove_node_and_repair(&mut self, node: NodeIndex) {
+        let max_level = self.graph.node_level(node).get();
+
+        for raw_level in 0..=max_level {
+            let level = HnswLevel::new(raw_level);
+            let former_neighbors = self
+                .graph
+                .neighbors(level, node)
+                .iter()
+                .copied()
+                .filter(|&neighbor| self.is_active(neighbor))
+                .collect::<Vec<_>>();
+
+            if former_neighbors.is_empty() {
+                self.graph.replace_neighbors(level, node, Vec::new());
+                continue;
+            }
+
+            for &neighbor in &former_neighbors {
+                self.unlink_edge(level, neighbor, node);
+            }
+            self.graph.replace_neighbors(level, node, Vec::new());
+
+            self.repair_neighbors(level, &former_neighbors);
+        }
+    }
+
     pub(crate) fn insert_node(
         &mut self,
         node: NodeIndex,
@@ -83,6 +110,120 @@ impl HnswIndex {
         self.graph.replace_neighbors(level, node, neighbors);
     }
 
+    fn unlink_edge(&mut self, level: HnswLevel, from: NodeIndex, to: NodeIndex) {
+        let mut neighbors = self.graph.neighbors(level, from).to_vec();
+        let original_len = neighbors.len();
+        neighbors.retain(|&neighbor| neighbor != to);
+        if neighbors.len() == original_len {
+            return;
+        }
+
+        self.graph.replace_neighbors(level, from, neighbors);
+    }
+
+    fn repair_neighbors(&mut self, level: HnswLevel, neighbors: &[NodeIndex]) {
+        if neighbors.len() < 2 {
+            return;
+        }
+
+        let level_limit = self.config.neighbor_limits().for_level(level);
+        let min_degree = self.config.min_neighbor_count().get() as usize;
+
+        let mut degrees = Vec::with_capacity(neighbors.len());
+        for &neighbor in neighbors {
+            degrees.push(self.graph.neighbors(level, neighbor).len());
+        }
+
+        let mut pairs = Vec::new();
+        for left in 0..neighbors.len() {
+            for right in (left + 1)..neighbors.len() {
+                let left_node = neighbors[left];
+                let right_node = neighbors[right];
+
+                if self.graph.neighbors(level, left_node).contains(&right_node) {
+                    continue;
+                }
+
+                let score = score_doc(
+                    self.config.metric,
+                    self.vector(left_node).as_slice(),
+                    self.vector(right_node).as_slice(),
+                );
+                pairs.push(RepairPair { left, right, score });
+            }
+        }
+
+        pairs.sort_by(|a, b| {
+            let score_order = b.score.total_cmp(&a.score);
+            if score_order != std::cmp::Ordering::Equal {
+                return score_order;
+            }
+
+            let a_left_doc = self.doc_id(neighbors[a.left]);
+            let b_left_doc = self.doc_id(neighbors[b.left]);
+            let left_doc_order = a_left_doc.cmp(&b_left_doc);
+            if left_doc_order != std::cmp::Ordering::Equal {
+                return left_doc_order;
+            }
+
+            let a_right_doc = self.doc_id(neighbors[a.right]);
+            let b_right_doc = self.doc_id(neighbors[b.right]);
+            a_right_doc.cmp(&b_right_doc)
+        });
+
+        for &pair in &pairs {
+            let left = pair.left;
+            let right = pair.right;
+
+            if degrees[left] >= level_limit || degrees[right] >= level_limit {
+                continue;
+            }
+
+            if degrees[left] >= min_degree && degrees[right] >= min_degree {
+                continue;
+            }
+
+            let left_node = neighbors[left];
+            let right_node = neighbors[right];
+            self.link_edge(level, left_node, right_node);
+            degrees[left] += 1;
+            degrees[right] += 1;
+        }
+
+        for &pair in &pairs {
+            let left = pair.left;
+            let right = pair.right;
+
+            if degrees[left] >= level_limit || degrees[right] >= level_limit {
+                continue;
+            }
+
+            let left_node = neighbors[left];
+            let right_node = neighbors[right];
+            if self.graph.neighbors(level, left_node).contains(&right_node) {
+                continue;
+            }
+
+            self.link_edge(level, left_node, right_node);
+            degrees[left] += 1;
+            degrees[right] += 1;
+        }
+    }
+
+    fn link_edge(&mut self, level: HnswLevel, left: NodeIndex, right: NodeIndex) {
+        let mut left_neighbors = self.graph.neighbors(level, left).to_vec();
+        if !left_neighbors.contains(&right) {
+            left_neighbors.push(right);
+            self.graph.replace_neighbors(level, left, left_neighbors);
+        }
+
+        let mut right_neighbors = self.graph.neighbors(level, right).to_vec();
+        if !right_neighbors.contains(&left) {
+            right_neighbors.push(left);
+            self.graph.replace_neighbors(level, right, right_neighbors);
+        }
+    }
+
     fn prune_to_max_neighbors(
         &self,
         level: HnswLevel,
@@ -157,6 +298,13 @@ impl HnswIndex {
 
         true
     }
+}
+
+#[derive(Clone, Copy)]
+struct RepairPair {
+    left: usize,
+    right: usize,
+    score: f32,
 }
 
 pub(crate) fn sample_node_levels(

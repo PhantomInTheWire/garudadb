@@ -108,6 +108,20 @@
 //!   code backfills from the best remaining candidates without the distinctness
 //!   check until it reaches `min_neighbor_count` or the level limit.
 //!
+//! 9.5. Delete-time local repair
+//! - `remove(doc_id)` marks the node inactive and unlinks it from all neighbors
+//!   on levels up to that node's top level.
+//! - For each affected level, the implementation collects former active
+//!   neighbors of the removed node, then performs local score-ordered pairing.
+//! - Pair priority is: higher vector similarity first, then lower doc-id
+//!   tie-break.
+//! - Selected pairs are linked bidirectionally while respecting per-level
+//!   max-neighbor limits.
+//! - The first pass prefers nodes below `min_neighbor_count`; the second pass
+//!   fills remaining available degree by score order.
+//! - This keeps the neighborhood connected and limits quality regression after
+//!   repeated deletes without rebuilding the full graph.
+//!
 //! 10. Reverse edges
 //! - After a node chooses its outgoing neighbors for a level, every chosen
 //!   neighbor is updated to include a reverse edge back to the node.
@@ -141,7 +155,7 @@
 //! - The crate aims for a predictable HNSW core that is easy to rebuild from the
 //!   segment's live vectors and easy to validate when loaded from disk.
 //! - Deletion currently marks nodes inactive and filters traversal/results; graph
-//!   neighborhood repair is a separate step.
+//!   neighborhood repair is local and degree-aware.
 
 use garuda_math::score_doc;
 use garuda_types::{
@@ -410,6 +424,7 @@ impl HnswIndex {
         };
 
         assert!(self.is_active(node), "hnsw removed doc should be active");
+        self.remove_node_and_repair(node);
         self.node_states[node.get()] = HnswNodeState::Deleted;
         RemoveResult::Removed
     }
