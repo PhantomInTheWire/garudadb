@@ -218,8 +218,6 @@ impl<'a> IvfSearchRequest<'a> {
 pub struct IvfIndex {
     config: IvfIndexConfig,
     state: IvfState,
-    churn_events: usize,
-    retrain_state: IvfRetrainState,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -278,8 +276,6 @@ impl IvfIndex {
         Self {
             config,
             state: IvfState::new(entries, trained.centroids, trained.list_entry_indexes),
-            churn_events: 0,
-            retrain_state: IvfRetrainState::Ready,
         }
     }
 
@@ -294,8 +290,6 @@ impl IvfIndex {
         Ok(Self {
             config,
             state: IvfState::new(entries, stored.centroids, entry_indexes),
-            churn_events: 0,
-            retrain_state: IvfRetrainState::Ready,
         })
     }
 
@@ -320,17 +314,7 @@ impl IvfIndex {
     }
 
     pub fn remove(&mut self, doc_id: InternalDocId) -> RemoveResult {
-        let removed = self.state.remove_incremental(&self.config, doc_id);
-        if removed.is_removed() {
-            self.churn_events += 1;
-            mark_retrain_pending_after_churn(
-                &mut self.state,
-                &mut self.churn_events,
-                &mut self.retrain_state,
-            );
-        }
-
-        removed
+        self.state.remove_incremental(&self.config, doc_id)
     }
 }
 
