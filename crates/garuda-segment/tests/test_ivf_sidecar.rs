@@ -100,6 +100,52 @@ fn writing_ivf_index_should_contain_each_live_record_once() {
     assert_eq!(index.list_count(), 3);
 }
 
+#[test]
+fn write_persisted_segment_should_compact_ivf_sidecar_after_incremental_delete() {
+    let root = temp_root("segment-ivf-sidecar-compact-after-delete");
+    let schema = schema();
+    let mut segment = PersistedSegment::new(
+        segment_meta(SegmentId::new_unchecked(1)),
+        vec![
+            stored_record(1, "doc-1", [1.0, 0.0, 0.0, 0.0]),
+            stored_record(2, "doc-2", [0.9, 0.1, 0.0, 0.0]),
+            stored_record(3, "doc-3", [0.0, 1.0, 0.0, 0.0]),
+        ],
+        &schema,
+    );
+
+    assert!(segment.mark_deleted(InternalDocId::new(2).expect("doc id")));
+    write_persisted_segment(&root, &segment, &schema).expect("write compact ivf sidecar");
+
+    let reopened =
+        read_persisted_segment(&root, &segment.meta, &schema).expect("reopen compact ivf sidecar");
+    assert_eq!(reopened.meta.doc_count, 2);
+
+    let hits = search_persisted(
+        &reopened,
+        SegmentSearchRequest::Ivf(IvfSegmentSearchRequest {
+            query_vector: &DenseVector::parse(vec![1.0, 0.0, 0.0, 0.0]).expect("valid vector"),
+            top_k: TopK::new(3).expect("valid top_k"),
+            nprobe: schema
+                .vector
+                .indexes
+                .ivf_params()
+                .expect("ivf params")
+                .n_probe,
+            filter: SegmentFilter::All,
+        }),
+        None,
+        &garuda_meta::DeleteStore::new(),
+    )
+    .expect("search reopened segment");
+
+    assert_eq!(hits.len(), 2);
+    assert!(
+        hits.iter()
+            .all(|hit| hit.record.doc.id != DocId::parse("doc-2").expect("valid doc id"))
+    );
+}
+
 fn temp_root(prefix: &str) -> PathBuf {
     let nonce = COUNTER.fetch_add(1, Ordering::Relaxed);
     let ts = SystemTime::now()

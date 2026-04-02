@@ -159,10 +159,10 @@
 
 use garuda_math::score_doc;
 use garuda_types::{
-    DenseVector, DistanceMetric, HnswEfConstruction, HnswEfSearch, HnswGraph, HnswLevel, HnswM,
-    HnswMinNeighborCount, HnswNeighborConfig, HnswNeighborLimits, HnswPruneWidth,
+    DenseVector, DistanceMetric, HNSW_MAX_GRAPH_LEVEL, HnswEfConstruction, HnswEfSearch, HnswGraph,
+    HnswLevel, HnswM, HnswMinNeighborCount, HnswNeighborConfig, HnswNeighborLimits, HnswPruneWidth,
     HnswScalingFactor, InternalDocId, NodeIndex, RemoveResult, Status, StatusCode, TopK,
-    VectorDimension, HNSW_MAX_GRAPH_LEVEL,
+    VectorDimension,
 };
 use std::collections::HashMap;
 

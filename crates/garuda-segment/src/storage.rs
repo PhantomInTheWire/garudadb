@@ -3,9 +3,9 @@ use crate::codec::{
     encode_segment,
 };
 use crate::index::{
-    flat_index_entries, indexed_scalar_fields, load_persisted_search_resources,
-    persistable_flat_entries_from_writing, should_persist_flat, should_persist_hnsw,
-    should_persist_ivf,
+    build_hnsw_index, build_ivf_index, flat_index_entries, indexed_scalar_fields,
+    load_persisted_search_resources, persistable_flat_entries_from_writing, should_persist_flat,
+    should_persist_hnsw, should_persist_ivf,
 };
 use crate::types::{PersistedSegment, StoredRecord, WritingSegment, sync_segment_meta_fields};
 use crate::{RecordState, reset_wal, segment_meta};
@@ -53,10 +53,8 @@ pub fn write_persisted_segment(
     }
 
     if should_persist_hnsw(schema, segment.meta.doc_count) {
-        let index = segment
-            .hnsw_index
-            .as_ref()
-            .expect("enabled persisted hnsw state should exist");
+        let index = build_hnsw_index(schema, &segment.meta, &segment.records)
+            .expect("enabled persisted hnsw state should build for sidecar");
         let sidecar = encode_hnsw_graph(index.graph())?;
         write_file_atomically(&segment_hnsw_index_path(root, segment.meta.id), &sidecar)?;
     } else {
@@ -64,10 +62,8 @@ pub fn write_persisted_segment(
     }
 
     if should_persist_ivf(schema, segment.meta.doc_count) {
-        let index = segment
-            .ivf_index
-            .as_ref()
-            .expect("enabled persisted ivf state should exist");
+        let index = build_ivf_index(schema, &segment.meta, &segment.records)
+            .expect("enabled persisted ivf state should build for sidecar");
         let sidecar = encode_ivf_index(index.stored_lists(), &schema.vector)?;
         write_file_atomically(&segment_ivf_index_path(root, segment.meta.id), &sidecar)?;
     } else {
@@ -104,10 +100,8 @@ pub fn write_writing_segment(
     }
 
     if should_persist_hnsw(schema, segment.meta.doc_count) {
-        let index = segment
-            .hnsw_index
-            .as_ref()
-            .expect("enabled writing hnsw state should exist");
+        let index = build_hnsw_index(schema, &segment.meta, &segment.records)
+            .expect("enabled writing hnsw state should build for sidecar");
         let sidecar = encode_hnsw_graph(index.graph())?;
         write_file_atomically(&segment_hnsw_index_path(root, segment.meta.id), &sidecar)?;
     } else {

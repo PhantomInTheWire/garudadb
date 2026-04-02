@@ -1,7 +1,7 @@
 use crate::{
+    HnswHit, HnswIndex, HnswSearchRequest,
     compare::compare_score_then_doc_id,
     heap::{ScoredNode, WorstScoredNode},
-    HnswHit, HnswIndex, HnswSearchRequest,
 };
 use garuda_types::{DenseVector, HnswLevel, NodeIndex, Status, StatusCode};
 use std::collections::{BinaryHeap, HashSet};

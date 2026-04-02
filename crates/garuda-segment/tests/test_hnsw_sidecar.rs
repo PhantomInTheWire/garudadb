@@ -9,9 +9,9 @@ use garuda_segment::{
 use garuda_storage::{read_file, segment_hnsw_index_path};
 use garuda_types::{
     CollectionName, CollectionSchema, DenseVector, DistanceMetric, DocId, FilterExpr,
-    HnswIndexParams, Nullability, ScalarCompareOp, ScalarFieldSchema, ScalarIndexState,
-    ScalarPredicate, ScalarPrefilter, ScalarType, ScalarValue, SegmentId, StatusCode, TopK,
-    VectorDimension, VectorFieldSchema, VectorIndexState,
+    HnswIndexParams, InternalDocId, Nullability, ScalarCompareOp, ScalarFieldSchema,
+    ScalarIndexState, ScalarPredicate, ScalarPrefilter, ScalarType, ScalarValue, SegmentId,
+    StatusCode, TopK, VectorDimension, VectorFieldSchema, VectorIndexState,
 };
 
 #[test]
@@ -221,6 +221,47 @@ fn stale_hnsw_sidecar_fails_reopen_when_live_entries_change() {
     let error = read_persisted_segment(&root, &segment.meta, &schema)
         .expect_err("stale sidecar should fail");
     assert_eq!(error.code, StatusCode::Internal);
+}
+
+#[test]
+fn write_persisted_segment_should_compact_hnsw_sidecar_after_incremental_delete() {
+    let root = temp_root("segment-hnsw-sidecar-compact-after-delete");
+    let schema = schema();
+    let mut segment = PersistedSegment::new(
+        segment_meta(SegmentId::new_unchecked(1)),
+        vec![
+            stored_record(1, "doc-1", "alpha", [1.0, 0.0, 0.0, 0.0]),
+            stored_record(2, "doc-2", "beta", [0.0, 1.0, 0.0, 0.0]),
+            stored_record(3, "doc-3", "gamma", [0.0, 0.0, 1.0, 0.0]),
+        ],
+        &schema,
+    );
+
+    assert!(segment.mark_deleted(InternalDocId::new(2).expect("doc id")));
+    write_persisted_segment(&root, &segment, &schema).expect("write compact sidecar");
+
+    let reopened =
+        read_persisted_segment(&root, &segment.meta, &schema).expect("reopen compact hnsw sidecar");
+    assert_eq!(reopened.meta.doc_count, 2);
+
+    let hits = search_persisted(
+        &reopened,
+        SegmentSearchRequest::Hnsw(HnswSegmentSearchRequest {
+            query_vector: &DenseVector::parse(vec![1.0, 0.0, 0.0, 0.0]).expect("valid vector"),
+            top_k: TopK::new(3).expect("valid top_k"),
+            ef_search: HnswIndexParams::default().ef_search,
+            filter: SegmentFilter::All,
+        }),
+        None,
+        &garuda_meta::DeleteStore::new(),
+    )
+    .expect("search reopened segment");
+
+    assert_eq!(hits.len(), 2);
+    assert!(
+        hits.iter()
+            .all(|hit| hit.record.doc.id != DocId::parse("doc-2").expect("valid doc id"))
+    );
 }
 
 fn schema() -> CollectionSchema {
