@@ -145,6 +145,16 @@ impl WritingSegment {
         meta.path = segment_file_name(segment_id);
         PersistedSegment::new(meta, self.records, schema)
     }
+
+    pub fn mark_deleted(&mut self, doc_id: InternalDocId) -> bool {
+        let Some(record) = live_record_by_internal_id(&mut self.records, doc_id) else {
+            return false;
+        };
+
+        record.state = RecordState::Deleted;
+        self.sync_meta();
+        true
+    }
 }
 
 impl PersistedSegment {
@@ -175,6 +185,20 @@ impl PersistedSegment {
         self.ivf_index = resources.ivf_index;
         self.scalar_indexes = resources.scalar_indexes;
     }
+
+    pub fn mark_deleted_and_refresh(
+        &mut self,
+        doc_id: InternalDocId,
+        schema: &CollectionSchema,
+    ) -> bool {
+        let Some(record) = live_record_by_internal_id(&mut self.records, doc_id) else {
+            return false;
+        };
+
+        record.state = RecordState::Deleted;
+        self.rebuild_search_resources(schema);
+        true
+    }
 }
 
 pub(crate) fn sync_segment_meta_fields(meta: &mut SegmentMeta, records: &[StoredRecord]) {
@@ -195,4 +219,19 @@ pub(crate) fn sync_segment_meta_fields(meta: &mut SegmentMeta, records: &[Stored
     meta.min_doc_id = min_doc_id;
     meta.max_doc_id = max_doc_id;
     meta.doc_count = live_doc_count;
+}
+
+fn live_record_by_internal_id(
+    records: &mut [StoredRecord],
+    doc_id: InternalDocId,
+) -> Option<&mut StoredRecord> {
+    for record in records {
+        if record.doc_id != doc_id || matches!(record.state, RecordState::Deleted) {
+            continue;
+        }
+
+        return Some(record);
+    }
+
+    None
 }

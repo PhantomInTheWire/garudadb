@@ -311,7 +311,7 @@ fn ivf_hit(hit: IvfSearchHit) -> (InternalDocId, f32) {
     (hit.doc_id, hit.score)
 }
 
-fn search_candidate_nprobe(
+pub(crate) fn search_candidate_nprobe(
     nprobe: IvfProbeCount,
     top_k: TopK,
     candidate_top_k: TopK,
