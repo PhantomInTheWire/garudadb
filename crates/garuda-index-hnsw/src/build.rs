@@ -1,6 +1,6 @@
 use crate::{
-    HnswBuildEntry, HnswIndex, HnswIndexConfig, HnswLevel, compare::compare_score_then_doc_id,
-    heap::ScoredNode,
+    compare::compare_score_then_doc_id, heap::ScoredNode, HnswBuildEntry, HnswIndex,
+    HnswIndexConfig, HnswLevel,
 };
 use garuda_math::score_doc;
 use garuda_types::{InternalDocId, NodeIndex};

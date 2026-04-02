@@ -1,7 +1,7 @@
 use garuda_index_ivf::IvfBuildEntry;
 use garuda_meta::MetadataStore;
 use garuda_segment::{
-    PersistedSegment, RecordState, StoredRecord, WritingSegment, segment_file_name, segment_meta,
+    segment_file_name, segment_meta, PersistedSegment, RecordState, StoredRecord, WritingSegment,
 };
 use garuda_storage::WRITING_SEGMENT_ID;
 use garuda_types::{CollectionSchema, Doc, InternalDocId, SegmentId};
@@ -174,11 +174,7 @@ impl SegmentManager {
         self.writing_segment.mark_deleted(doc_id)
     }
 
-    pub(crate) fn mark_deleted(
-        &mut self,
-        doc_id: InternalDocId,
-        schema: &CollectionSchema,
-    ) -> bool {
+    pub(crate) fn mark_deleted(&mut self, doc_id: InternalDocId) -> bool {
         if self.mark_writing_deleted(doc_id) {
             return true;
         }
@@ -189,7 +185,7 @@ impl SegmentManager {
             }
 
             let segment = &mut self.persisted_segments[index];
-            if segment.mark_deleted_and_refresh(doc_id, schema) {
+            if segment.mark_deleted(doc_id) {
                 return true;
             }
         }
