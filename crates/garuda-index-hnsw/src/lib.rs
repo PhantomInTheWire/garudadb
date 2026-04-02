@@ -111,8 +111,9 @@
 //! 9.5. Delete-time local repair
 //! - `remove(doc_id)` marks the node inactive and unlinks it from all neighbors
 //!   on levels up to that node's top level.
-//! - For each affected level, the implementation collects former active
-//!   neighbors of the removed node, then performs local score-ordered pairing.
+//! - For each affected level, the implementation collects both former active
+//!   outgoing neighbors of the removed node and active incoming neighbors that
+//!   still point to it, then performs local score-ordered pairing.
 //! - Pair priority is: higher vector similarity first, then lower doc-id
 //!   tie-break.
 //! - Selected pairs are linked bidirectionally while respecting per-level
@@ -133,8 +134,7 @@
 //!
 //! 11. Entry point semantics
 //! - Build still uses `HnswGraph::entry_point()` for insertion descent.
-//! - Runtime state caches the highest-level active entry point (breaking ties by
-//!   newest node index).
+//! - Runtime state caches an active entry point at the current highest level.
 //! - Query-time search starts from the cached active entry point and descends
 //!   greedily from there.
 //! - This keeps query entry-point selection valid after deletions mark nodes
@@ -356,8 +356,7 @@ impl HnswIndex {
             index.insert_node(node, entry_point, max_level);
 
             let node_level = index.graph.node_level(node);
-            if node_level > max_level || (node_level == max_level && node.get() > entry_point.get())
-            {
+            if node_level > max_level {
                 entry_point = node;
                 max_level = node_level;
             }

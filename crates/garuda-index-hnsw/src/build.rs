@@ -19,18 +19,40 @@ impl HnswIndex {
                 .filter(|&neighbor| self.is_active(neighbor))
                 .collect::<Vec<_>>();
 
-            if former_neighbors.is_empty() {
-                self.graph.replace_neighbors(level, node, Vec::new());
-                continue;
+            let mut affected_neighbors = former_neighbors;
+            for incoming in self.incoming_active_neighbors(level, node) {
+                if affected_neighbors.contains(&incoming) {
+                    continue;
+                }
+
+                affected_neighbors.push(incoming);
             }
 
-            for &neighbor in &former_neighbors {
+            for &neighbor in &affected_neighbors {
                 self.unlink_edge(level, neighbor, node);
             }
             self.graph.replace_neighbors(level, node, Vec::new());
 
-            self.repair_neighbors(level, &former_neighbors);
+            self.repair_neighbors(level, &affected_neighbors);
         }
+    }
+
+    fn incoming_active_neighbors(&self, level: HnswLevel, node: NodeIndex) -> Vec<NodeIndex> {
+        let mut incoming = Vec::new();
+
+        for &candidate in self.node_by_doc_id.values() {
+            if self.graph.node_level(candidate) < level {
+                continue;
+            }
+
+            if !self.graph.neighbors(level, candidate).contains(&node) {
+                continue;
+            }
+
+            incoming.push(candidate);
+        }
+
+        incoming
     }
 
     pub(crate) fn insert_node(
