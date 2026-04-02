@@ -1,4 +1,7 @@
-use crate::{CollectionOptions, CollectionSchema, DocId, InternalDocId, SegmentId};
+use crate::{
+    CollectionOptions, CollectionSchema, DocId, InternalDocId, ManifestVersionId, SegmentId,
+    SnapshotId,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,9 +97,9 @@ pub struct Manifest {
     pub options: CollectionOptions,
     pub next_doc_id: InternalDocId,
     pub next_segment_id: SegmentId,
-    pub id_map_snapshot_id: crate::SnapshotId,
-    pub delete_snapshot_id: crate::SnapshotId,
-    pub manifest_version_id: crate::ManifestVersionId,
+    pub id_map_snapshot_id: SnapshotId,
+    pub delete_snapshot_id: SnapshotId,
+    pub manifest_version_id: ManifestVersionId,
     pub writing_segment: SegmentMeta,
     pub persisted_segments: Vec<SegmentMeta>,
 }

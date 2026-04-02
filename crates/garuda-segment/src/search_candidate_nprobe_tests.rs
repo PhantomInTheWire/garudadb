@@ -1,4 +1,5 @@
-use super::*;
+use crate::search::search_candidate_nprobe;
+use garuda_types::{IvfProbeCount, TopK};
 
 fn top_k(value: usize) -> TopK {
     TopK::new(value).expect("top_k")

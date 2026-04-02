@@ -1,4 +1,4 @@
-use super::score_doc;
+use crate::score_doc;
 use crate::simd;
 use garuda_types::DistanceMetric;
 

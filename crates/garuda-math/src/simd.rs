@@ -35,7 +35,7 @@ pub(crate) fn squared_l2_scalar(lhs: &[f32], rhs: &[f32]) -> f32 {
 
 #[cfg(not(target_arch = "aarch64"))]
 mod implementation {
-    use super::{dot_scalar, squared_l2_scalar};
+    use crate::simd::{dot_scalar, squared_l2_scalar};
 
     pub(super) fn dot(lhs: &[f32], rhs: &[f32]) -> f32 {
         assert_eq!(lhs.len(), rhs.len());
