@@ -242,3 +242,70 @@ fn from_parts_rejects_missing_doc_ids() {
 
     assert_eq!(error.code, StatusCode::Internal);
 }
+
+#[test]
+fn writing_index_remove_should_hide_deleted_doc_from_search_and_stored_lists() {
+    let mut index = WritingIvfIndex::from_entries_incremental(
+        config(),
+        vec![
+            entry(1, [0.0, 0.0]),
+            entry(2, [0.1, 0.0]),
+            entry(3, [10.0, 10.0]),
+            entry(4, [10.1, 10.0]),
+        ],
+    );
+
+    assert!(index.remove(InternalDocId::new(2).expect("doc id")));
+    assert!(!index.remove(InternalDocId::new(2).expect("doc id")));
+
+    let hits = index
+        .search(IvfSearchRequest::new(
+            &vector([0.0, 0.0]),
+            TopK::new(4).expect("top k"),
+            IvfProbeCount::new(2).expect("probe count"),
+        ))
+        .expect("search");
+
+    assert!(
+        hits.iter()
+            .all(|hit| hit.doc_id != InternalDocId::new(2).expect("doc id"))
+    );
+}
+
+#[test]
+fn persisted_index_remove_should_hide_deleted_doc_from_search_and_stored_lists() {
+    let mut index = IvfIndex::build(
+        config(),
+        vec![
+            entry(1, [0.0, 0.0]),
+            entry(2, [0.1, 0.0]),
+            entry(3, [10.0, 10.0]),
+            entry(4, [10.1, 10.0]),
+        ],
+    );
+
+    assert!(index.remove(InternalDocId::new(2).expect("doc id")));
+    assert!(!index.remove(InternalDocId::new(2).expect("doc id")));
+
+    let hits = index
+        .search(IvfSearchRequest::new(
+            &vector([0.0, 0.0]),
+            TopK::new(4).expect("top k"),
+            IvfProbeCount::new(2).expect("probe count"),
+        ))
+        .expect("search");
+
+    assert!(
+        hits.iter()
+            .all(|hit| hit.doc_id != InternalDocId::new(2).expect("doc id"))
+    );
+
+    let lists = index.stored_lists();
+    assert!(
+        lists
+            .doc_ids_by_list
+            .iter()
+            .flatten()
+            .all(|&doc_id| doc_id != InternalDocId::new(2).expect("doc id"))
+    );
+}

@@ -89,15 +89,12 @@ pub(crate) fn build_persisted_search_resources(
     }
 }
 
-pub(crate) fn build_persisted_vector_resources(
+pub(crate) fn build_persisted_hnsw_resource(
     schema: &CollectionSchema,
     meta: &SegmentMeta,
     records: &[StoredRecord],
-) -> (Option<HnswIndex>, Option<IvfIndex>) {
-    (
-        build_hnsw_index(schema, meta, records),
-        build_ivf_index(schema, meta, records),
-    )
+) -> Option<HnswIndex> {
+    build_hnsw_index(schema, meta, records)
 }
 
 pub(crate) fn load_persisted_search_resources(

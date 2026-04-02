@@ -1,6 +1,5 @@
 use crate::index::{
-    build_persisted_search_resources, build_persisted_vector_resources,
-    build_writing_search_resources,
+    build_persisted_hnsw_resource, build_persisted_search_resources, build_writing_search_resources,
 };
 use garuda_index_flat::{FlatIndex, WritingFlatIndex};
 use garuda_index_hnsw::{HnswIndex, WritingHnswIndex};
@@ -164,6 +163,10 @@ impl WritingSegment {
             index.remove(doc_id);
         }
 
+        if let Some(index) = &mut self.ivf_index {
+            index.remove(doc_id);
+        }
+
         remove_from_scalar_indexes(&mut self.scalar_indexes, doc_id, scalar_fields);
 
         self.sync_meta();
@@ -219,19 +222,20 @@ impl PersistedSegment {
             index.remove(doc_id);
         }
 
+        if let Some(index) = &mut self.ivf_index {
+            index.remove(doc_id);
+        }
+
         remove_from_scalar_indexes(&mut self.scalar_indexes, doc_id, scalar_fields);
 
-        self.rebuild_vector_search_resources(schema);
+        self.rebuild_hnsw_search_resource(schema);
         self.sync_meta();
         true
     }
 
-    pub fn rebuild_vector_search_resources(&mut self, schema: &CollectionSchema) {
+    pub fn rebuild_hnsw_search_resource(&mut self, schema: &CollectionSchema) {
         self.sync_meta();
-        let (hnsw_index, ivf_index) =
-            build_persisted_vector_resources(schema, &self.meta, &self.records);
-        self.hnsw_index = hnsw_index;
-        self.ivf_index = ivf_index;
+        self.hnsw_index = build_persisted_hnsw_resource(schema, &self.meta, &self.records);
     }
 }
 
