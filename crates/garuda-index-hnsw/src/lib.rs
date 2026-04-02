@@ -41,7 +41,7 @@
 //!
 //! 4. Incremental insert
 //! - `insert` appends the new entry, samples its level, grows the graph, and
-//!   reuses the current graph entry point plus current max level.
+//!   descends from the current highest-level active entry point.
 //! - The first inserted node becomes a one-node graph.
 //! - Later inserts use the same insertion routine as bulk build.
 //! - Runtime state tracks active nodes by `doc_id`, so deletions can mark nodes
@@ -133,10 +133,12 @@
 //!
 //! 11. Entry point semantics
 //! - Build still uses `HnswGraph::entry_point()` for insertion descent.
-//! - Query-time search picks the highest-level active node (and breaks ties by
-//!   newest node index), then descends greedily from there.
+//! - Runtime state caches the highest-level active entry point (breaking ties by
+//!   newest node index).
+//! - Query-time search starts from the cached active entry point and descends
+//!   greedily from there.
 //! - This keeps query entry-point selection valid after deletions mark nodes
-//!   inactive.
+//!   inactive without scanning all historical nodes.
 //!
 //! 12. Persisted graph invariants
 //! - `HnswGraph::from_parts` validates persisted structure before the graph is
@@ -307,6 +309,7 @@ pub struct HnswIndex {
     graph: HnswGraph,
     node_states: Vec<HnswNodeState>,
     node_by_doc_id: HashMap<InternalDocId, NodeIndex>,
+    active_entry_point: Option<(NodeIndex, HnswLevel)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -323,6 +326,7 @@ impl HnswIndex {
             graph: HnswGraph::new(Vec::new()),
             node_states: Vec::new(),
             node_by_doc_id: HashMap::new(),
+            active_entry_point: None,
         }
     }
 
@@ -334,6 +338,7 @@ impl HnswIndex {
             entries,
             node_states: Vec::new(),
             node_by_doc_id: HashMap::new(),
+            active_entry_point: None,
         };
 
         index.node_states = vec![HnswNodeState::Active; index.entries.len()];
@@ -371,6 +376,7 @@ impl HnswIndex {
             graph,
             node_states: Vec::new(),
             node_by_doc_id: HashMap::new(),
+            active_entry_point: None,
         };
         index.node_states = vec![HnswNodeState::Active; index.entries.len()];
         index.rebuild_node_by_doc_id();
@@ -401,6 +407,7 @@ impl HnswIndex {
                 replaced.is_none(),
                 "hnsw first active insert should not replace doc id"
             );
+            self.active_entry_point = Some((node, self.graph.node_level(node)));
             return;
         }
 
@@ -421,6 +428,7 @@ impl HnswIndex {
             replaced.is_none(),
             "hnsw insert should not replace existing doc id"
         );
+        self.maybe_update_active_entry_point(node);
         self.insert_node(node, entry_point, max_level);
     }
 
@@ -432,6 +440,12 @@ impl HnswIndex {
         assert!(self.is_active(node), "hnsw removed doc should be active");
         self.remove_node_and_repair(node);
         self.node_states[node.get()] = HnswNodeState::Deleted;
+        if self
+            .active_entry_point
+            .is_some_and(|(entry_point, _)| entry_point == node)
+        {
+            self.refresh_active_entry_point();
+        }
         RemoveResult::Removed
     }
 
@@ -472,24 +486,7 @@ impl HnswIndex {
     }
 
     fn active_entry_point_and_level(&self) -> Option<(NodeIndex, HnswLevel)> {
-        if self.node_by_doc_id.is_empty() {
-            return None;
-        }
-
-        for level in (0..=self.graph.max_level().get()).rev() {
-            let level = HnswLevel::new(level);
-
-            for raw_node in (0..self.entries.len()).rev() {
-                let node = NodeIndex::new(raw_node);
-                if self.graph.node_level(node) < level || !self.is_active(node) {
-                    continue;
-                }
-
-                return Some((node, level));
-            }
-        }
-
-        unreachable!("hnsw active node set should contain at least one active node")
+        self.active_entry_point
     }
 
     fn rebuild_node_by_doc_id(&mut self) {
@@ -511,6 +508,53 @@ impl HnswIndex {
                 .insert(entry.doc_id(), NodeIndex::new(raw_node));
             assert!(replaced.is_none(), "hnsw active doc ids should be unique");
         }
+
+        self.refresh_active_entry_point();
+    }
+
+    fn maybe_update_active_entry_point(&mut self, node: NodeIndex) {
+        let node_level = self.graph.node_level(node);
+        let Some((entry_point, entry_level)) = self.active_entry_point else {
+            self.active_entry_point = Some((node, node_level));
+            return;
+        };
+
+        if node_level > entry_level || (node_level == entry_level && node.get() > entry_point.get())
+        {
+            self.active_entry_point = Some((node, node_level));
+        }
+    }
+
+    fn refresh_active_entry_point(&mut self) {
+        if self.node_by_doc_id.is_empty() {
+            self.active_entry_point = None;
+            return;
+        }
+
+        let max_level = self.graph.max_level().get();
+        for raw_level in (0..=max_level).rev() {
+            let level = HnswLevel::new(raw_level);
+            let mut best_node: Option<NodeIndex> = None;
+
+            for &node in self.node_by_doc_id.values() {
+                if self.graph.node_level(node) < level {
+                    continue;
+                }
+
+                match best_node {
+                    None => best_node = Some(node),
+                    Some(current) if node.get() > current.get() => best_node = Some(node),
+                    _ => {}
+                }
+            }
+
+            if let Some(node) = best_node {
+                self.active_entry_point = Some((node, level));
+                return;
+            }
+        }
+
+        unreachable!("hnsw active nodes should yield an active entry point");
     }
 }
 
