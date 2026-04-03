@@ -1,9 +1,13 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use garuda_types::CollectionName;
-use std::num::{NonZeroU32, NonZeroUsize};
+use garuda_types::{
+    CollectionName, HnswEfConstruction, HnswEfSearch, HnswIndexParams, HnswM, HnswMinNeighborCount,
+    HnswPruneWidth, HnswScalingFactor, IvfIndexParams, IvfListCount, IvfProbeCount,
+    IvfTrainingIterations, VectorProjection,
+};
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
-use crate::parsing::parse_collection_name;
+use crate::parsing::{parse_collection_name, parse_non_zero_u32};
 
 #[derive(Parser)]
 pub struct Cli {
@@ -22,10 +26,10 @@ pub enum Command {
         dimension: NonZeroUsize,
         #[arg(long, value_enum, default_value_t = MetricArg::Cosine)]
         metric: MetricArg,
-        #[arg(long)]
-        segment_max_docs: Option<usize>,
-        #[arg(long, value_enum)]
-        storage_access: Option<StorageAccessArg>,
+        #[arg(long, default_value_t = crate::command::default_segment_max_docs())]
+        segment_max_docs: usize,
+        #[arg(long, value_enum, default_value_t = StorageAccessArg::MmapPreferred)]
+        storage_access: StorageAccessArg,
     },
     CreateFromSchema {
         path: PathBuf,
@@ -141,8 +145,8 @@ pub struct QueryArgs {
     pub top_k: usize,
     #[arg(long)]
     pub filter: Option<String>,
-    #[arg(long)]
-    pub include_vector: bool,
+    #[arg(long, value_enum, default_value_t = VectorProjectionArg::Exclude)]
+    pub vector_projection: VectorProjectionArg,
     #[arg(long, value_delimiter = ',')]
     pub fields: Option<Vec<String>>,
     #[command(subcommand)]
@@ -152,12 +156,12 @@ pub struct QueryArgs {
 #[derive(Subcommand)]
 pub enum QuerySearch {
     Hnsw {
-        #[arg(long)]
-        ef_search: NonZeroU32,
+        #[arg(long, value_parser = |value: &str| parse_non_zero_u32(value, HnswEfSearch::new))]
+        ef_search: HnswEfSearch,
     },
     Ivf {
-        #[arg(long)]
-        nprobe: NonZeroU32,
+        #[arg(long, value_parser = |value: &str| parse_non_zero_u32(value, IvfProbeCount::new))]
+        nprobe: IvfProbeCount,
     },
 }
 
@@ -166,26 +170,26 @@ pub enum CreateIndexKind {
     Flat,
     Scalar,
     Hnsw {
-        #[arg(long)]
-        max_neighbors: Option<NonZeroU32>,
-        #[arg(long)]
-        scaling_factor: Option<NonZeroU32>,
-        #[arg(long)]
-        ef_construction: Option<NonZeroU32>,
-        #[arg(long)]
-        prune_width: Option<NonZeroU32>,
-        #[arg(long)]
-        min_neighbor_count: Option<NonZeroU32>,
-        #[arg(long)]
-        ef_search: Option<NonZeroU32>,
+        #[arg(long, value_parser = |value: &str| parse_non_zero_u32(value, HnswM::new), default_value_t = HnswIndexParams::default().max_neighbors)]
+        max_neighbors: HnswM,
+        #[arg(long, value_parser = |value: &str| parse_non_zero_u32(value, HnswScalingFactor::new), default_value_t = HnswIndexParams::default().scaling_factor)]
+        scaling_factor: HnswScalingFactor,
+        #[arg(long, value_parser = |value: &str| parse_non_zero_u32(value, HnswEfConstruction::new), default_value_t = HnswIndexParams::default().ef_construction)]
+        ef_construction: HnswEfConstruction,
+        #[arg(long, value_parser = |value: &str| parse_non_zero_u32(value, HnswPruneWidth::new), default_value_t = HnswIndexParams::default().prune_width)]
+        prune_width: HnswPruneWidth,
+        #[arg(long, value_parser = |value: &str| parse_non_zero_u32(value, HnswMinNeighborCount::new), default_value_t = HnswIndexParams::default().min_neighbor_count)]
+        min_neighbor_count: HnswMinNeighborCount,
+        #[arg(long, value_parser = |value: &str| parse_non_zero_u32(value, HnswEfSearch::new), default_value_t = HnswIndexParams::default().ef_search)]
+        ef_search: HnswEfSearch,
     },
     Ivf {
-        #[arg(long = "n-list")]
-        n_list: Option<NonZeroU32>,
-        #[arg(long = "n-probe")]
-        n_probe: Option<NonZeroU32>,
-        #[arg(long)]
-        training_iterations: Option<NonZeroU32>,
+        #[arg(long = "n-list", value_parser = |value: &str| parse_non_zero_u32(value, IvfListCount::new), default_value_t = IvfIndexParams::default().n_list)]
+        n_list: IvfListCount,
+        #[arg(long = "n-probe", value_parser = |value: &str| parse_non_zero_u32(value, IvfProbeCount::new), default_value_t = IvfIndexParams::default().n_probe)]
+        n_probe: IvfProbeCount,
+        #[arg(long, value_parser = |value: &str| parse_non_zero_u32(value, IvfTrainingIterations::new), default_value_t = IvfIndexParams::default().training_iterations)]
+        training_iterations: IvfTrainingIterations,
     },
 }
 
@@ -228,4 +232,19 @@ pub enum IndexKindArg {
     Hnsw,
     Ivf,
     Scalar,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum VectorProjectionArg {
+    Include,
+    Exclude,
+}
+
+impl From<VectorProjectionArg> for VectorProjection {
+    fn from(value: VectorProjectionArg) -> Self {
+        match value {
+            VectorProjectionArg::Include => VectorProjection::Include,
+            VectorProjectionArg::Exclude => VectorProjection::Exclude,
+        }
+    }
 }

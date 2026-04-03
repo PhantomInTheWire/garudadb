@@ -1,8 +1,7 @@
 use garuda_engine::{Collection, Database};
 use garuda_types::{
     CollectionOptions, CollectionSchema, DistanceMetric, Nullability, OptimizeOptions,
-    ScalarFieldSchema, TopK, VectorDimension, VectorFieldSchema, VectorIndexState,
-    VectorProjection, VectorQuery,
+    ScalarFieldSchema, TopK, VectorDimension, VectorFieldSchema, VectorIndexState, VectorQuery,
 };
 
 use crate::cli::{Command, QueryArgs, QuerySource};
@@ -14,9 +13,13 @@ use crate::parsing::{
 const PRIMARY_KEY_FIELD: &str = "pk";
 const VECTOR_FIELD: &str = "embedding";
 
+pub fn default_segment_max_docs() -> usize {
+    CollectionOptions::default().segment_max_docs
+}
+
 pub fn run_command(db: &Database, command: Command) -> Result<(), String> {
     match command {
-        Command::Init => Ok(()),
+        Command::Init => unreachable!("main handles init"),
         Command::Create {
             name,
             dimension,
@@ -25,11 +28,8 @@ pub fn run_command(db: &Database, command: Command) -> Result<(), String> {
             storage_access,
         } => {
             let options = CollectionOptions {
-                segment_max_docs: segment_max_docs
-                    .unwrap_or(CollectionOptions::default().segment_max_docs),
-                storage_access: storage_access
-                    .map(Into::into)
-                    .unwrap_or(CollectionOptions::default().storage_access),
+                segment_max_docs,
+                storage_access: storage_access.into(),
                 ..CollectionOptions::default()
             };
             db.create_collection(
@@ -194,11 +194,7 @@ fn id_query(mut args: QueryArgs) -> Result<VectorQuery, String> {
 fn apply_query_args(query: &mut VectorQuery, args: QueryArgs) -> Result<(), String> {
     query.filter = args.filter;
     query.output_fields = args.fields;
-    query.vector_projection = if args.include_vector {
-        VectorProjection::Include
-    } else {
-        VectorProjection::Exclude
-    };
+    query.vector_projection = args.vector_projection.into();
     query.search = parse_query_search(args.search)?;
     Ok(())
 }

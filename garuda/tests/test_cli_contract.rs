@@ -154,7 +154,8 @@ fn insert_upsert_update_query_fetch_and_delete_commands_should_roundtrip() {
         "3",
         "--filter",
         "rank >= 2",
-        "--include-vector",
+        "--vector-projection",
+        "include",
         "--fields",
         "category,rank",
     ]);
@@ -417,4 +418,29 @@ fn create_from_schema_requires_options_in_file() {
         schema_path.to_str().expect("utf8"),
     ]);
     assert!(!create.status.success(), "missing options should fail");
+}
+
+#[test]
+fn insert_jsonl_requires_fields_in_each_document() {
+    let tmp = temp_path("cli-missing-fields");
+    std::fs::create_dir_all(&tmp).expect("create temp root");
+    let docs_path = tmp.join("docs.jsonl");
+
+    std::fs::write(
+        &docs_path,
+        "{\"id\":\"doc-1\",\"vector\":[1.0,0.0,0.0,0.0]}\n",
+    )
+    .expect("write invalid docs jsonl");
+
+    let create = run_cli(&["--root", tmp.to_str().expect("utf8"), "create", "docs", "4"]);
+    assert!(create.status.success(), "create should succeed");
+
+    let insert = run_cli(&[
+        "--root",
+        tmp.to_str().expect("utf8"),
+        "insert-jsonl",
+        "docs",
+        docs_path.to_str().expect("utf8"),
+    ]);
+    assert!(!insert.status.success(), "missing fields should fail");
 }
