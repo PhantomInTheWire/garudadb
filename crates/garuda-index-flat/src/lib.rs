@@ -144,13 +144,18 @@ fn search_entries(
         });
     }
 
-    hits.sort_by(|left, right| {
-        right
-            .score
-            .total_cmp(&left.score)
-            .then_with(|| left.doc_id.cmp(&right.doc_id))
-    });
-    hits.truncate(top_k.get());
+    hits.sort_by(|left, right| right.score.total_cmp(&left.score));
+
+    if hits.len() <= top_k.get() {
+        return Ok(hits);
+    }
+
+    let cutoff_score = hits[top_k.get() - 1].score;
+    let mut cutoff = top_k.get();
+    while cutoff < hits.len() && hits[cutoff].score == cutoff_score {
+        cutoff += 1;
+    }
+    hits.truncate(cutoff);
 
     Ok(hits)
 }
