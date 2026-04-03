@@ -72,7 +72,6 @@ impl CollectionRuntime {
             return WriteResult::err(id, StatusCode::NotFound, "document not found");
         }
 
-        self.refresh_metadata();
         WriteResult::ok(id)
     }
 

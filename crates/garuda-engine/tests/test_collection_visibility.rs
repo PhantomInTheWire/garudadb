@@ -28,6 +28,21 @@ fn deleted_documents_should_disappear_from_fetch_and_query() {
         ))
         .expect("query after delete");
     assert!(!results.iter().any(|doc| doc.id == doc_id("doc-2")));
+    assert_eq!(collection.stats().doc_count, 3);
+}
+
+#[test]
+fn batch_delete_should_update_stats_once_for_all_deleted_docs() {
+    let (_root, db) = database("visibility-batch-delete-stats");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+    seed_collection(&collection);
+
+    let deleted = collection.delete(vec![doc_id("doc-1"), doc_id("doc-3")]);
+    assert!(deleted.iter().all(|result| result.status.is_ok()));
+
+    assert_eq!(collection.stats().doc_count, 2);
 }
 
 #[test]

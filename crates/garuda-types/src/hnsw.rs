@@ -349,6 +349,10 @@ impl HnswGraph {
         &self.levels[level.get()][node.get()]
     }
 
+    pub fn neighbors_mut(&mut self, level: HnswLevel, node: NodeIndex) -> &mut Vec<NodeIndex> {
+        &mut self.levels[level.get()][node.get()]
+    }
+
     pub fn replace_neighbors(
         &mut self,
         level: HnswLevel,

@@ -7,7 +7,7 @@ use garuda_types::{
     CollectionSchema, DenseVector, DistanceMetric, Doc, FieldName, FilterExpr, HnswEfSearch,
     InternalDocId, IvfProbeCount, RemoveResult, SegmentId, SegmentMeta, Status, StatusCode, TopK,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RecordState {
@@ -46,6 +46,7 @@ pub struct StoredRecord {
 pub struct WritingSegment {
     pub meta: SegmentMeta,
     pub records: Vec<StoredRecord>,
+    record_indexes: HashMap<InternalDocId, usize>,
     pub flat_index: Option<WritingFlatIndex>,
     pub hnsw_index: Option<WritingHnswIndex>,
     pub ivf_index: Option<WritingIvfIndex>,
@@ -56,6 +57,7 @@ pub struct WritingSegment {
 pub struct PersistedSegment {
     pub meta: SegmentMeta,
     pub records: Vec<StoredRecord>,
+    record_indexes: HashMap<InternalDocId, usize>,
     pub flat_index: Option<FlatIndex>,
     pub hnsw_index: Option<HnswIndex>,
     pub ivf_index: Option<IvfIndex>,
@@ -123,11 +125,13 @@ impl WritingSegment {
     pub fn new(meta: SegmentMeta, records: Vec<StoredRecord>, schema: &CollectionSchema) -> Self {
         let mut meta = meta;
         sync_segment_meta_fields(&mut meta, &records);
+        let record_indexes = record_indexes(&records);
         let resources = build_writing_search_resources(schema, &records);
 
         Self {
             meta,
             records,
+            record_indexes,
             flat_index: resources.flat_index,
             hnsw_index: resources.hnsw_index,
             ivf_index: resources.ivf_index,
@@ -146,33 +150,49 @@ impl WritingSegment {
         PersistedSegment::new(meta, self.records, schema)
     }
 
+    pub fn push_record(&mut self, record: StoredRecord) {
+        let record_index = self.records.len();
+        self.meta.min_doc_id = Some(
+            self.meta
+                .min_doc_id
+                .map_or(record.doc_id, |min| min.min(record.doc_id)),
+        );
+        self.meta.max_doc_id = Some(
+            self.meta
+                .max_doc_id
+                .map_or(record.doc_id, |max| max.max(record.doc_id)),
+        );
+        if matches!(record.state, RecordState::Live) {
+            self.meta.doc_count += 1;
+        }
+        self.record_indexes.insert(record.doc_id, record_index);
+        self.records.push(record);
+    }
+
     pub fn mark_deleted(&mut self, doc_id: InternalDocId) -> bool {
-        let Some(record_index) = self.records.iter().position(|record| {
-            record.doc_id == doc_id && matches!(record.state, RecordState::Live)
-        }) else {
-            return false;
-        };
-
-        let scalar_fields =
-            deleted_record_scalar_fields(&self.records[record_index], &self.scalar_indexes);
-        self.records[record_index].state = RecordState::Deleted;
-
-        if let Some(index) = &mut self.flat_index {
-            assert_eq!(index.remove(doc_id), RemoveResult::Removed);
-        }
-
-        if let Some(index) = &mut self.ivf_index {
-            assert_eq!(index.remove(doc_id), RemoveResult::Removed);
-        }
-
-        if let Some(index) = &mut self.hnsw_index {
-            assert_eq!(index.remove(doc_id), RemoveResult::Removed);
-        }
-
-        remove_from_scalar_indexes(&mut self.scalar_indexes, doc_id, scalar_fields);
-
-        self.sync_meta();
-        true
+        mark_deleted_record(
+            &mut self.records,
+            &self.record_indexes,
+            &mut self.meta,
+            &mut self.scalar_indexes,
+            doc_id,
+            |doc_id| {
+                if let Some(index) = &mut self.flat_index {
+                    assert_eq!(index.remove(doc_id), RemoveResult::Removed);
+                }
+            },
+            |doc_id| {
+                if let Some(index) = &mut self.hnsw_index {
+                    assert_eq!(index.remove(doc_id), RemoveResult::Removed);
+                }
+            },
+            |doc_id| {
+                if let Some(index) = &mut self.ivf_index {
+                    assert_eq!(index.remove(doc_id), RemoveResult::Removed);
+                }
+            },
+        )
+        .is_some()
     }
 }
 
@@ -182,9 +202,20 @@ impl PersistedSegment {
         sync_segment_meta_fields(&mut meta, &records);
         let resources = build_persisted_search_resources(schema, &meta, &records);
 
+        Self::from_parts(meta, records, resources)
+    }
+
+    pub(crate) fn from_parts(
+        meta: SegmentMeta,
+        records: Vec<StoredRecord>,
+        resources: crate::index::PersistedSearchResources,
+    ) -> Self {
+        let record_indexes = record_indexes(&records);
+
         Self {
             meta,
             records,
+            record_indexes,
             flat_index: resources.flat_index,
             hnsw_index: resources.hnsw_index,
             ivf_index: resources.ivf_index,
@@ -206,32 +237,66 @@ impl PersistedSegment {
     }
 
     pub fn mark_deleted(&mut self, doc_id: InternalDocId) -> bool {
-        let Some(record_index) = self.records.iter().position(|record| {
-            record.doc_id == doc_id && matches!(record.state, RecordState::Live)
-        }) else {
-            return false;
-        };
-
-        let scalar_fields =
-            deleted_record_scalar_fields(&self.records[record_index], &self.scalar_indexes);
-        self.records[record_index].state = RecordState::Deleted;
-
-        if let Some(index) = &mut self.flat_index {
-            assert_eq!(index.remove(doc_id), RemoveResult::Removed);
-        }
-
-        if let Some(index) = &mut self.ivf_index {
-            assert_eq!(index.remove(doc_id), RemoveResult::Removed);
-        }
-
-        if let Some(index) = &mut self.hnsw_index {
-            assert_eq!(index.remove(doc_id), RemoveResult::Removed);
-        }
-
-        remove_from_scalar_indexes(&mut self.scalar_indexes, doc_id, scalar_fields);
-        self.sync_meta();
-        true
+        mark_deleted_record(
+            &mut self.records,
+            &self.record_indexes,
+            &mut self.meta,
+            &mut self.scalar_indexes,
+            doc_id,
+            |doc_id| {
+                if let Some(index) = &mut self.flat_index {
+                    assert_eq!(index.remove(doc_id), RemoveResult::Removed);
+                }
+            },
+            |doc_id| {
+                if let Some(index) = &mut self.hnsw_index {
+                    assert_eq!(index.remove(doc_id), RemoveResult::Removed);
+                }
+            },
+            |doc_id| {
+                if let Some(index) = &mut self.ivf_index {
+                    assert_eq!(index.remove(doc_id), RemoveResult::Removed);
+                }
+            },
+        )
+        .is_some()
     }
+}
+
+fn mark_deleted_record(
+    records: &mut [StoredRecord],
+    record_indexes: &HashMap<InternalDocId, usize>,
+    meta: &mut SegmentMeta,
+    scalar_indexes: &mut BTreeMap<FieldName, ScalarIndex>,
+    doc_id: InternalDocId,
+    remove_from_flat: impl FnOnce(InternalDocId),
+    remove_from_hnsw: impl FnOnce(InternalDocId),
+    remove_from_ivf: impl FnOnce(InternalDocId),
+) -> Option<()> {
+    let &record_index = record_indexes.get(&doc_id)?;
+    if !matches!(records[record_index].state, RecordState::Live) {
+        return None;
+    }
+    let scalar_fields = deleted_record_scalar_fields(&records[record_index], scalar_indexes);
+    records[record_index].state = RecordState::Deleted;
+    assert!(
+        meta.doc_count > 0,
+        "segment live doc count should include deleted record"
+    );
+    meta.doc_count -= 1;
+    remove_from_flat(doc_id);
+    remove_from_ivf(doc_id);
+    remove_from_hnsw(doc_id);
+    remove_from_scalar_indexes(scalar_indexes, doc_id, scalar_fields);
+    Some(())
+}
+
+fn record_indexes(records: &[StoredRecord]) -> HashMap<InternalDocId, usize> {
+    let mut indexes = HashMap::with_capacity(records.len());
+    for (index, record) in records.iter().enumerate() {
+        indexes.insert(record.doc_id, index);
+    }
+    indexes
 }
 
 fn deleted_record_scalar_fields(

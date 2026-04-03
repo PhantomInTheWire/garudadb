@@ -78,7 +78,7 @@ impl SegmentManager {
         }
 
         for segment in &self.persisted_segments {
-            if !segment_contains_doc_id(&segment.meta, doc_id) {
+            if !segment.meta.contains_doc_id(doc_id) {
                 continue;
             }
 
@@ -131,7 +131,7 @@ impl SegmentManager {
         segment_max_docs: usize,
         schema: &CollectionSchema,
     ) {
-        self.writing_segment.records.push(StoredRecord {
+        self.writing_segment.push_record(StoredRecord {
             doc_id,
             state: RecordState::Live,
             doc: doc.clone(),
@@ -166,7 +166,6 @@ impl SegmentManager {
             index.insert(doc_id, value);
         }
 
-        self.writing_segment.sync_meta();
         self.rotate_writing_segment_if_needed(next_segment_id, segment_max_docs, schema);
     }
 
@@ -180,7 +179,7 @@ impl SegmentManager {
         }
 
         for index in 0..self.persisted_segments.len() {
-            if !segment_contains_doc_id(&self.persisted_segments[index].meta, doc_id) {
+            if !self.persisted_segments[index].meta.contains_doc_id(doc_id) {
                 continue;
             }
 
@@ -279,17 +278,6 @@ fn collect_visible_records(
 
         out.push(record.clone());
     }
-}
-
-fn segment_contains_doc_id(meta: &garuda_types::SegmentMeta, doc_id: InternalDocId) -> bool {
-    let Some(min_doc_id) = meta.min_doc_id else {
-        return false;
-    };
-    let Some(max_doc_id) = meta.max_doc_id else {
-        return false;
-    };
-
-    min_doc_id <= doc_id && doc_id <= max_doc_id
 }
 
 fn record_in_segment_by_internal_id(

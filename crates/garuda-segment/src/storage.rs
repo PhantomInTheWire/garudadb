@@ -170,14 +170,11 @@ pub fn read_persisted_segment(
     let resources =
         load_persisted_search_resources(root, meta.id, schema, &segment_meta, &decoded.records)?;
 
-    Ok(PersistedSegment {
-        meta: segment_meta,
-        records: decoded.records,
-        flat_index: resources.flat_index,
-        hnsw_index: resources.hnsw_index,
-        ivf_index: resources.ivf_index,
-        scalar_indexes: resources.scalar_indexes,
-    })
+    Ok(PersistedSegment::from_parts(
+        segment_meta,
+        decoded.records,
+        resources,
+    ))
 }
 
 pub fn remove_segment(root: &std::path::Path, segment_id: SegmentId) -> Result<(), Status> {

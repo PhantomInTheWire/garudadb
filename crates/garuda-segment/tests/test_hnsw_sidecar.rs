@@ -283,6 +283,25 @@ fn read_persisted_segment_skips_hnsw_sidecar_when_doc_count_is_zero() {
     assert!(reopened.hnsw_index.is_none());
 }
 
+#[test]
+fn persisted_segment_delete_should_keep_doc_count_stable_when_repeated() {
+    let schema = schema();
+    let mut segment = PersistedSegment::new(
+        segment_meta(SegmentId::new_unchecked(1)),
+        vec![
+            stored_record(1, "doc-1", "alpha", [1.0, 0.0, 0.0, 0.0]),
+            stored_record(2, "doc-2", "beta", [0.0, 1.0, 0.0, 0.0]),
+        ],
+        &schema,
+    );
+
+    assert!(segment.mark_deleted(InternalDocId::new(2).expect("doc id")));
+    assert_eq!(segment.meta.doc_count, 1);
+
+    assert!(!segment.mark_deleted(InternalDocId::new(2).expect("doc id")));
+    assert_eq!(segment.meta.doc_count, 1);
+}
+
 fn schema() -> CollectionSchema {
     CollectionSchema {
         name: CollectionName::parse("docs").expect("valid name"),
