@@ -46,9 +46,9 @@
 //!
 //! 5. Query-time search
 //! - Search validates query dimension and returns early on an empty index.
-//! - Every non-empty list is scored against the query using its centroid.
+//! - Every populated list is scored against the query using its centroid.
 //! - Lists are sorted by centroid score descending, then `list_index` ascending.
-//! - Search always scans at least the best `min(nprobe, non_empty_lists)`
+//! - Search always scans at least the best `min(nprobe, populated_lists)`
 //!   lists.
 //! - L2 and inner-product queries may keep scanning ranked lists beyond that
 //!   minimum until every remaining list is upper-bounded below the current
@@ -56,7 +56,7 @@
 //! - Equal-score ties are not pruned early because final hit ordering also
 //!   breaks ties by `doc_id`.
 //! - Cosine queries do not use residual-bound early stopping.
-//! - Cosine search scans exactly the best `min(nprobe, non_empty_lists)` lists
+//! - Cosine search scans exactly the best `min(nprobe, populated_lists)` lists
 //!   and does not scan beyond that minimum.
 //! - Every scanned entry is scored against the query.
 //! - Final hits are sorted by score descending, then `doc_id` ascending, and
