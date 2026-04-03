@@ -123,10 +123,36 @@ pub struct ScalarPredicate {
     pub value: ScalarValue,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum ScalarPrefilter {
-    All,
-    And(Vec<ScalarPredicate>),
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AnnBudgetPolicy {
+    Requested,
+    AdaptiveFiltered,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FlatRecallPlan {
+    pub top_k: TopK,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HnswRecallPlan {
+    pub top_k: TopK,
+    pub ef_search: HnswEfSearch,
+    pub budget: AnnBudgetPolicy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IvfRecallPlan {
+    pub top_k: TopK,
+    pub nprobe: IvfProbeCount,
+    pub budget: AnnBudgetPolicy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RecallPlan {
+    Flat(FlatRecallPlan),
+    Hnsw(HnswRecallPlan),
+    Ivf(IvfRecallPlan),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -1,6 +1,6 @@
 use crate::types::{
-    IvfSegmentSearchRequest, PersistedSegment, RecordState, SegmentFilter, SegmentSearchHit,
-    SegmentSearchRequest, StoredRecord, WritingSegment,
+    PersistedSegment, RecordState, SegmentExecutionRequest, SegmentFilter, SegmentFilterContext,
+    SegmentSearchHit, StoredRecord, WritingSegment,
 };
 
 #[cfg(test)]
@@ -10,31 +10,15 @@ mod search_candidate_nprobe_tests;
 use garuda_index_flat::FlatSearchHit;
 use garuda_index_hnsw::HnswHit;
 use garuda_index_ivf::{IvfIndex, IvfSearchHit, WritingIvfIndex};
-use garuda_meta::{DeleteStore, evaluate_filter};
-use garuda_types::{HnswEfSearch, InternalDocId, IvfProbeCount, Status, TopK};
-use std::collections::{HashMap, HashSet};
+use garuda_meta::evaluate_filter;
+use garuda_types::{
+    AnnBudgetPolicy, HnswEfSearch, InternalDocId, IvfProbeCount, RecallPlan, Status, TopK,
+};
+use std::collections::HashMap;
 
-#[derive(Clone, Copy)]
-struct SearchScope<'a> {
-    pub allowed_doc_ids: Option<&'a std::collections::HashSet<InternalDocId>>,
-    pub delete_store: Option<&'a DeleteStore>,
-}
-
-impl SearchScope<'_> {
-    fn contains(self, doc_id: InternalDocId) -> bool {
-        if let Some(doc_ids) = self.allowed_doc_ids
-            && !doc_ids.contains(&doc_id)
-        {
-            return false;
-        }
-
-        if let Some(delete_store) = self.delete_store
-            && delete_store.contains(doc_id)
-        {
-            return false;
-        }
-
-        true
+impl SegmentFilterContext<'_> {
+    fn hides_deleted(self) -> bool {
+        self.delete_store.is_some()
     }
 }
 
@@ -73,10 +57,10 @@ enum IvfSearchIndex<'a> {
 }
 
 impl IvfSearchIndex<'_> {
-    fn list_count(&self) -> usize {
+    fn non_empty_list_count(&self) -> usize {
         match self {
-            Self::Writing(index) => index.list_count(),
-            Self::Persisted(index) => index.list_count(),
+            Self::Writing(index) => index.non_empty_list_count(),
+            Self::Persisted(index) => index.non_empty_list_count(),
         }
     }
 
@@ -93,86 +77,69 @@ impl IvfSearchIndex<'_> {
 
 pub fn search_writing(
     segment: &WritingSegment,
-    request: SegmentSearchRequest<'_>,
-    allowed_doc_ids: Option<&HashSet<InternalDocId>>,
+    request: SegmentExecutionRequest<'_>,
 ) -> Result<Vec<SegmentSearchHit>, Status> {
-    search_segment(
-        SearchSegment::Writing(segment),
-        request,
-        SearchScope {
-            allowed_doc_ids,
-            delete_store: None,
-        },
-    )
+    assert!(
+        request.filter.delete_store.is_none(),
+        "writing delete filter"
+    );
+    search_segment(SearchSegment::Writing(segment), request)
 }
 
 pub fn search_persisted(
     segment: &PersistedSegment,
-    request: SegmentSearchRequest<'_>,
-    allowed_doc_ids: Option<&HashSet<InternalDocId>>,
-    delete_store: &DeleteStore,
+    request: SegmentExecutionRequest<'_>,
 ) -> Result<Vec<SegmentSearchHit>, Status> {
-    search_segment(
-        SearchSegment::Persisted(segment),
-        request,
-        SearchScope {
-            allowed_doc_ids,
-            delete_store: Some(delete_store),
-        },
-    )
+    assert!(
+        request.filter.delete_store.is_some(),
+        "persisted delete filter"
+    );
+    search_segment(SearchSegment::Persisted(segment), request)
 }
 
 fn search_segment(
     segment: SearchSegment<'_>,
-    request: SegmentSearchRequest<'_>,
-    scope: SearchScope<'_>,
+    request: SegmentExecutionRequest<'_>,
 ) -> Result<Vec<SegmentSearchHit>, Status> {
     let records = segment.records();
-    let record_indexes = live_record_indexes(records, scope);
+    let stats = search_stats(records, request.filter);
 
-    match request {
-        SegmentSearchRequest::Flat(request) => {
+    match request.recall {
+        RecallPlan::Flat(recall) => {
+            let candidate_top_k = flat_candidate_top_k(
+                recall.top_k,
+                request.filter,
+                stats.indexed_doc_count,
+                stats.visible_doc_count,
+            );
             let hits = match segment {
                 SearchSegment::Writing(segment) => segment
                     .flat_index
                     .as_ref()
                     .expect("writing flat index state")
-                    .search(
-                        request.metric,
-                        request.query_vector,
-                        search_candidate_top_k(
-                            request.top_k,
-                            request.filter,
-                            records,
-                            &record_indexes,
-                        ),
-                    )?,
+                    .search(request.metric, request.query_vector, candidate_top_k)?,
                 SearchSegment::Persisted(segment) => segment
                     .flat_index
                     .as_ref()
                     .expect("persisted flat index state")
-                    .search(
-                        request.metric,
-                        request.query_vector,
-                        search_candidate_top_k(
-                            request.top_k,
-                            request.filter,
-                            records,
-                            &record_indexes,
-                        ),
-                    )?,
+                    .search(request.metric, request.query_vector, candidate_top_k)?,
             };
 
             Ok(collect_search_hits(
                 records,
                 hits.into_iter().map(flat_hit),
-                request.filter,
-                record_indexes,
+                request.filter.residual,
+                stats.record_indexes,
             ))
         }
-        SegmentSearchRequest::Hnsw(request) => {
-            let candidate_top_k =
-                search_candidate_top_k(request.top_k, request.filter, records, &record_indexes);
+        RecallPlan::Hnsw(recall) => {
+            let candidate_top_k = ann_candidate_top_k(
+                recall.top_k,
+                recall.budget,
+                request.filter,
+                stats.indexed_doc_count,
+                stats.visible_doc_count,
+            );
             let hits = match segment {
                 SearchSegment::Writing(segment) => segment
                     .hnsw_index
@@ -181,7 +148,7 @@ fn search_segment(
                     .search(
                         request.query_vector,
                         candidate_top_k,
-                        search_candidate_ef_search(request.ef_search, candidate_top_k),
+                        search_candidate_ef_search(recall.ef_search, candidate_top_k),
                     )?,
                 SearchSegment::Persisted(segment) => segment
                     .hnsw_index
@@ -190,67 +157,117 @@ fn search_segment(
                     .search(garuda_index_hnsw::HnswSearchRequest::new(
                         request.query_vector,
                         candidate_top_k,
-                        search_candidate_ef_search(request.ef_search, candidate_top_k),
+                        search_candidate_ef_search(recall.ef_search, candidate_top_k),
                     ))?,
             };
 
             Ok(collect_search_hits(
                 records,
                 hits.into_iter().map(hnsw_hit),
-                request.filter,
-                record_indexes,
+                request.filter.residual,
+                stats.record_indexes,
             ))
         }
-        SegmentSearchRequest::Ivf(request) => {
-            let candidate_top_k =
-                search_candidate_top_k(request.top_k, request.filter, records, &record_indexes);
-            let hits = search_ivf_hits(segment, request, candidate_top_k)?;
+        RecallPlan::Ivf(recall) => {
+            let candidate_top_k = ann_candidate_top_k(
+                recall.top_k,
+                recall.budget,
+                request.filter,
+                stats.indexed_doc_count,
+                stats.visible_doc_count,
+            );
+            let hits = search_ivf_hits(
+                segment,
+                request.query_vector,
+                recall,
+                candidate_top_k,
+                stats.indexed_doc_count,
+                stats.visible_doc_count,
+                stats.allowed_visible_doc_count,
+            )?;
 
             Ok(collect_search_hits(
                 records,
                 hits.into_iter().map(ivf_hit),
-                request.filter,
-                record_indexes,
+                request.filter.residual,
+                stats.record_indexes,
             ))
         }
     }
 }
 
+struct SearchStats {
+    indexed_doc_count: usize,
+    visible_doc_count: usize,
+    allowed_visible_doc_count: usize,
+    record_indexes: HashMap<InternalDocId, usize>,
+}
+
 fn search_ivf_hits(
     segment: SearchSegment<'_>,
-    request: IvfSegmentSearchRequest<'_>,
+    query_vector: &garuda_types::DenseVector,
+    recall: garuda_types::IvfRecallPlan,
     candidate_top_k: TopK,
+    indexed_doc_count: usize,
+    visible_doc_count: usize,
+    allowed_visible_doc_count: usize,
 ) -> Result<Vec<IvfSearchHit>, Status> {
     let index = segment.ivf_index();
     let request = garuda_index_ivf::IvfSearchRequest::new(
-        request.query_vector,
+        query_vector,
         candidate_top_k,
         search_candidate_nprobe(
-            request.nprobe,
-            request.top_k,
+            recall.nprobe,
+            recall.top_k,
+            recall.budget,
             candidate_top_k,
-            index.list_count(),
+            indexed_doc_count,
+            visible_doc_count,
+            allowed_visible_doc_count,
+            index.non_empty_list_count(),
         ),
     );
 
     index.search(request)
 }
 
-fn live_record_indexes(
-    records: &[StoredRecord],
-    scope: SearchScope<'_>,
-) -> HashMap<InternalDocId, usize> {
+fn search_stats(records: &[StoredRecord], filter: SegmentFilterContext<'_>) -> SearchStats {
+    let mut indexed_doc_count = 0;
+    let mut visible_doc_count = 0;
+    let mut allowed_visible_doc_count = 0;
     let mut record_indexes = HashMap::new();
 
     for (record_index, record) in records.iter().enumerate() {
-        if matches!(record.state, RecordState::Deleted) || !scope.contains(record.doc_id) {
+        if matches!(record.state, RecordState::Deleted) {
             continue;
         }
 
+        indexed_doc_count += 1;
+
+        if let Some(delete_store) = filter.delete_store
+            && delete_store.contains(record.doc_id)
+        {
+            continue;
+        }
+
+        visible_doc_count += 1;
+
+        if let Some(doc_ids) = filter.allowed_doc_ids
+            && !doc_ids.contains(&record.doc_id)
+        {
+            continue;
+        }
+
+        allowed_visible_doc_count += 1;
         record_indexes.insert(record.doc_id, record_index);
     }
 
-    record_indexes
+    SearchStats {
+        indexed_doc_count,
+        visible_doc_count,
+        allowed_visible_doc_count,
+        record_indexes,
+    }
 }
 
 fn collect_search_hits(
@@ -280,17 +297,57 @@ fn collect_search_hits(
     search_hits
 }
 
-fn search_candidate_top_k(
+fn flat_candidate_top_k(
     top_k: TopK,
-    filter: SegmentFilter<'_>,
-    records: &[StoredRecord],
-    record_indexes: &HashMap<InternalDocId, usize>,
+    filter: SegmentFilterContext<'_>,
+    indexed_doc_count: usize,
+    visible_doc_count: usize,
 ) -> TopK {
-    if matches!(filter, SegmentFilter::All) && record_indexes.len() == records.len() {
+    if !filtering_can_drop_hits(filter, indexed_doc_count, visible_doc_count) {
         return top_k;
     }
 
-    TopK::new(records.len().max(top_k.get())).expect("indexed docs or requested top_k")
+    TopK::new(visible_doc_count.max(top_k.get())).expect("segment live doc count")
+}
+
+fn ann_candidate_top_k(
+    top_k: TopK,
+    budget: AnnBudgetPolicy,
+    filter: SegmentFilterContext<'_>,
+    indexed_doc_count: usize,
+    visible_doc_count: usize,
+) -> TopK {
+    if delete_visibility_hides_docs(filter, indexed_doc_count, visible_doc_count) {
+        return TopK::new(visible_doc_count.max(top_k.get())).expect("segment live doc count");
+    }
+
+    if matches!(budget, AnnBudgetPolicy::Requested)
+        || !filtering_can_drop_hits(filter, indexed_doc_count, visible_doc_count)
+    {
+        return top_k;
+    }
+
+    TopK::new(visible_doc_count.max(top_k.get())).expect("segment live doc count")
+}
+
+fn filtering_can_drop_hits(
+    filter: SegmentFilterContext<'_>,
+    indexed_doc_count: usize,
+    visible_doc_count: usize,
+) -> bool {
+    if filter.allowed_doc_ids.is_some() || matches!(filter.residual, SegmentFilter::Matching(_)) {
+        return true;
+    }
+
+    delete_visibility_hides_docs(filter, indexed_doc_count, visible_doc_count)
+}
+
+fn delete_visibility_hides_docs(
+    filter: SegmentFilterContext<'_>,
+    indexed_doc_count: usize,
+    visible_doc_count: usize,
+) -> bool {
+    filter.hides_deleted() && visible_doc_count < indexed_doc_count
 }
 
 fn search_candidate_ef_search(ef_search: HnswEfSearch, candidate_top_k: TopK) -> HnswEfSearch {
@@ -314,22 +371,46 @@ fn ivf_hit(hit: IvfSearchHit) -> (InternalDocId, f32) {
 pub(crate) fn search_candidate_nprobe(
     nprobe: IvfProbeCount,
     top_k: TopK,
+    budget: AnnBudgetPolicy,
     candidate_top_k: TopK,
-    list_count: usize,
+    record_count: usize,
+    visible_doc_count: usize,
+    allowed_visible_doc_count: usize,
+    non_empty_list_count: usize,
 ) -> IvfProbeCount {
-    if candidate_top_k == top_k {
+    if matches!(budget, AnnBudgetPolicy::Requested)
+        && candidate_top_k == top_k
+        && record_count == visible_doc_count
+    {
         return nprobe;
     }
 
-    if list_count <= candidate_top_k.get() {
-        return IvfProbeCount::new(list_count as u32).expect("small list count should fit nprobe");
+    if non_empty_list_count <= candidate_top_k.get() {
+        return IvfProbeCount::new(non_empty_list_count as u32)
+            .expect("small list count should fit nprobe");
+    }
+
+    if record_count > visible_doc_count {
+        return IvfProbeCount::new(non_empty_list_count as u32)
+            .expect("non-empty list count should fit nprobe");
+    }
+
+    if allowed_visible_doc_count == 0 {
+        return IvfProbeCount::new(non_empty_list_count as u32)
+            .expect("non-empty list count should fit nprobe");
     }
 
     let requested_nprobe = nprobe.get() as usize;
-    let candidate_multiplier = candidate_top_k.get().div_ceil(top_k.get());
-    let widened = requested_nprobe
-        .saturating_mul(candidate_multiplier)
-        .min(list_count) as u32;
+    let widened = if allowed_visible_doc_count < visible_doc_count {
+        requested_nprobe
+            .saturating_mul(visible_doc_count)
+            .div_ceil(allowed_visible_doc_count)
+    } else {
+        requested_nprobe
+            .saturating_mul(candidate_top_k.get())
+            .div_ceil(top_k.get())
+    }
+    .min(non_empty_list_count) as u32;
 
     IvfProbeCount::new(widened).expect("candidate nprobe should stay valid")
 }

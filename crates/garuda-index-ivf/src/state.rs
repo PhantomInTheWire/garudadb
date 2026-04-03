@@ -146,6 +146,13 @@ impl IvfState {
         self.inverted_lists.len()
     }
 
+    pub(super) fn non_empty_list_count(&self) -> usize {
+        self.inverted_lists
+            .iter()
+            .filter(|list| !list.entry_indexes.is_empty())
+            .count()
+    }
+
     fn push_new_list(&mut self, config: &IvfIndexConfig, entry_index: IvfEntryIndex) -> usize {
         let list_index = self.inverted_lists.len();
         let centroid = self.entries[entry_index.get()].vector.clone();

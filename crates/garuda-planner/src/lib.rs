@@ -1,28 +1,71 @@
-//! Query planning helpers that map user requests to segment execution plans.
+//! Query planning for Garuda's vector search path.
+//!
+//! This crate maps a validated user query plus collection schema into a small,
+//! explicit execution plan. It does not execute indexes, estimate global
+//! costs, or build a general SQL plan tree.
+//!
+//! Inputs:
+//! - `CollectionSchema`: field types, index state, and default vector backend.
+//! - `VectorQuery`: vector source, `top_k`, projection knobs, and optional
+//!   backend override.
+//! - `Option<FilterExpr>`: the already-parsed filter tree, if any.
+//!
+//! Outputs:
+//! - `QueryPlan`: one typed object that carries:
+//!   - query-vector source
+//!   - projection
+//!   - filter split
+//!   - vector recall plan
+//! - `FilterPlan`: scalar prefilter vs residual filter.
+//! - `RecallPlan`: Flat, HNSW, or IVF with a concrete budget policy.
+//!
+//! Planning steps:
+//! 1. Choose the vector backend from schema state and query override.
+//! 2. Split indexed scalar `AND` predicates into a scalar prefilter.
+//! 3. Keep unsupported predicates as a residual filter.
+//! 4. Choose `Requested` vs `AdaptiveFiltered` budgeting.
+//! 5. Carry query-vector source and projection through unchanged.
+//!
+//! Key semantics:
+//! - planner does not execute indexes
+//! - planner does not estimate collection-global costs
+//! - planner does not switch ANN families at runtime
+//! - unsupported filter operators stay residual
+//!
+//! Non-goals:
+//! - no SQL optimizer
+//! - no Arrow or physical operator tree
+//! - no join or aggregate planning
 
 use garuda_types::{
-    CollectionSchema, FieldName, FilterExpr, HnswEfSearch, IvfProbeCount, QueryVectorSource,
-    ScalarCompareOp, ScalarFieldSchema, ScalarPredicate, ScalarPrefilter, ScalarType, ScalarValue,
-    TopK, VectorIndexState, VectorProjection, VectorQuery, VectorSearch,
+    AnnBudgetPolicy, CollectionSchema, FieldName, FilterExpr, FlatRecallPlan, HnswRecallPlan,
+    IvfRecallPlan, QueryVectorSource, RecallPlan, ScalarCompareOp, ScalarFieldSchema,
+    ScalarPredicate, ScalarType, ScalarValue, TopK, VectorIndexState, VectorProjection,
+    VectorQuery, VectorSearch,
 };
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum SegmentFilterPlan {
+pub enum PrefilterPlan {
     All,
-    Matching(FilterExpr),
+    ScalarAnd(Vec<ScalarPredicate>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ResidualPlan {
+    All,
+    Filter(FilterExpr),
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct FilterPlan {
-    pub scalar_prefilter: ScalarPrefilter,
-    pub residual: SegmentFilterPlan,
+    pub prefilter: PrefilterPlan,
+    pub residual: ResidualPlan,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum SegmentSearchPlan {
-    Flat,
-    Hnsw { ef_search: HnswEfSearch },
-    Ivf { nprobe: IvfProbeCount },
+pub struct ProjectionPlan {
+    pub vector: VectorProjection,
+    pub output_fields: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -30,10 +73,8 @@ pub struct QueryPlan {
     pub field_name: FieldName,
     pub source: QueryVectorSource,
     pub filter: FilterPlan,
-    pub top_k: TopK,
-    pub search: SegmentSearchPlan,
-    pub vector_projection: VectorProjection,
-    pub output_fields: Option<Vec<String>>,
+    pub recall: RecallPlan,
+    pub projection: ProjectionPlan,
 }
 
 pub fn build_query_plan(
@@ -41,21 +82,28 @@ pub fn build_query_plan(
     filter: Option<FilterExpr>,
     schema: &CollectionSchema,
 ) -> Result<QueryPlan, garuda_types::Status> {
+    let filter = build_filter_plan(filter, schema);
+
     Ok(QueryPlan {
         field_name: query.field_name,
         source: query.source,
-        filter: build_filter_plan(filter, schema),
-        top_k: query.top_k,
-        search: search_plan(query.search, schema)?,
-        vector_projection: query.vector_projection,
-        output_fields: query.output_fields,
+        recall: build_recall_plan(query.search, query.top_k, &filter, schema)?,
+        projection: ProjectionPlan {
+            vector: query.vector_projection,
+            output_fields: query.output_fields,
+        },
+        filter,
     })
 }
 
-fn search_plan(
+fn build_recall_plan(
     search: VectorSearch,
+    top_k: TopK,
+    filter: &FilterPlan,
     schema: &CollectionSchema,
-) -> Result<SegmentSearchPlan, garuda_types::Status> {
+) -> Result<RecallPlan, garuda_types::Status> {
+    let budget = budget_policy(filter);
+
     match (&schema.vector.indexes, search) {
         (VectorIndexState::DefaultFlat, VectorSearch::Default)
         | (
@@ -71,7 +119,7 @@ fn search_plan(
                 ..
             },
             VectorSearch::Default,
-        ) => Ok(SegmentSearchPlan::Flat),
+        ) => Ok(RecallPlan::Flat(FlatRecallPlan { top_k })),
         (VectorIndexState::DefaultFlat, _)
         | (
             VectorIndexState::FlatAndHnsw {
@@ -97,9 +145,11 @@ fn search_plan(
                 hnsw: params,
             },
             VectorSearch::Default,
-        ) => Ok(SegmentSearchPlan::Hnsw {
+        ) => Ok(RecallPlan::Hnsw(HnswRecallPlan {
+            top_k,
             ef_search: params.ef_search,
-        }),
+            budget,
+        })),
         (VectorIndexState::HnswOnly(_), VectorSearch::Hnsw { ef_search })
         | (
             VectorIndexState::FlatAndHnsw {
@@ -107,7 +157,11 @@ fn search_plan(
                 ..
             },
             VectorSearch::Hnsw { ef_search },
-        ) => Ok(SegmentSearchPlan::Hnsw { ef_search }),
+        ) => Ok(RecallPlan::Hnsw(HnswRecallPlan {
+            top_k,
+            ef_search,
+            budget,
+        })),
         (VectorIndexState::HnswOnly(_), VectorSearch::Ivf { .. })
         | (
             VectorIndexState::FlatAndHnsw {
@@ -126,9 +180,11 @@ fn search_plan(
                 ivf: params,
             },
             VectorSearch::Default,
-        ) => Ok(SegmentSearchPlan::Ivf {
+        ) => Ok(RecallPlan::Ivf(IvfRecallPlan {
+            top_k,
             nprobe: params.n_probe,
-        }),
+            budget,
+        })),
         (VectorIndexState::IvfOnly(_), VectorSearch::Ivf { nprobe })
         | (
             VectorIndexState::FlatAndIvf {
@@ -136,7 +192,11 @@ fn search_plan(
                 ..
             },
             VectorSearch::Ivf { nprobe },
-        ) => Ok(SegmentSearchPlan::Ivf { nprobe }),
+        ) => Ok(RecallPlan::Ivf(IvfRecallPlan {
+            top_k,
+            nprobe,
+            budget,
+        })),
         (VectorIndexState::IvfOnly(_), VectorSearch::Hnsw { .. })
         | (
             VectorIndexState::FlatAndIvf {
@@ -151,11 +211,18 @@ fn search_plan(
     }
 }
 
+fn budget_policy(filter: &FilterPlan) -> AnnBudgetPolicy {
+    match (&filter.prefilter, &filter.residual) {
+        (PrefilterPlan::All, ResidualPlan::All) => AnnBudgetPolicy::Requested,
+        _ => AnnBudgetPolicy::AdaptiveFiltered,
+    }
+}
+
 fn build_filter_plan(filter: Option<FilterExpr>, schema: &CollectionSchema) -> FilterPlan {
     let Some(filter) = filter else {
         return FilterPlan {
-            scalar_prefilter: ScalarPrefilter::All,
-            residual: SegmentFilterPlan::All,
+            prefilter: PrefilterPlan::All,
+            residual: ResidualPlan::All,
         };
     };
 
@@ -164,25 +231,21 @@ fn build_filter_plan(filter: Option<FilterExpr>, schema: &CollectionSchema) -> F
 
     if !collect_filter_terms(&filter, schema, &mut scalar_predicates, &mut residual_terms) {
         return FilterPlan {
-            scalar_prefilter: ScalarPrefilter::All,
-            residual: SegmentFilterPlan::Matching(filter),
+            prefilter: PrefilterPlan::All,
+            residual: ResidualPlan::Filter(filter),
         };
     }
 
     FilterPlan {
-        scalar_prefilter: if scalar_predicates.is_empty() {
-            ScalarPrefilter::All
+        prefilter: if scalar_predicates.is_empty() {
+            PrefilterPlan::All
         } else {
-            ScalarPrefilter::And(scalar_predicates)
+            PrefilterPlan::ScalarAnd(scalar_predicates)
         },
         residual: if residual_terms.is_empty() {
-            SegmentFilterPlan::All
+            ResidualPlan::All
         } else {
-            let mut residual_terms = residual_terms;
-            let first = residual_terms.remove(0);
-            SegmentFilterPlan::Matching(residual_terms.into_iter().fold(first, |lhs, rhs| {
-                FilterExpr::And(Box::new(lhs), Box::new(rhs))
-            }))
+            ResidualPlan::Filter(and_expr(residual_terms))
         },
     }
 }
@@ -209,6 +272,13 @@ fn collect_filter_terms(
             true
         }
     }
+}
+
+fn and_expr(mut terms: Vec<FilterExpr>) -> FilterExpr {
+    let first = terms.remove(0);
+    terms.into_iter().fold(first, |lhs, rhs| {
+        FilterExpr::And(Box::new(lhs), Box::new(rhs))
+    })
 }
 
 fn pushdown_predicate(filter: &FilterExpr, schema: &CollectionSchema) -> Option<ScalarPredicate> {

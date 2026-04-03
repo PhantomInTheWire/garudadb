@@ -3,11 +3,12 @@ use garuda_index_flat::{FlatIndex, WritingFlatIndex};
 use garuda_index_hnsw::{HnswIndex, WritingHnswIndex};
 use garuda_index_ivf::{IvfIndex, WritingIvfIndex};
 use garuda_index_scalar::ScalarIndex;
+use garuda_meta::DeleteStore;
 use garuda_types::{
-    CollectionSchema, DenseVector, DistanceMetric, Doc, FieldName, FilterExpr, HnswEfSearch,
-    InternalDocId, IvfProbeCount, RemoveResult, SegmentId, SegmentMeta, Status, StatusCode, TopK,
+    CollectionSchema, DenseVector, DistanceMetric, Doc, FieldName, FilterExpr, InternalDocId,
+    RecallPlan, RemoveResult, SegmentId, SegmentMeta, Status, StatusCode,
 };
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RecordState {
@@ -77,34 +78,18 @@ pub enum SegmentFilter<'a> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct FlatSearchRequest<'a> {
+pub struct SegmentFilterContext<'a> {
+    pub allowed_doc_ids: Option<&'a HashSet<InternalDocId>>,
+    pub delete_store: Option<&'a DeleteStore>,
+    pub residual: SegmentFilter<'a>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SegmentExecutionRequest<'a> {
+    pub query_vector: &'a DenseVector,
     pub metric: DistanceMetric,
-    pub query_vector: &'a DenseVector,
-    pub top_k: TopK,
-    pub filter: SegmentFilter<'a>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct HnswSegmentSearchRequest<'a> {
-    pub query_vector: &'a DenseVector,
-    pub top_k: TopK,
-    pub ef_search: HnswEfSearch,
-    pub filter: SegmentFilter<'a>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct IvfSegmentSearchRequest<'a> {
-    pub query_vector: &'a DenseVector,
-    pub top_k: TopK,
-    pub nprobe: IvfProbeCount,
-    pub filter: SegmentFilter<'a>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum SegmentSearchRequest<'a> {
-    Flat(FlatSearchRequest<'a>),
-    Hnsw(HnswSegmentSearchRequest<'a>),
-    Ivf(IvfSegmentSearchRequest<'a>),
+    pub recall: RecallPlan,
+    pub filter: SegmentFilterContext<'a>,
 }
 
 pub fn segment_file_name(segment_id: SegmentId) -> String {

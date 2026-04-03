@@ -4,15 +4,16 @@ use crate::state::CollectionRuntime;
 use garuda_index_scalar::ScalarIndex;
 use garuda_index_scalar::prefilter_doc_ids;
 use garuda_meta::DeleteStore;
-use garuda_planner::{QueryPlan, SegmentFilterPlan, SegmentSearchPlan, build_query_plan};
+use garuda_planner::{
+    FilterPlan, PrefilterPlan, ProjectionPlan, QueryPlan, ResidualPlan, build_query_plan,
+};
 use garuda_segment::{
-    FlatSearchRequest, HnswSegmentSearchRequest, IvfSegmentSearchRequest, PersistedSegment,
-    SegmentFilter, SegmentSearchHit, SegmentSearchRequest, WritingSegment, search_persisted,
-    search_writing,
+    PersistedSegment, SegmentExecutionRequest, SegmentFilter, SegmentFilterContext,
+    SegmentSearchHit, WritingSegment, search_persisted, search_writing,
 };
 use garuda_types::{
     CollectionSchema, DenseVector, Doc, FieldName, FilterExpr, InternalDocId, QueryVectorSource,
-    Status, StatusCode, VectorProjection, VectorQuery,
+    RecallPlan, Status, StatusCode, VectorProjection, VectorQuery,
 };
 use std::collections::BTreeMap;
 use std::collections::HashSet;
@@ -24,13 +25,6 @@ enum QuerySegment<'a> {
 }
 
 impl<'a> QuerySegment<'a> {
-    fn doc_count(self) -> usize {
-        match self {
-            Self::Persisted(segment, _) => segment.meta.doc_count,
-            Self::Writing(segment) => segment.meta.doc_count,
-        }
-    }
-
     fn scalar_indexes(self) -> &'a BTreeMap<FieldName, ScalarIndex> {
         match self {
             Self::Persisted(segment, _) => &segment.scalar_indexes,
@@ -38,16 +32,17 @@ impl<'a> QuerySegment<'a> {
         }
     }
 
-    fn search(
-        self,
-        request: SegmentSearchRequest<'a>,
-        allowed_doc_ids: Option<&HashSet<InternalDocId>>,
-    ) -> Result<Vec<SegmentSearchHit>, Status> {
+    fn search(self, request: SegmentExecutionRequest<'a>) -> Result<Vec<SegmentSearchHit>, Status> {
         match self {
-            Self::Persisted(segment, delete_store) => {
-                search_persisted(segment, request, allowed_doc_ids, delete_store)
-            }
-            Self::Writing(segment) => search_writing(segment, request, allowed_doc_ids),
+            Self::Persisted(segment, _) => search_persisted(segment, request),
+            Self::Writing(segment) => search_writing(segment, request),
+        }
+    }
+
+    fn delete_store(self) -> Option<&'a DeleteStore> {
+        match self {
+            Self::Persisted(_, delete_store) => Some(delete_store),
+            Self::Writing(_) => None,
         }
     }
 }
@@ -91,12 +86,12 @@ pub(crate) fn execute_query(
     Ok(finalize_docs(docs, &plan))
 }
 
-fn apply_query_projection(doc: &mut Doc, plan: &QueryPlan) {
-    if matches!(plan.vector_projection, VectorProjection::Exclude) {
+fn apply_query_projection(doc: &mut Doc, projection: &ProjectionPlan) {
+    if matches!(projection.vector, VectorProjection::Exclude) {
         doc.vector = DenseVector::default();
     }
 
-    let Some(output_fields) = &plan.output_fields else {
+    let Some(output_fields) = &projection.output_fields else {
         return;
     };
 
@@ -176,13 +171,13 @@ fn collect_docs_from_segment(
     segment: QuerySegment<'_>,
 ) -> Result<(), Status> {
     let allowed_doc_ids =
-        prefilter_doc_ids(&plan.filter.scalar_prefilter, segment.scalar_indexes());
-    let request = segment_request(state, plan, query_vector, segment.doc_count());
-    let hits = if matches!(allowed_doc_ids, Some(ref doc_ids) if doc_ids.is_empty()) {
-        Vec::new()
-    } else {
-        segment.search(request, allowed_doc_ids.as_ref())?
-    };
+        prefilter_doc_ids(prefilter_predicates(&plan.filter), segment.scalar_indexes());
+    if matches!(allowed_doc_ids, Some(ref doc_ids) if doc_ids.is_empty()) {
+        return Ok(());
+    }
+
+    let request = segment_request(state, plan, query_vector, segment, allowed_doc_ids.as_ref());
+    let hits = segment.search(request)?;
 
     for hit in hits {
         let mut doc = hit.record.doc;
@@ -197,40 +192,19 @@ fn segment_request<'a>(
     state: &CollectionRuntime,
     plan: &'a QueryPlan,
     query_vector: &'a DenseVector,
-    segment_doc_count: usize,
-) -> SegmentSearchRequest<'a> {
-    let filter = match &plan.filter.residual {
-        SegmentFilterPlan::All => SegmentFilter::All,
-        SegmentFilterPlan::Matching(filter) => SegmentFilter::Matching(filter),
-    };
-
-    match plan.search {
-        SegmentSearchPlan::Flat => SegmentSearchRequest::Flat(FlatSearchRequest {
-            metric: state.schema.vector.metric,
-            query_vector,
-            top_k: segment_top_k(segment_doc_count),
-            filter,
-        }),
-        SegmentSearchPlan::Hnsw { ef_search } => {
-            SegmentSearchRequest::Hnsw(HnswSegmentSearchRequest {
-                query_vector,
-                top_k: plan.top_k,
-                ef_search,
-                filter,
-            })
-        }
-        SegmentSearchPlan::Ivf { nprobe } => SegmentSearchRequest::Ivf(IvfSegmentSearchRequest {
-            query_vector,
-            top_k: plan.top_k,
-            nprobe,
-            filter,
-        }),
+    segment: QuerySegment<'a>,
+    allowed_doc_ids: Option<&'a HashSet<InternalDocId>>,
+) -> SegmentExecutionRequest<'a> {
+    SegmentExecutionRequest {
+        query_vector,
+        metric: state.schema.vector.metric,
+        recall: plan.recall,
+        filter: SegmentFilterContext {
+            allowed_doc_ids,
+            delete_store: segment.delete_store(),
+            residual: residual_filter(&plan.filter),
+        },
     }
-}
-
-fn segment_top_k(doc_count: usize) -> garuda_types::TopK {
-    garuda_types::TopK::new(doc_count)
-        .expect("queryable segment must have at least one live document")
 }
 
 fn finalize_docs(mut docs: Vec<Doc>, plan: &QueryPlan) -> Vec<Doc> {
@@ -240,11 +214,33 @@ fn finalize_docs(mut docs: Vec<Doc>, plan: &QueryPlan) -> Vec<Doc> {
             .total_cmp(&lhs.score.unwrap_or_default())
             .then_with(|| lhs.id.cmp(&rhs.id))
     });
-    docs.truncate(plan.top_k.get());
+    docs.truncate(plan_top_k(plan).get());
 
     for doc in &mut docs {
-        apply_query_projection(doc, plan);
+        apply_query_projection(doc, &plan.projection);
     }
 
     docs
+}
+
+fn plan_top_k(plan: &QueryPlan) -> garuda_types::TopK {
+    match plan.recall {
+        RecallPlan::Flat(recall) => recall.top_k,
+        RecallPlan::Hnsw(recall) => recall.top_k,
+        RecallPlan::Ivf(recall) => recall.top_k,
+    }
+}
+
+fn prefilter_predicates(filter: &FilterPlan) -> Option<&[garuda_types::ScalarPredicate]> {
+    match &filter.prefilter {
+        PrefilterPlan::All => None,
+        PrefilterPlan::ScalarAnd(predicates) => Some(predicates),
+    }
+}
+
+fn residual_filter(filter: &FilterPlan) -> SegmentFilter<'_> {
+    match &filter.residual {
+        ResidualPlan::All => SegmentFilter::All,
+        ResidualPlan::Filter(filter) => SegmentFilter::Matching(filter),
+    }
 }

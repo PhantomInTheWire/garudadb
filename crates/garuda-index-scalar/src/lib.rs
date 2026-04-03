@@ -1,8 +1,8 @@
 //! Scalar index implementations used for prefiltering and predicate matching.
 
 use garuda_types::{
-    FieldName, InternalDocId, RemoveResult, ScalarCompareOp, ScalarPredicate, ScalarPrefilter,
-    ScalarType, ScalarValue,
+    FieldName, InternalDocId, RemoveResult, ScalarCompareOp, ScalarPredicate, ScalarType,
+    ScalarValue,
 };
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashSet};
@@ -138,10 +138,10 @@ impl ScalarIndex {
 }
 
 pub fn prefilter_doc_ids(
-    prefilter: &ScalarPrefilter,
+    predicates: Option<&[ScalarPredicate]>,
     scalar_indexes: &BTreeMap<FieldName, ScalarIndex>,
 ) -> Option<HashSet<InternalDocId>> {
-    let ScalarPrefilter::And(predicates) = prefilter else {
+    let Some(predicates) = predicates else {
         return None;
     };
 

@@ -16,8 +16,7 @@ pub use storage::{
     write_persisted_segment, write_writing_segment,
 };
 pub use types::{
-    FlatSearchRequest, HnswSegmentSearchRequest, IvfSegmentSearchRequest, PersistedSegment,
-    RecordState, SegmentFilter, SegmentSearchHit, SegmentSearchRequest, StoredRecord,
-    WritingSegment, segment_file_name, segment_meta,
+    PersistedSegment, RecordState, SegmentExecutionRequest, SegmentFilter, SegmentFilterContext,
+    SegmentSearchHit, StoredRecord, WritingSegment, segment_file_name, segment_meta,
 };
 pub use wal::{WalOp, append_wal_ops, read_wal_ops, reset_wal};

@@ -269,6 +269,10 @@ impl IvfIndex {
         self.state.list_count()
     }
 
+    pub fn non_empty_list_count(&self) -> usize {
+        self.state.non_empty_list_count()
+    }
+
     pub fn remove(&mut self, doc_id: InternalDocId) -> RemoveResult {
         self.state.remove_incremental(&self.config, doc_id)
     }
@@ -312,6 +316,10 @@ impl WritingIvfIndex {
 
     pub fn list_count(&self) -> usize {
         self.state.list_count()
+    }
+
+    pub fn non_empty_list_count(&self) -> usize {
+        self.state.non_empty_list_count()
     }
 
     pub fn insert(&mut self, entry: IvfBuildEntry) {
