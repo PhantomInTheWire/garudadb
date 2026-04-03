@@ -1,13 +1,13 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use garuda_types::{
-    CollectionName, HnswEfConstruction, HnswEfSearch, HnswIndexParams, HnswM, HnswMinNeighborCount,
-    HnswPruneWidth, HnswScalingFactor, IvfIndexParams, IvfListCount, IvfProbeCount,
-    IvfTrainingIterations, VectorProjection,
+    CollectionName, DenseVector, DocId, HnswEfConstruction, HnswEfSearch, HnswIndexParams, HnswM,
+    HnswMinNeighborCount, HnswPruneWidth, HnswScalingFactor, IvfIndexParams, IvfListCount,
+    IvfProbeCount, IvfTrainingIterations, VectorProjection,
 };
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
-use crate::parsing::{parse_collection_name, parse_non_zero_u32};
+use crate::parsing::{parse_collection_name, parse_doc_id, parse_non_zero_u32, parse_vector_arg};
 
 #[derive(Parser)]
 pub struct Cli {
@@ -20,6 +20,12 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Command {
     Init,
+    #[command(flatten)]
+    Run(RunnableCommand),
+}
+
+#[derive(Subcommand)]
+pub enum RunnableCommand {
     Create {
         #[arg(value_parser = parse_collection_name)]
         name: CollectionName,
@@ -133,14 +139,12 @@ pub enum Command {
 
 #[derive(Subcommand)]
 pub enum QuerySource {
-    Vector(QueryArgs),
-    ById(QueryArgs),
+    Vector(VectorQueryArgs),
+    ById(ByIdQueryArgs),
 }
 
 #[derive(Args)]
-pub struct QueryArgs {
-    #[arg(long)]
-    pub value: String,
+pub struct QueryOptions {
     #[arg(long)]
     pub top_k: usize,
     #[arg(long)]
@@ -151,6 +155,22 @@ pub struct QueryArgs {
     pub fields: Option<Vec<String>>,
     #[command(subcommand)]
     pub search: Option<QuerySearch>,
+}
+
+#[derive(Args)]
+pub struct VectorQueryArgs {
+    #[arg(long, value_parser = parse_vector_arg)]
+    pub value: DenseVector,
+    #[command(flatten)]
+    pub options: QueryOptions,
+}
+
+#[derive(Args)]
+pub struct ByIdQueryArgs {
+    #[arg(long, value_parser = |value: &str| parse_doc_id(value.to_owned()))]
+    pub value: DocId,
+    #[command(flatten)]
+    pub options: QueryOptions,
 }
 
 #[derive(Subcommand)]
