@@ -146,7 +146,7 @@ impl IvfState {
         self.inverted_lists.len()
     }
 
-    pub(super) fn non_empty_list_count(&self) -> usize {
+    pub(super) fn populated_list_count(&self) -> usize {
         self.inverted_lists
             .iter()
             .filter(|list| !list.entry_indexes.is_empty())

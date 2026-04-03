@@ -57,10 +57,10 @@ enum IvfSearchIndex<'a> {
 }
 
 impl IvfSearchIndex<'_> {
-    fn non_empty_list_count(&self) -> usize {
+    fn populated_list_count(&self) -> usize {
         match self {
-            Self::Writing(index) => index.non_empty_list_count(),
-            Self::Persisted(index) => index.non_empty_list_count(),
+            Self::Writing(index) => index.populated_list_count(),
+            Self::Persisted(index) => index.populated_list_count(),
         }
     }
 
@@ -224,7 +224,7 @@ fn search_ivf_hits(
             indexed_doc_count,
             visible_doc_count,
             allowed_visible_doc_count,
-            index.non_empty_list_count(),
+            index.populated_list_count(),
         ),
     );
 
@@ -376,7 +376,7 @@ pub(crate) fn search_candidate_nprobe(
     record_count: usize,
     visible_doc_count: usize,
     allowed_visible_doc_count: usize,
-    non_empty_list_count: usize,
+    populated_list_count: usize,
 ) -> IvfProbeCount {
     if matches!(budget, AnnBudgetPolicy::Requested)
         && candidate_top_k == top_k
@@ -385,19 +385,19 @@ pub(crate) fn search_candidate_nprobe(
         return nprobe;
     }
 
-    if non_empty_list_count <= candidate_top_k.get() {
-        return IvfProbeCount::new(non_empty_list_count as u32)
+    if populated_list_count <= candidate_top_k.get() {
+        return IvfProbeCount::new(populated_list_count as u32)
             .expect("small list count should fit nprobe");
     }
 
     if record_count > visible_doc_count {
-        return IvfProbeCount::new(non_empty_list_count as u32)
-            .expect("non-empty list count should fit nprobe");
+        return IvfProbeCount::new(populated_list_count as u32)
+            .expect("populated list count should fit nprobe");
     }
 
     if allowed_visible_doc_count == 0 {
-        return IvfProbeCount::new(non_empty_list_count as u32)
-            .expect("non-empty list count should fit nprobe");
+        return IvfProbeCount::new(populated_list_count as u32)
+            .expect("populated list count should fit nprobe");
     }
 
     let requested_nprobe = nprobe.get() as usize;
@@ -410,7 +410,7 @@ pub(crate) fn search_candidate_nprobe(
             .saturating_mul(candidate_top_k.get())
             .div_ceil(top_k.get())
     }
-    .min(non_empty_list_count) as u32;
+    .min(populated_list_count) as u32;
 
     IvfProbeCount::new(widened).expect("candidate nprobe should stay valid")
 }
