@@ -189,28 +189,34 @@ pub enum QuerySearch {
 pub enum CreateIndexKind {
     Flat,
     Scalar,
-    Hnsw {
-        #[arg(long, value_parser = |value: &str| parse_non_zero_u32(value, HnswM::new), default_value_t = HnswIndexParams::default().max_neighbors)]
-        max_neighbors: HnswM,
-        #[arg(long, value_parser = |value: &str| parse_non_zero_u32(value, HnswScalingFactor::new), default_value_t = HnswIndexParams::default().scaling_factor)]
-        scaling_factor: HnswScalingFactor,
-        #[arg(long, value_parser = |value: &str| parse_non_zero_u32(value, HnswEfConstruction::new), default_value_t = HnswIndexParams::default().ef_construction)]
-        ef_construction: HnswEfConstruction,
-        #[arg(long, value_parser = |value: &str| parse_non_zero_u32(value, HnswPruneWidth::new), default_value_t = HnswIndexParams::default().prune_width)]
-        prune_width: HnswPruneWidth,
-        #[arg(long, value_parser = |value: &str| parse_non_zero_u32(value, HnswMinNeighborCount::new), default_value_t = HnswIndexParams::default().min_neighbor_count)]
-        min_neighbor_count: HnswMinNeighborCount,
-        #[arg(long, value_parser = |value: &str| parse_non_zero_u32(value, HnswEfSearch::new), default_value_t = HnswIndexParams::default().ef_search)]
-        ef_search: HnswEfSearch,
-    },
-    Ivf {
-        #[arg(long = "n-list", value_parser = |value: &str| parse_non_zero_u32(value, IvfListCount::new), default_value_t = IvfIndexParams::default().n_list)]
-        n_list: IvfListCount,
-        #[arg(long = "n-probe", value_parser = |value: &str| parse_non_zero_u32(value, IvfProbeCount::new), default_value_t = IvfIndexParams::default().n_probe)]
-        n_probe: IvfProbeCount,
-        #[arg(long, value_parser = |value: &str| parse_non_zero_u32(value, IvfTrainingIterations::new), default_value_t = IvfIndexParams::default().training_iterations)]
-        training_iterations: IvfTrainingIterations,
-    },
+    Hnsw(HnswCreateIndexArgs),
+    Ivf(IvfCreateIndexArgs),
+}
+
+#[derive(Args)]
+pub struct HnswCreateIndexArgs {
+    #[arg(long, value_parser = |value: &str| parse_non_zero_u32(value, HnswM::new), default_value_t = HnswIndexParams::default().max_neighbors)]
+    pub max_neighbors: HnswM,
+    #[arg(long, value_parser = |value: &str| parse_non_zero_u32(value, HnswScalingFactor::new), default_value_t = HnswIndexParams::default().scaling_factor)]
+    pub scaling_factor: HnswScalingFactor,
+    #[arg(long, value_parser = |value: &str| parse_non_zero_u32(value, HnswEfConstruction::new), default_value_t = HnswIndexParams::default().ef_construction)]
+    pub ef_construction: HnswEfConstruction,
+    #[arg(long, value_parser = |value: &str| parse_non_zero_u32(value, HnswPruneWidth::new), default_value_t = HnswIndexParams::default().prune_width)]
+    pub prune_width: HnswPruneWidth,
+    #[arg(long, value_parser = |value: &str| parse_non_zero_u32(value, HnswMinNeighborCount::new), default_value_t = HnswIndexParams::default().min_neighbor_count)]
+    pub min_neighbor_count: HnswMinNeighborCount,
+    #[arg(long, value_parser = |value: &str| parse_non_zero_u32(value, HnswEfSearch::new), default_value_t = HnswIndexParams::default().ef_search)]
+    pub ef_search: HnswEfSearch,
+}
+
+#[derive(Args)]
+pub struct IvfCreateIndexArgs {
+    #[arg(long = "n-list", value_parser = |value: &str| parse_non_zero_u32(value, IvfListCount::new), default_value_t = IvfIndexParams::default().n_list)]
+    pub n_list: IvfListCount,
+    #[arg(long = "n-probe", value_parser = |value: &str| parse_non_zero_u32(value, IvfProbeCount::new), default_value_t = IvfIndexParams::default().n_probe)]
+    pub n_probe: IvfProbeCount,
+    #[arg(long, value_parser = |value: &str| parse_non_zero_u32(value, IvfTrainingIterations::new), default_value_t = IvfIndexParams::default().training_iterations)]
+    pub training_iterations: IvfTrainingIterations,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
