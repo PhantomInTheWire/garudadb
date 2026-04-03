@@ -1,12 +1,14 @@
 use garuda_segment::{
-    IvfSegmentSearchRequest, PersistedSegment, SegmentFilter, SegmentSearchRequest, WritingSegment,
+    PersistedSegment, SegmentExecutionRequest, SegmentFilter, SegmentFilterContext, WritingSegment,
     read_persisted_segment, search_persisted, segment_meta, write_persisted_segment,
 };
+use garuda_index_scalar::prefilter_doc_ids;
 use garuda_storage::{read_file, segment_ivf_index_path};
 use garuda_types::{
-    CollectionName, CollectionSchema, DenseVector, DistanceMetric, Doc, DocId, FieldName,
-    InternalDocId, IvfIndexParams, SegmentId, StatusCode, TopK, VectorDimension, VectorFieldSchema,
-    VectorIndexState,
+    AnnBudgetPolicy, CollectionName, CollectionSchema, DenseVector, DistanceMetric, Doc, DocId,
+    FieldName, InternalDocId, IvfIndexParams, IvfRecallPlan, Nullability, RecallPlan,
+    ScalarCompareOp, ScalarFieldSchema, ScalarIndexState, ScalarPredicate, ScalarType,
+    ScalarValue, SegmentId, StatusCode, TopK, VectorDimension, VectorFieldSchema, VectorIndexState,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -34,19 +36,25 @@ fn persisted_ivf_sidecar_roundtrips_search() {
 
     let hits = search_persisted(
         &reopened,
-        SegmentSearchRequest::Ivf(IvfSegmentSearchRequest {
+        SegmentExecutionRequest {
             query_vector: &DenseVector::parse(vec![1.0, 0.0, 0.0, 0.0]).expect("valid vector"),
-            top_k: TopK::new(3).expect("valid top_k"),
-            nprobe: schema
-                .vector
-                .indexes
-                .ivf_params()
-                .expect("ivf params")
-                .n_probe,
-            filter: SegmentFilter::All,
-        }),
-        None,
-        &garuda_meta::DeleteStore::new(),
+            metric: DistanceMetric::Cosine,
+            recall: RecallPlan::Ivf(IvfRecallPlan {
+                top_k: TopK::new(3).expect("valid top_k"),
+                nprobe: schema
+                    .vector
+                    .indexes
+                    .ivf_params()
+                    .expect("ivf params")
+                    .n_probe,
+                budget: AnnBudgetPolicy::Requested,
+            }),
+            filter: SegmentFilterContext {
+                allowed_doc_ids: None,
+                delete_store: Some(&garuda_meta::DeleteStore::new()),
+                residual: SegmentFilter::All,
+            },
+        },
     )
     .expect("search reopened segment");
 
@@ -123,19 +131,25 @@ fn write_persisted_segment_should_compact_ivf_sidecar_after_incremental_delete()
 
     let hits = search_persisted(
         &reopened,
-        SegmentSearchRequest::Ivf(IvfSegmentSearchRequest {
+        SegmentExecutionRequest {
             query_vector: &DenseVector::parse(vec![1.0, 0.0, 0.0, 0.0]).expect("valid vector"),
-            top_k: TopK::new(3).expect("valid top_k"),
-            nprobe: schema
-                .vector
-                .indexes
-                .ivf_params()
-                .expect("ivf params")
-                .n_probe,
-            filter: SegmentFilter::All,
-        }),
-        None,
-        &garuda_meta::DeleteStore::new(),
+            metric: DistanceMetric::Cosine,
+            recall: RecallPlan::Ivf(IvfRecallPlan {
+                top_k: TopK::new(3).expect("valid top_k"),
+                nprobe: schema
+                    .vector
+                    .indexes
+                    .ivf_params()
+                    .expect("ivf params")
+                    .n_probe,
+                budget: AnnBudgetPolicy::Requested,
+            }),
+            filter: SegmentFilterContext {
+                allowed_doc_ids: None,
+                delete_store: Some(&garuda_meta::DeleteStore::new()),
+                residual: SegmentFilter::All,
+            },
+        },
     )
     .expect("search reopened segment");
 
@@ -165,6 +179,60 @@ fn read_persisted_segment_skips_ivf_sidecar_when_doc_count_is_zero() {
     assert!(reopened.ivf_index.is_none());
 }
 
+#[test]
+fn scalar_prefilter_with_only_deleted_visible_matches_returns_no_ivf_hits() {
+    let root = temp_root("segment-ivf-prefilter-deleted-only");
+    let schema = indexed_schema();
+    let segment = PersistedSegment::new(
+        segment_meta(SegmentId::new_unchecked(1)),
+        vec![
+            stored_indexed_record(1, "doc-1", "alpha", [1.0, 0.0, 0.0, 0.0]),
+            stored_indexed_record(2, "doc-2", "beta", [0.0, 1.0, 0.0, 0.0]),
+        ],
+        &schema,
+    );
+    write_persisted_segment(&root, &segment, &schema).expect("write segment");
+    let reopened = read_persisted_segment(&root, &segment.meta, &schema).expect("read segment");
+
+    let allowed_doc_ids = prefilter_doc_ids(
+        Some(&[ScalarPredicate {
+            field: field_name("category"),
+            op: ScalarCompareOp::Eq,
+            value: ScalarValue::String("alpha".to_string()),
+        }]),
+        &reopened.scalar_indexes,
+    )
+    .expect("scalar prefilter");
+    let mut delete_store = garuda_meta::DeleteStore::new();
+    delete_store.insert(InternalDocId::new(1).expect("doc id"));
+
+    let hits = search_persisted(
+        &reopened,
+        SegmentExecutionRequest {
+            query_vector: &DenseVector::parse(vec![1.0, 0.0, 0.0, 0.0]).expect("valid vector"),
+            metric: DistanceMetric::Cosine,
+            recall: RecallPlan::Ivf(IvfRecallPlan {
+                top_k: TopK::new(1).expect("valid top_k"),
+                nprobe: schema
+                    .vector
+                    .indexes
+                    .ivf_params()
+                    .expect("ivf params")
+                    .n_probe,
+                budget: AnnBudgetPolicy::AdaptiveFiltered,
+            }),
+            filter: SegmentFilterContext {
+                allowed_doc_ids: Some(&allowed_doc_ids),
+                delete_store: Some(&delete_store),
+                residual: SegmentFilter::All,
+            },
+        },
+    )
+    .expect("search reopened segment");
+
+    assert!(hits.is_empty());
+}
+
 fn temp_root(prefix: &str) -> PathBuf {
     let nonce = COUNTER.fetch_add(1, Ordering::Relaxed);
     let ts = SystemTime::now()
@@ -191,11 +259,66 @@ fn stored_record(internal_doc_id: u64, id: &str, vector: [f32; 4]) -> garuda_seg
     }
 }
 
+fn stored_indexed_record(
+    internal_doc_id: u64,
+    id: &str,
+    category: &str,
+    vector: [f32; 4],
+) -> garuda_segment::StoredRecord {
+    garuda_segment::StoredRecord {
+        doc_id: InternalDocId::new(internal_doc_id).expect("valid internal doc id"),
+        state: garuda_segment::RecordState::Live,
+        doc: Doc::new(
+            DocId::parse(id).expect("valid doc id"),
+            BTreeMap::from([
+                (
+                    "pk".to_string(),
+                    garuda_types::ScalarValue::String(id.to_string()),
+                ),
+                (
+                    "category".to_string(),
+                    garuda_types::ScalarValue::String(category.to_string()),
+                ),
+            ]),
+            DenseVector::parse(vector.to_vec()).expect("valid vector"),
+        ),
+    }
+}
+
 fn schema() -> CollectionSchema {
     CollectionSchema {
         name: CollectionName::parse("docs").expect("valid name"),
         primary_key: field_name("pk"),
         fields: Vec::new(),
+        vector: VectorFieldSchema {
+            name: field_name("embedding"),
+            dimension: VectorDimension::new(4).expect("valid dimension"),
+            metric: DistanceMetric::Cosine,
+            indexes: VectorIndexState::IvfOnly(IvfIndexParams::default()),
+        },
+    }
+}
+
+fn indexed_schema() -> CollectionSchema {
+    CollectionSchema {
+        name: CollectionName::parse("docs").expect("valid name"),
+        primary_key: field_name("pk"),
+        fields: vec![
+            ScalarFieldSchema {
+                name: field_name("pk"),
+                field_type: ScalarType::String,
+                index: ScalarIndexState::None,
+                nullability: Nullability::Required,
+                default_value: None,
+            },
+            ScalarFieldSchema {
+                name: field_name("category"),
+                field_type: ScalarType::String,
+                index: ScalarIndexState::Indexed,
+                nullability: Nullability::Required,
+                default_value: None,
+            },
+        ],
         vector: VectorFieldSchema {
             name: field_name("embedding"),
             dimension: VectorDimension::new(4).expect("valid dimension"),

@@ -1,5 +1,5 @@
 use crate::search::search_candidate_nprobe;
-use garuda_types::{IvfProbeCount, TopK};
+use garuda_types::{AnnBudgetPolicy, IvfProbeCount, TopK};
 
 fn top_k(value: usize) -> TopK {
     TopK::new(value).expect("top_k")
@@ -12,7 +12,16 @@ fn nprobe(value: u32) -> IvfProbeCount {
 #[test]
 fn search_candidate_nprobe_should_keep_requested_nprobe_without_widening() {
     assert_eq!(
-        search_candidate_nprobe(nprobe(2), top_k(4), top_k(4), 8),
+        search_candidate_nprobe(
+            nprobe(2),
+            top_k(4),
+            AnnBudgetPolicy::Requested,
+            top_k(4),
+            8,
+            8,
+            8,
+            8,
+        ),
         nprobe(2)
     );
 }
@@ -20,7 +29,16 @@ fn search_candidate_nprobe_should_keep_requested_nprobe_without_widening() {
 #[test]
 fn search_candidate_nprobe_should_widen_proportionally_instead_of_scanning_all_lists() {
     assert_eq!(
-        search_candidate_nprobe(nprobe(1), top_k(1), top_k(8), 16),
+        search_candidate_nprobe(
+            nprobe(1),
+            top_k(1),
+            AnnBudgetPolicy::AdaptiveFiltered,
+            top_k(8),
+            16,
+            16,
+            2,
+            16,
+        ),
         nprobe(8)
     );
 }
@@ -28,7 +46,33 @@ fn search_candidate_nprobe_should_widen_proportionally_instead_of_scanning_all_l
 #[test]
 fn search_candidate_nprobe_should_scan_all_lists_for_small_ivf_segments() {
     assert_eq!(
-        search_candidate_nprobe(nprobe(1), top_k(1), top_k(3), 3),
+        search_candidate_nprobe(
+            nprobe(1),
+            top_k(1),
+            AnnBudgetPolicy::AdaptiveFiltered,
+            top_k(3),
+            3,
+            3,
+            1,
+            3,
+        ),
         nprobe(3)
+    );
+}
+
+#[test]
+fn search_candidate_nprobe_should_widen_for_delete_churn_even_without_user_filter() {
+    assert_eq!(
+        search_candidate_nprobe(
+            nprobe(1),
+            top_k(5),
+            AnnBudgetPolicy::Requested,
+            top_k(5),
+            50,
+            10,
+            10,
+            8,
+        ),
+        nprobe(8)
     );
 }

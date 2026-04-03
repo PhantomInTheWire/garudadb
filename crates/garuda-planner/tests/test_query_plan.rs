@@ -1,11 +1,11 @@
-use garuda_planner::{SegmentFilterPlan, SegmentSearchPlan, build_query_plan};
+use garuda_planner::{PrefilterPlan, ResidualPlan, build_query_plan};
 use garuda_types::{
-    CollectionName, CollectionSchema, DenseVector, DistanceMetric, FieldName, FilterExpr,
-    FlatHnswDefault, FlatIvfDefault, HnswEfSearch, HnswIndexParams, IvfIndexParams, IvfProbeCount,
-    LikePattern, Nullability, ScalarCompareOp, ScalarFieldSchema, ScalarIndexState,
-    ScalarPredicate, ScalarPrefilter, ScalarType, ScalarValue, StringMatchExpr, TopK,
-    VectorDimension, VectorFieldSchema, VectorIndexState, VectorProjection, VectorQuery,
-    VectorSearch,
+    AnnBudgetPolicy, CollectionName, CollectionSchema, DenseVector, DistanceMetric, FieldName,
+    FilterExpr, FlatHnswDefault, FlatIvfDefault, FlatRecallPlan, HnswEfSearch, HnswIndexParams,
+    HnswRecallPlan, IvfIndexParams, IvfProbeCount, IvfRecallPlan, LikePattern, Nullability,
+    RecallPlan, ScalarCompareOp, ScalarFieldSchema, ScalarIndexState, ScalarPredicate, ScalarType,
+    ScalarValue, StringMatchExpr, TopK, VectorDimension, VectorFieldSchema, VectorIndexState,
+    VectorProjection, VectorQuery, VectorSearch,
 };
 
 #[test]
@@ -33,14 +33,15 @@ fn hnsw_query_plan_should_use_public_ef_search_override() {
     .expect("build query plan");
 
     assert_eq!(
-        plan.search,
-        SegmentSearchPlan::Hnsw {
+        plan.recall,
+        RecallPlan::Hnsw(HnswRecallPlan {
+            top_k: TopK::new(3).expect("valid top_k"),
             ef_search: HnswEfSearch::new(8).expect("valid ef_search"),
-        }
+            budget: AnnBudgetPolicy::AdaptiveFiltered,
+        })
     );
     assert_eq!(plan.field_name, field_name("embedding"));
-    assert_eq!(plan.top_k, TopK::new(3).expect("valid top_k"));
-    assert_eq!(plan.vector_projection, VectorProjection::Exclude);
+    assert_eq!(plan.projection.vector, VectorProjection::Exclude);
 }
 
 #[test]
@@ -60,10 +61,12 @@ fn hnsw_query_plan_should_use_schema_default_when_search_is_default() {
     .expect("build query plan");
 
     assert_eq!(
-        plan.search,
-        SegmentSearchPlan::Hnsw {
+        plan.recall,
+        RecallPlan::Hnsw(HnswRecallPlan {
+            top_k: TopK::new(3).expect("valid top_k"),
             ef_search: HnswIndexParams::default().ef_search,
-        }
+            budget: AnnBudgetPolicy::Requested,
+        })
     );
 }
 
@@ -86,8 +89,8 @@ fn indexed_and_filter_should_split_prefilter_and_residual() {
         .expect("build filter plan");
 
     assert_eq!(
-        plan.filter.scalar_prefilter,
-        ScalarPrefilter::And(vec![ScalarPredicate {
+        plan.filter.prefilter,
+        PrefilterPlan::ScalarAnd(vec![ScalarPredicate {
             field: field_name("category"),
             op: ScalarCompareOp::Eq,
             value: ScalarValue::String("alpha".to_string()),
@@ -95,7 +98,7 @@ fn indexed_and_filter_should_split_prefilter_and_residual() {
     );
     assert_eq!(
         plan.filter.residual,
-        SegmentFilterPlan::Matching(FilterExpr::Ne("rank".to_string(), ScalarValue::Int64(2),))
+        ResidualPlan::Filter(FilterExpr::Ne("rank".to_string(), ScalarValue::Int64(2),))
     );
 }
 
@@ -117,8 +120,8 @@ fn or_filter_should_stay_residual() {
     let plan =
         build_query_plan(query, Some(filter.clone()), &indexed_schema()).expect("build or plan");
 
-    assert_eq!(plan.filter.scalar_prefilter, ScalarPrefilter::All);
-    assert_eq!(plan.filter.residual, SegmentFilterPlan::Matching(filter));
+    assert_eq!(plan.filter.prefilter, PrefilterPlan::All);
+    assert_eq!(plan.filter.residual, ResidualPlan::Filter(filter));
 }
 
 #[test]
@@ -148,10 +151,10 @@ fn like_contains_and_is_null_stay_residual() {
     let plan =
         build_query_plan(query, Some(filter), &indexed_schema()).expect("build residual plan");
 
-    assert_eq!(plan.filter.scalar_prefilter, ScalarPrefilter::All);
+    assert_eq!(plan.filter.prefilter, PrefilterPlan::All);
     assert_eq!(
         plan.filter.residual,
-        SegmentFilterPlan::Matching(FilterExpr::And(
+        ResidualPlan::Filter(FilterExpr::And(
             Box::new(FilterExpr::And(
                 Box::new(FilterExpr::StringMatch(
                     "category".to_string(),
@@ -192,10 +195,12 @@ fn ivf_query_plan_should_use_public_nprobe_override() {
     .expect("build ivf plan");
 
     assert_eq!(
-        plan.search,
-        SegmentSearchPlan::Ivf {
+        plan.recall,
+        RecallPlan::Ivf(IvfRecallPlan {
+            top_k: TopK::new(3).expect("valid top_k"),
             nprobe: IvfProbeCount::new(5).expect("valid nprobe"),
-        }
+            budget: AnnBudgetPolicy::Requested,
+        })
     );
 }
 
@@ -217,10 +222,59 @@ fn ivf_query_plan_should_use_schema_default_when_search_is_default() {
     .expect("build ivf plan");
 
     assert_eq!(
-        plan.search,
-        SegmentSearchPlan::Ivf {
+        plan.recall,
+        RecallPlan::Ivf(IvfRecallPlan {
+            top_k: TopK::new(3).expect("valid top_k"),
             nprobe: params.n_probe,
-        }
+            budget: AnnBudgetPolicy::Requested,
+        })
+    );
+}
+
+#[test]
+fn default_flat_query_plan_should_use_flat_recall() {
+    let plan = build_query_plan(
+        VectorQuery::by_vector(
+            field_name("embedding"),
+            DenseVector::parse(vec![1.0, 0.0, 0.0, 0.0]).expect("valid vector"),
+            TopK::new(2).expect("valid top_k"),
+        ),
+        None,
+        &schema(VectorIndexState::DefaultFlat),
+    )
+    .expect("build flat plan");
+
+    assert_eq!(
+        plan.recall,
+        RecallPlan::Flat(FlatRecallPlan {
+            top_k: TopK::new(2).expect("valid top_k"),
+        })
+    );
+}
+
+#[test]
+fn scalar_prefilter_only_should_use_adaptive_budget() {
+    let plan = build_query_plan(
+        VectorQuery::by_vector(
+            field_name("embedding"),
+            DenseVector::parse(vec![1.0, 0.0, 0.0, 0.0]).expect("valid vector"),
+            TopK::new(3).expect("valid top_k"),
+        ),
+        Some(FilterExpr::Eq(
+            "category".to_string(),
+            ScalarValue::String("alpha".to_string()),
+        )),
+        &schema(VectorIndexState::HnswOnly(HnswIndexParams::default())),
+    )
+    .expect("build adaptive hnsw plan");
+
+    assert_eq!(
+        plan.recall,
+        RecallPlan::Hnsw(HnswRecallPlan {
+            top_k: TopK::new(3).expect("valid top_k"),
+            ef_search: HnswIndexParams::default().ef_search,
+            budget: AnnBudgetPolicy::AdaptiveFiltered,
+        })
     );
 }
 
