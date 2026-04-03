@@ -7,6 +7,10 @@ use crate::types::{
 #[path = "search_candidate_nprobe_tests.rs"]
 mod search_candidate_nprobe_tests;
 
+#[cfg(test)]
+#[path = "search_top_k_tests.rs"]
+mod search_top_k_tests;
+
 use garuda_index_flat::FlatSearchHit;
 use garuda_index_hnsw::HnswHit;
 use garuda_index_ivf::{IvfIndex, IvfSearchHit, WritingIvfIndex};
@@ -107,8 +111,12 @@ fn search_segment(
 
     match request.recall {
         RecallPlan::Flat(recall) => {
-            let candidate_top_k = TopK::new(stats.visible_doc_count.max(recall.top_k.get()))
-                .expect("segment live doc count");
+            let candidate_top_k = flat_candidate_top_k(
+                recall.top_k,
+                request.filter,
+                stats.index_doc_count,
+                stats.visible_doc_count,
+            );
             let hits = match segment {
                 SearchSegment::Writing(segment) => segment
                     .flat_index
@@ -316,6 +324,19 @@ fn collect_search_hits(
     }
 
     search_hits
+}
+
+fn flat_candidate_top_k(
+    top_k: TopK,
+    filter: SegmentFilterContext<'_>,
+    index_doc_count: usize,
+    visible_doc_count: usize,
+) -> TopK {
+    if !filtering_can_drop_hits(filter, index_doc_count, visible_doc_count) {
+        return top_k;
+    }
+
+    TopK::new(visible_doc_count.max(top_k.get())).expect("segment live doc count")
 }
 
 fn ann_candidate_top_k(
