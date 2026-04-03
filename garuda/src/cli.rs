@@ -1,8 +1,8 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use garuda_types::{
-    CollectionName, DenseVector, DocId, HnswEfConstruction, HnswEfSearch, HnswIndexParams, HnswM,
-    HnswMinNeighborCount, HnswPruneWidth, HnswScalingFactor, IvfIndexParams, IvfListCount,
-    IvfProbeCount, IvfTrainingIterations, VectorProjection,
+    CollectionName, CollectionOptions, DenseVector, DocId, HnswEfConstruction, HnswEfSearch,
+    HnswIndexParams, HnswM, HnswMinNeighborCount, HnswPruneWidth, HnswScalingFactor,
+    IvfIndexParams, IvfListCount, IvfProbeCount, IvfTrainingIterations, VectorProjection,
 };
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
@@ -32,7 +32,7 @@ pub enum RunnableCommand {
         dimension: NonZeroUsize,
         #[arg(long, value_enum, default_value_t = MetricArg::Cosine)]
         metric: MetricArg,
-        #[arg(long, default_value_t = crate::command::default_segment_max_docs())]
+        #[arg(long, default_value_t = CollectionOptions::DEFAULT_SEGMENT_MAX_DOCS)]
         segment_max_docs: usize,
         #[arg(long, value_enum, default_value_t = StorageAccessArg::MmapPreferred)]
         storage_access: StorageAccessArg,

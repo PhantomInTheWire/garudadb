@@ -403,12 +403,16 @@ pub struct CollectionOptions {
     pub segment_max_docs: usize,
 }
 
+impl CollectionOptions {
+    pub const DEFAULT_SEGMENT_MAX_DOCS: usize = 1024;
+}
+
 impl Default for CollectionOptions {
     fn default() -> Self {
         Self {
             access_mode: AccessMode::ReadWrite,
             storage_access: StorageAccess::MmapPreferred,
-            segment_max_docs: 1024,
+            segment_max_docs: Self::DEFAULT_SEGMENT_MAX_DOCS,
         }
     }
 }

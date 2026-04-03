@@ -13,10 +13,6 @@ use crate::parsing::{
 const PRIMARY_KEY_FIELD: &str = "pk";
 const VECTOR_FIELD: &str = "embedding";
 
-pub fn default_segment_max_docs() -> usize {
-    CollectionOptions::default().segment_max_docs
-}
-
 pub fn run_command(db: &Database, command: RunnableCommand) -> Result<(), String> {
     match command {
         RunnableCommand::Create {
