@@ -168,7 +168,14 @@ fn write_jsonl(
     path: &std::path::Path,
     write: fn(&Collection, Vec<garuda_types::Doc>) -> Vec<garuda_types::WriteResult>,
 ) -> Result<(), String> {
-    print_json(&write(collection, read_jsonl_docs(path)?))
+    let results = write(collection, read_jsonl_docs(path)?);
+    print_json(&results)?;
+
+    let Some(result) = results.iter().find(|result| !result.status.is_ok()) else {
+        return Ok(());
+    };
+
+    Err(result.status.message.clone())
 }
 
 fn vector_query(args: QueryArgs) -> Result<VectorQuery, String> {
