@@ -42,6 +42,12 @@ impl IvfListCount {
     }
 }
 
+impl std::fmt::Display for IvfListCount {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.get().fmt(f)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IvfProbeCount(NonZeroU32);
 
@@ -72,6 +78,12 @@ impl IvfProbeCount {
 
     pub fn get(self) -> u32 {
         self.0.get()
+    }
+}
+
+impl std::fmt::Display for IvfProbeCount {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.get().fmt(f)
     }
 }
 
@@ -112,6 +124,12 @@ impl IvfTrainingIterations {
 
     pub fn get(self) -> u32 {
         self.0.get()
+    }
+}
+
+impl std::fmt::Display for IvfTrainingIterations {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.get().fmt(f)
     }
 }
 

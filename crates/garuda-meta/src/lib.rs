@@ -63,6 +63,10 @@ impl DeleteStore {
         self.deleted_doc_ids.contains(&internal_doc_id)
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.deleted_doc_ids.is_empty()
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = &InternalDocId> {
         self.deleted_doc_ids.iter()
     }

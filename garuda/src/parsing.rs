@@ -1,9 +1,7 @@
 use garuda_types::{
     CollectionName, CollectionOptions, CollectionSchema, DistanceMetric, FieldName,
-    HnswEfConstruction, HnswEfSearch, HnswIndexParams, HnswM, HnswMinNeighborCount, HnswPruneWidth,
-    HnswScalingFactor, IndexKind, IvfIndexParams, IvfListCount, IvfProbeCount,
-    IvfTrainingIterations, Nullability, ScalarIndexState, ScalarType, ScalarValue, Status,
-    StorageAccess, VectorSearch,
+    HnswIndexParams, IndexKind, IvfIndexParams, Nullability, ScalarIndexState, ScalarType,
+    ScalarValue, Status, StorageAccess, VectorSearch,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -20,7 +18,6 @@ use crate::cli::{
 #[derive(Deserialize)]
 struct JsonDoc {
     id: String,
-    #[serde(default)]
     fields: BTreeMap<String, serde_json::Value>,
     vector: Vec<f32>,
 }
@@ -161,12 +158,8 @@ pub fn parse_vector_arg(raw: &str) -> Result<garuda_types::DenseVector, String> 
 pub fn parse_query_search(search: Option<QuerySearch>) -> Result<VectorSearch, String> {
     match search {
         None => Ok(VectorSearch::Default),
-        Some(QuerySearch::Hnsw { ef_search }) => Ok(VectorSearch::Hnsw {
-            ef_search: HnswEfSearch::new(ef_search.get()).map_err(|status| status.message)?,
-        }),
-        Some(QuerySearch::Ivf { nprobe }) => Ok(VectorSearch::Ivf {
-            nprobe: IvfProbeCount::new(nprobe.get()).map_err(|status| status.message)?,
-        }),
+        Some(QuerySearch::Hnsw { ef_search }) => Ok(VectorSearch::Hnsw { ef_search }),
+        Some(QuerySearch::Ivf { nprobe }) => Ok(VectorSearch::Ivf { nprobe }),
     }
 }
 
@@ -185,49 +178,23 @@ pub fn parse_index_params(kind: CreateIndexKind) -> Result<garuda_types::IndexPa
             prune_width,
             min_neighbor_count,
             ef_search,
-        } => {
-            let defaults = HnswIndexParams::default();
-            Ok(garuda_types::IndexParams::Hnsw(HnswIndexParams {
-                max_neighbors: parse_u32(max_neighbors, defaults.max_neighbors.get(), HnswM::new)?,
-                scaling_factor: parse_u32(
-                    scaling_factor,
-                    defaults.scaling_factor.get(),
-                    HnswScalingFactor::new,
-                )?,
-                ef_construction: parse_u32(
-                    ef_construction,
-                    defaults.ef_construction.get(),
-                    HnswEfConstruction::new,
-                )?,
-                prune_width: parse_u32(
-                    prune_width,
-                    defaults.prune_width.get(),
-                    HnswPruneWidth::new,
-                )?,
-                min_neighbor_count: parse_u32(
-                    min_neighbor_count,
-                    defaults.min_neighbor_count.get(),
-                    HnswMinNeighborCount::new,
-                )?,
-                ef_search: parse_u32(ef_search, defaults.ef_search.get(), HnswEfSearch::new)?,
-            }))
-        }
+        } => Ok(garuda_types::IndexParams::Hnsw(HnswIndexParams {
+            max_neighbors,
+            scaling_factor,
+            ef_construction,
+            prune_width,
+            min_neighbor_count,
+            ef_search,
+        })),
         CreateIndexKind::Ivf {
             n_list,
             n_probe,
             training_iterations,
-        } => {
-            let defaults = IvfIndexParams::default();
-            Ok(garuda_types::IndexParams::Ivf(IvfIndexParams {
-                n_list: parse_u32(n_list, defaults.n_list.get(), IvfListCount::new)?,
-                n_probe: parse_u32(n_probe, defaults.n_probe.get(), IvfProbeCount::new)?,
-                training_iterations: parse_u32(
-                    training_iterations,
-                    defaults.training_iterations.get(),
-                    IvfTrainingIterations::new,
-                )?,
-            }))
-        }
+        } => Ok(garuda_types::IndexParams::Ivf(IvfIndexParams {
+            n_list,
+            n_probe,
+            training_iterations,
+        })),
     }
 }
 
@@ -263,10 +230,12 @@ fn parse_scalar_value(value: serde_json::Value) -> Result<ScalarValue, String> {
     }
 }
 
-fn parse_u32<T>(
-    value: Option<NonZeroU32>,
-    default: u32,
-    parse: impl Fn(u32) -> Result<T, Status>,
+pub fn parse_non_zero_u32<T>(
+    value: &str,
+    parse: impl FnOnce(u32) -> Result<T, Status>,
 ) -> Result<T, String> {
-    parse(value.map(NonZeroU32::get).unwrap_or(default)).map_err(|status| status.message)
+    let value = value
+        .parse::<NonZeroU32>()
+        .map_err(|error| error.to_string())?;
+    parse(value.get()).map_err(|status| status.message)
 }

@@ -12,18 +12,18 @@ fn nprobe(value: u32) -> IvfProbeCount {
 #[test]
 fn search_candidate_nprobe_should_keep_requested_nprobe_without_widening() {
     assert_eq!(
-        search_candidate_nprobe(
-            CandidateNprobeInput {
-                nprobe: nprobe(2),
-                top_k: top_k(4),
-                budget: AnnBudgetPolicy::Requested,
-                candidate_top_k: top_k(4),
-                candidate_doc_count: 8,
-                visible_doc_count: 8,
-                allowed_visible_doc_count: 8,
-                populated_list_count: 8,
-            },
-        ),
+        search_candidate_nprobe(CandidateNprobeInput {
+            nprobe: nprobe(2),
+            top_k: top_k(4),
+            budget: AnnBudgetPolicy::Requested,
+            candidate_top_k: top_k(4),
+            stored_doc_count: 8,
+            index_doc_count: 8,
+            hides_deleted: false,
+            visible_doc_count: 8,
+            allowed_visible_doc_count: 8,
+            populated_list_count: 8,
+        },),
         nprobe(2)
     );
 }
@@ -31,18 +31,18 @@ fn search_candidate_nprobe_should_keep_requested_nprobe_without_widening() {
 #[test]
 fn search_candidate_nprobe_should_widen_proportionally_instead_of_scanning_all_lists() {
     assert_eq!(
-        search_candidate_nprobe(
-            CandidateNprobeInput {
-                nprobe: nprobe(1),
-                top_k: top_k(1),
-                budget: AnnBudgetPolicy::AdaptiveFiltered,
-                candidate_top_k: top_k(8),
-                candidate_doc_count: 16,
-                visible_doc_count: 16,
-                allowed_visible_doc_count: 2,
-                populated_list_count: 16,
-            },
-        ),
+        search_candidate_nprobe(CandidateNprobeInput {
+            nprobe: nprobe(1),
+            top_k: top_k(1),
+            budget: AnnBudgetPolicy::AdaptiveFiltered,
+            candidate_top_k: top_k(8),
+            stored_doc_count: 16,
+            index_doc_count: 16,
+            hides_deleted: false,
+            visible_doc_count: 16,
+            allowed_visible_doc_count: 2,
+            populated_list_count: 16,
+        },),
         nprobe(8)
     );
 }
@@ -50,18 +50,18 @@ fn search_candidate_nprobe_should_widen_proportionally_instead_of_scanning_all_l
 #[test]
 fn search_candidate_nprobe_should_scan_all_lists_for_small_ivf_segments() {
     assert_eq!(
-        search_candidate_nprobe(
-            CandidateNprobeInput {
-                nprobe: nprobe(1),
-                top_k: top_k(1),
-                budget: AnnBudgetPolicy::AdaptiveFiltered,
-                candidate_top_k: top_k(3),
-                candidate_doc_count: 3,
-                visible_doc_count: 3,
-                allowed_visible_doc_count: 1,
-                populated_list_count: 3,
-            },
-        ),
+        search_candidate_nprobe(CandidateNprobeInput {
+            nprobe: nprobe(1),
+            top_k: top_k(1),
+            budget: AnnBudgetPolicy::AdaptiveFiltered,
+            candidate_top_k: top_k(3),
+            stored_doc_count: 3,
+            index_doc_count: 3,
+            hides_deleted: false,
+            visible_doc_count: 3,
+            allowed_visible_doc_count: 1,
+            populated_list_count: 3,
+        },),
         nprobe(3)
     );
 }
@@ -69,18 +69,37 @@ fn search_candidate_nprobe_should_scan_all_lists_for_small_ivf_segments() {
 #[test]
 fn search_candidate_nprobe_should_widen_for_delete_churn_even_without_user_filter() {
     assert_eq!(
-        search_candidate_nprobe(
-            CandidateNprobeInput {
-                nprobe: nprobe(1),
-                top_k: top_k(5),
-                budget: AnnBudgetPolicy::Requested,
-                candidate_top_k: top_k(5),
-                candidate_doc_count: 50,
-                visible_doc_count: 10,
-                allowed_visible_doc_count: 10,
-                populated_list_count: 8,
-            },
-        ),
+        search_candidate_nprobe(CandidateNprobeInput {
+            nprobe: nprobe(1),
+            top_k: top_k(5),
+            budget: AnnBudgetPolicy::Requested,
+            candidate_top_k: top_k(5),
+            stored_doc_count: 50,
+            index_doc_count: 50,
+            hides_deleted: true,
+            visible_doc_count: 10,
+            allowed_visible_doc_count: 10,
+            populated_list_count: 8,
+        },),
         nprobe(8)
+    );
+}
+
+#[test]
+fn search_candidate_nprobe_should_not_scan_all_lists_for_hard_deleted_records() {
+    assert_eq!(
+        search_candidate_nprobe(CandidateNprobeInput {
+            nprobe: nprobe(2),
+            top_k: top_k(5),
+            budget: AnnBudgetPolicy::Requested,
+            candidate_top_k: top_k(5),
+            stored_doc_count: 50,
+            index_doc_count: 10,
+            hides_deleted: false,
+            visible_doc_count: 10,
+            allowed_visible_doc_count: 10,
+            populated_list_count: 8,
+        },),
+        nprobe(2)
     );
 }
