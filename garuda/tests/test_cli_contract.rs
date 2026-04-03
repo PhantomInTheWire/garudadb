@@ -444,3 +444,37 @@ fn insert_jsonl_requires_fields_in_each_document() {
     ]);
     assert!(!insert.status.success(), "missing fields should fail");
 }
+
+#[test]
+fn insert_jsonl_should_return_non_zero_when_any_write_fails() {
+    let tmp = temp_path("cli-partial-write-failure");
+    std::fs::create_dir_all(&tmp).expect("create temp root");
+    let docs_path = tmp.join("docs.jsonl");
+
+    std::fs::write(
+        &docs_path,
+        concat!(
+            "{\"id\":\"doc-1\",\"fields\":{\"pk\":\"doc-1\",\"rank\":1,\"category\":\"alpha\",\"score\":0.9},\"vector\":[1.0,0.0,0.0,0.0]}\n",
+            "{\"id\":\"doc-1\",\"fields\":{\"pk\":\"doc-1\",\"rank\":2,\"category\":\"beta\",\"score\":0.8},\"vector\":[0.0,1.0,0.0,0.0]}\n"
+        ),
+    )
+    .expect("write duplicate docs jsonl");
+
+    let create = run_cli(&["--root", tmp.to_str().expect("utf8"), "create", "docs", "4"]);
+    assert!(create.status.success(), "create should succeed");
+
+    let insert = run_cli(&[
+        "--root",
+        tmp.to_str().expect("utf8"),
+        "insert-jsonl",
+        "docs",
+        docs_path.to_str().expect("utf8"),
+    ]);
+    assert!(!insert.status.success(), "partial write should fail");
+
+    let insert_json = stdout_json(&insert);
+    let results = insert_json.as_array().expect("write results");
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0]["status"]["code"], "Ok");
+    assert_eq!(results[1]["status"]["code"], "AlreadyExists");
+}

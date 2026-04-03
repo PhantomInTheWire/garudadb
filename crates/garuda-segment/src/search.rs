@@ -411,6 +411,9 @@ pub(crate) fn search_candidate_nprobe(input: CandidateNprobeInput) -> IvfProbeCo
             .expect("small list count should fit nprobe");
     }
 
+    // Persisted delete churn can leave the remaining live docs spread across
+    // the original IVF list layout. When the query is also hiding deletes,
+    // probing every populated list preserves recall for the live tail.
     if input.hides_deleted && input.stored_doc_count > input.index_doc_count {
         return IvfProbeCount::new(input.populated_list_count as u32)
             .expect("populated list count should fit nprobe");
