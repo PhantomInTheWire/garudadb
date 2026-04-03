@@ -47,8 +47,10 @@ fn repeated_queries_should_not_duplicate_documents_in_one_result_set() {
 #[test]
 fn top_k_should_apply_public_doc_id_tie_break_after_segment_merge() {
     let (_root, db) = database("ordering-public-doc-id-tie-break");
+    let mut options = default_options();
+    options.segment_max_docs = 1;
     let collection = db
-        .create_collection(default_schema("docs"), default_options())
+        .create_collection(default_schema("docs"), options)
         .expect("create collection");
 
     let results = collection.insert(vec![

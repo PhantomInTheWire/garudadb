@@ -106,12 +106,8 @@ fn search_segment(
 
     match request.recall {
         RecallPlan::Flat(recall) => {
-            let candidate_top_k = flat_candidate_top_k(
-                recall.top_k,
-                request.filter,
-                stats.indexed_doc_count,
-                stats.visible_doc_count,
-            );
+            let candidate_top_k = TopK::new(stats.visible_doc_count.max(recall.top_k.get()))
+                .expect("segment live doc count");
             let hits = match segment {
                 SearchSegment::Writing(segment) => segment
                     .flat_index
@@ -137,7 +133,7 @@ fn search_segment(
                 recall.top_k,
                 recall.budget,
                 request.filter,
-                stats.indexed_doc_count,
+                stats.candidate_doc_count,
                 stats.visible_doc_count,
             );
             let hits = match segment {
@@ -173,7 +169,7 @@ fn search_segment(
                 recall.top_k,
                 recall.budget,
                 request.filter,
-                stats.indexed_doc_count,
+                stats.candidate_doc_count,
                 stats.visible_doc_count,
             );
             let hits = search_ivf_hits(
@@ -181,7 +177,7 @@ fn search_segment(
                 request.query_vector,
                 recall,
                 candidate_top_k,
-                stats.indexed_doc_count,
+                stats.candidate_doc_count,
                 stats.visible_doc_count,
                 stats.allowed_visible_doc_count,
             )?;
@@ -197,7 +193,7 @@ fn search_segment(
 }
 
 struct SearchStats {
-    indexed_doc_count: usize,
+    candidate_doc_count: usize,
     visible_doc_count: usize,
     allowed_visible_doc_count: usize,
     record_indexes: HashMap<InternalDocId, usize>,
@@ -232,7 +228,7 @@ fn search_ivf_hits(
 }
 
 fn search_stats(records: &[StoredRecord], filter: SegmentFilterContext<'_>) -> SearchStats {
-    let mut indexed_doc_count = 0;
+    let candidate_doc_count = records.len();
     let mut visible_doc_count = 0;
     let mut allowed_visible_doc_count = 0;
     let mut record_indexes = HashMap::new();
@@ -241,8 +237,6 @@ fn search_stats(records: &[StoredRecord], filter: SegmentFilterContext<'_>) -> S
         if matches!(record.state, RecordState::Deleted) {
             continue;
         }
-
-        indexed_doc_count += 1;
 
         if let Some(delete_store) = filter.delete_store
             && delete_store.contains(record.doc_id)
@@ -263,7 +257,7 @@ fn search_stats(records: &[StoredRecord], filter: SegmentFilterContext<'_>) -> S
     }
 
     SearchStats {
-        indexed_doc_count,
+        candidate_doc_count,
         visible_doc_count,
         allowed_visible_doc_count,
         record_indexes,
@@ -295,19 +289,6 @@ fn collect_search_hits(
     }
 
     search_hits
-}
-
-fn flat_candidate_top_k(
-    top_k: TopK,
-    filter: SegmentFilterContext<'_>,
-    indexed_doc_count: usize,
-    visible_doc_count: usize,
-) -> TopK {
-    if !filtering_can_drop_hits(filter, indexed_doc_count, visible_doc_count) {
-        return top_k;
-    }
-
-    TopK::new(visible_doc_count.max(top_k.get())).expect("segment live doc count")
 }
 
 fn ann_candidate_top_k(

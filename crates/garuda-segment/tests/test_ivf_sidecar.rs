@@ -1,14 +1,14 @@
+use garuda_index_scalar::prefilter_doc_ids;
 use garuda_segment::{
     PersistedSegment, SegmentExecutionRequest, SegmentFilter, SegmentFilterContext, WritingSegment,
     read_persisted_segment, search_persisted, segment_meta, write_persisted_segment,
 };
-use garuda_index_scalar::prefilter_doc_ids;
 use garuda_storage::{read_file, segment_ivf_index_path};
 use garuda_types::{
     AnnBudgetPolicy, CollectionName, CollectionSchema, DenseVector, DistanceMetric, Doc, DocId,
     FieldName, InternalDocId, IvfIndexParams, IvfRecallPlan, Nullability, RecallPlan,
-    ScalarCompareOp, ScalarFieldSchema, ScalarIndexState, ScalarPredicate, ScalarType,
-    ScalarValue, SegmentId, StatusCode, TopK, VectorDimension, VectorFieldSchema, VectorIndexState,
+    ScalarCompareOp, ScalarFieldSchema, ScalarIndexState, ScalarPredicate, ScalarType, ScalarValue,
+    SegmentId, StatusCode, TopK, VectorDimension, VectorFieldSchema, VectorIndexState,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
