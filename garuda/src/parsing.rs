@@ -171,29 +171,18 @@ pub fn parse_index_params(kind: CreateIndexKind) -> Result<garuda_types::IndexPa
         CreateIndexKind::Scalar => Ok(garuda_types::IndexParams::Scalar(
             garuda_types::ScalarIndexParams,
         )),
-        CreateIndexKind::Hnsw {
-            max_neighbors,
-            scaling_factor,
-            ef_construction,
-            prune_width,
-            min_neighbor_count,
-            ef_search,
-        } => Ok(garuda_types::IndexParams::Hnsw(HnswIndexParams {
-            max_neighbors,
-            scaling_factor,
-            ef_construction,
-            prune_width,
-            min_neighbor_count,
-            ef_search,
+        CreateIndexKind::Hnsw(args) => Ok(garuda_types::IndexParams::Hnsw(HnswIndexParams {
+            max_neighbors: args.max_neighbors,
+            scaling_factor: args.scaling_factor,
+            ef_construction: args.ef_construction,
+            prune_width: args.prune_width,
+            min_neighbor_count: args.min_neighbor_count,
+            ef_search: args.ef_search,
         })),
-        CreateIndexKind::Ivf {
-            n_list,
-            n_probe,
-            training_iterations,
-        } => Ok(garuda_types::IndexParams::Ivf(IvfIndexParams {
-            n_list,
-            n_probe,
-            training_iterations,
+        CreateIndexKind::Ivf(args) => Ok(garuda_types::IndexParams::Ivf(IvfIndexParams {
+            n_list: args.n_list,
+            n_probe: args.n_probe,
+            training_iterations: args.training_iterations,
         })),
     }
 }
