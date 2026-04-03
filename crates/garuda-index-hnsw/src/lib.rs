@@ -113,16 +113,18 @@
 //!   on levels up to that node's top level.
 //! - For each affected level, the implementation collects both former active
 //!   outgoing neighbors of the removed node and active incoming neighbors from
-//!   a maintained runtime reverse-edge index, then performs local
-//!   score-ordered pairing.
-//! - Pair priority is: higher vector similarity first, then lower doc-id
-//!   tie-break.
-//! - Selected pairs are linked bidirectionally while respecting per-level
-//!   max-neighbor limits.
-//! - The first pass prefers nodes below `min_neighbor_count`; the second pass
-//!   fills remaining available degree by score order.
-//! - This keeps the neighborhood connected and limits quality regression after
-//!   repeated deletes without rebuilding the full graph.
+//!   a maintained runtime reverse-edge index.
+//! - That affected set is intentionally bounded to a small multiple of the
+//!   per-level neighbor limit so delete cost stays local.
+//! - Repair then greedily reconnects only nodes whose current degree is below
+//!   `min_neighbor_count`.
+//! - For each such node, the best available partner in the affected set is
+//!   chosen by score, then `doc_id` tie-break, and linked bidirectionally if
+//!   both endpoints still have room.
+//! - Delete repair therefore aims to restore minimum local connectivity, not to
+//!   saturate every affected node back to the per-level max degree.
+//! - This keeps delete work bounded and predictable while limiting quality
+//!   regression after repeated deletes without rebuilding the full graph.
 //!
 //! 10. Reverse edges
 //! - After a node chooses its outgoing neighbors for a level, every chosen
@@ -579,6 +581,64 @@ impl HnswIndex {
                 incoming.push(node);
             }
         }
+    }
+
+    fn remove_directed_edge(&mut self, level: HnswLevel, from: NodeIndex, to: NodeIndex) {
+        let neighbors = self.graph.neighbors_mut(level, from);
+        let Some(position) = neighbors.iter().position(|&neighbor| neighbor == to) else {
+            return;
+        };
+        neighbors.swap_remove(position);
+        self.reverse_edges[level.get()][to.get()].retain(|&source| source != from);
+    }
+
+    fn add_directed_edge(&mut self, level: HnswLevel, from: NodeIndex, to: NodeIndex) {
+        let neighbors = self.graph.neighbors_mut(level, from);
+        assert!(
+            !neighbors.contains(&to),
+            "hnsw edge should be absent before insert"
+        );
+        neighbors.push(to);
+        self.reverse_edges[level.get()][to.get()].push(from);
+    }
+
+    fn clear_neighbors(&mut self, level: HnswLevel, node: NodeIndex) {
+        let cleared_neighbors = std::mem::take(self.graph.neighbors_mut(level, node));
+        for neighbor in cleared_neighbors {
+            self.reverse_edges[level.get()][neighbor.get()].retain(|&source| source != node);
+        }
+    }
+
+    fn remove_bidirectional_edge(&mut self, level: HnswLevel, left: NodeIndex, right: NodeIndex) {
+        self.remove_directed_edge(level, left, right);
+        self.remove_directed_edge(level, right, left);
+    }
+
+    fn add_bidirectional_edge_if_room(
+        &mut self,
+        level: HnswLevel,
+        left: NodeIndex,
+        right: NodeIndex,
+    ) -> bool {
+        if left == right {
+            return false;
+        }
+        if self.graph.neighbors(level, left).contains(&right)
+            || self.graph.neighbors(level, right).contains(&left)
+        {
+            return false;
+        }
+
+        let level_limit = self.config.neighbor_limits().for_level(level);
+        if self.graph.neighbors(level, left).len() >= level_limit
+            || self.graph.neighbors(level, right).len() >= level_limit
+        {
+            return false;
+        }
+
+        self.add_directed_edge(level, left, right);
+        self.add_directed_edge(level, right, left);
+        true
     }
 
     fn maybe_update_active_entry_point(&mut self, node: NodeIndex) {

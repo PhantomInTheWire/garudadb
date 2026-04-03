@@ -1,63 +1,60 @@
 # GarudaDB
 
-A vector database built from scratch in Rust.
+An embeddable vector database built from *scratch* in Rust.
 
-## Features
+GarudaDB is laid out as a small storage engine with its own query planner, segmented storage layer, WAL, checkpoints, recovery path, scalar indexes, and vector indexes in one codebase. Writes land in an active segment, sealed segments reopen from persisted state, and queries plan across scalar filters and ANN indexes instead of treating storage and search as separate systems.
 
-- **Multiple ANN index types** — choose between Flat (brute-force), HNSW, or IVF per collection
-- **Scalar field filtering** — filter on `bool`, `int64`, `float64`, and `string` fields alongside vector queries
-- **Scalar index pushdown** — indexed scalar predicates in `AND` filters are evaluated before ANN search, shrinking the candidate set before touching the vector index
-- **Segmented storage** — a write-ahead writing segment plus compacted persisted segments, keeping reads fast while inserts stay live
-- **Crash recovery** — periodic checkpointing and a recovery service restore consistent state on restart
-- **Cosine similarity** — vectors are compared using cosine distance
+The aim is to use this and build a local first RAG/memory experience, build a sync engine on top of this to replicate [what notion does with sqlite](https://www.notion.com/blog/how-we-sped-up-notion-in-the-browser-with-wasm-sqlite)
 
-## What Makes It Different
+## Highlights
 
-Most embeddable vector search libraries are thin wrappers around a single ANN algorithm. GarudaDB is a full database engine — it owns its own storage, its own query planner, and its own index implementations, all written in safe Rust with zero external database dependencies.
+- Handwritten SIMD scoring
+- Flat, HNSW, and IVF indexes
+- Segmented storage, WAL, checkpoints, and recovery
+- Hybrid query planning with scalar prefilter pushdown
+- Recovery follows the saved manifest instead of guessing from snapshot filenames
+- Vector search automatically looks wider when filters would otherwise hide good matches
+- Saved HNSW graphs are checked on reopen, and stale or corrupt data is rejected
+- Delete-aware HNSW and incremental IVF maintenance
 
-The query planner is the core differentiator: it decomposes filter expressions to push equality and range predicates on indexed scalar fields down to a prefilter pass that runs before the ANN search. Only documents that survive the prefilter are considered as ANN candidates, which keeps approximate search accurate and avoids scanning the full index when filters are selective.
+## Layout
 
-## Usage
-
-```sh
-cargo build --release
-# binary is at target/release/garuda
+```text
+collection/
+├── manifest.N
+├── idmap.N
+├── del.N
+├── 0/                  # active writing segment
+│   ├── data.seg
+│   ├── data.wal
+│   ├── [flat.idx]
+│   ├── [hnsw.idx]
+│   ├── [ivf.idx]
+│   └── [scalar/]
+└── 1/                  # sealed segment
+    ├── data.seg
+    ├── [flat.idx]
+    ├── [hnsw.idx]
+    ├── [ivf.idx]
+    └── [scalar/]
 ```
 
-Initialize a database, create a collection, and insert documents:
+## Future work
 
-```sh
-garuda --root ./mydb init
-garuda --root ./mydb create products 768
-garuda --root ./mydb insert-jsonl products docs.jsonl
-```
+The next major area of work is memory-efficient vector search. I want to add a range of quantization techniques, including IVF-PQ, RaBitQ, and a TurboQuant-inspired rotation approach.
 
-Each line of the JSONL file must follow this shape:
+After that, the next step is a dedicated sync crate so GarudaDB can support a proper local-first replication model.
 
-```json
-{"id": "doc1", "fields": {"rank": 1, "category": "electronics", "score": 9.5}, "vector": [0.1, 0.2, 0.3]}
-```
+Once the sync layer exists, I want to improve retrieval quality with a custom reranking model, mostly by fine-tuning on synthetic data.
 
-Run a nearest-neighbor query and fetch a document by ID:
+That will be followed by broader retrieval infrastructure:
 
-```sh
-garuda --root ./mydb query products --vector "0.1,0.2,0.3" --top-k 10
-garuda --root ./mydb fetch products doc1
-```
+- a standard BM25 text search implementation built from scratch
+- [Cursor's fast regex search](https://cursor.com/blog/fast-regex-search) reimplemented from scratch
+- a ChromaFS-style virtual filesystem layer inspired by Mintlify's [chromaFS](https://www.mintlify.com/blog/how-we-built-a-virtual-filesystem-for-our-assistant), effectively giving the agent a fake bash/search surface
 
-Build indexes to speed up search and filtering:
-
-```sh
-garuda --root ./mydb create-index products embedding hnsw
-garuda --root ./mydb create-index products category scalar
-```
-
-Inspect a collection:
-
-```sh
-garuda --root ./mydb stats products
-```
+All of these pieces will eventually come together in the final local-first RAG and memory system, with the different retrieval methods feeding into the custom reranker.
 
 ## License
 
-GNU Affero General Public License v3.0 — see [LICENSE](LICENSE).
+GNU Affero General Public License v3.0. See [LICENSE](LICENSE).

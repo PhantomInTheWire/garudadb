@@ -170,11 +170,13 @@ impl WritingSegment {
     }
 
     pub fn mark_deleted(&mut self, doc_id: InternalDocId) -> bool {
-        mark_deleted_record(
-            &mut self.records,
-            &self.record_indexes,
-            &mut self.meta,
-            &mut self.scalar_indexes,
+        DeleteRecordContext {
+            records: &mut self.records,
+            record_indexes: &self.record_indexes,
+            meta: &mut self.meta,
+            scalar_indexes: &mut self.scalar_indexes,
+        }
+        .mark_deleted(
             doc_id,
             |doc_id| {
                 if let Some(index) = &mut self.flat_index {
@@ -237,11 +239,13 @@ impl PersistedSegment {
     }
 
     pub fn mark_deleted(&mut self, doc_id: InternalDocId) -> bool {
-        mark_deleted_record(
-            &mut self.records,
-            &self.record_indexes,
-            &mut self.meta,
-            &mut self.scalar_indexes,
+        DeleteRecordContext {
+            records: &mut self.records,
+            record_indexes: &self.record_indexes,
+            meta: &mut self.meta,
+            scalar_indexes: &mut self.scalar_indexes,
+        }
+        .mark_deleted(
             doc_id,
             |doc_id| {
                 if let Some(index) = &mut self.flat_index {
@@ -263,32 +267,39 @@ impl PersistedSegment {
     }
 }
 
-fn mark_deleted_record(
-    records: &mut [StoredRecord],
-    record_indexes: &HashMap<InternalDocId, usize>,
-    meta: &mut SegmentMeta,
-    scalar_indexes: &mut BTreeMap<FieldName, ScalarIndex>,
-    doc_id: InternalDocId,
-    remove_from_flat: impl FnOnce(InternalDocId),
-    remove_from_hnsw: impl FnOnce(InternalDocId),
-    remove_from_ivf: impl FnOnce(InternalDocId),
-) -> Option<()> {
-    let &record_index = record_indexes.get(&doc_id)?;
-    if !matches!(records[record_index].state, RecordState::Live) {
-        return None;
+struct DeleteRecordContext<'a> {
+    records: &'a mut [StoredRecord],
+    record_indexes: &'a HashMap<InternalDocId, usize>,
+    meta: &'a mut SegmentMeta,
+    scalar_indexes: &'a mut BTreeMap<FieldName, ScalarIndex>,
+}
+
+impl DeleteRecordContext<'_> {
+    fn mark_deleted(
+        self,
+        doc_id: InternalDocId,
+        remove_from_flat: impl FnOnce(InternalDocId),
+        remove_from_hnsw: impl FnOnce(InternalDocId),
+        remove_from_ivf: impl FnOnce(InternalDocId),
+    ) -> Option<()> {
+        let &record_index = self.record_indexes.get(&doc_id)?;
+        if !matches!(self.records[record_index].state, RecordState::Live) {
+            return None;
+        }
+        let scalar_fields =
+            deleted_record_scalar_fields(&self.records[record_index], self.scalar_indexes);
+        self.records[record_index].state = RecordState::Deleted;
+        assert!(
+            self.meta.doc_count > 0,
+            "segment live doc count should include deleted record"
+        );
+        self.meta.doc_count -= 1;
+        remove_from_flat(doc_id);
+        remove_from_ivf(doc_id);
+        remove_from_hnsw(doc_id);
+        remove_from_scalar_indexes(self.scalar_indexes, doc_id, scalar_fields);
+        Some(())
     }
-    let scalar_fields = deleted_record_scalar_fields(&records[record_index], scalar_indexes);
-    records[record_index].state = RecordState::Deleted;
-    assert!(
-        meta.doc_count > 0,
-        "segment live doc count should include deleted record"
-    );
-    meta.doc_count -= 1;
-    remove_from_flat(doc_id);
-    remove_from_ivf(doc_id);
-    remove_from_hnsw(doc_id);
-    remove_from_scalar_indexes(scalar_indexes, doc_id, scalar_fields);
-    Some(())
 }
 
 fn record_indexes(records: &[StoredRecord]) -> HashMap<InternalDocId, usize> {

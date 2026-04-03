@@ -69,6 +69,8 @@
 //!   members.
 //! - If the list becomes empty, the empty list remains in place until retrain or
 //!   full reset.
+//! - Incremental remove therefore does only list-local exact maintenance; it
+//!   does not retrain centroids globally on the delete path.
 //! - Removed docs disappear from search and from persisted `stored_lists()`.
 //!
 //! 8. Churn-triggered retraining
