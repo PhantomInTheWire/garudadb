@@ -37,7 +37,7 @@ fn flat_index_returns_exact_top_k_in_score_order() {
 }
 
 #[test]
-fn flat_index_breaks_score_ties_by_doc_id() {
+fn flat_index_keeps_all_hits_tied_at_the_cutoff_score() {
     let index = FlatIndex::build(
         VectorDimension::new(2).expect("valid dimension"),
         vec![
@@ -61,17 +61,19 @@ fn flat_index_breaks_score_ties_by_doc_id() {
         .search(
             DistanceMetric::InnerProduct,
             &DenseVector::parse(vec![1.0, 0.0]).expect("valid vector"),
-            TopK::new(2).expect("valid top_k"),
+            TopK::new(1).expect("valid top_k"),
         )
         .expect("search flat index");
 
-    assert_eq!(
-        hits.iter().map(|hit| hit.doc_id).collect::<Vec<_>>(),
-        vec![
-            InternalDocId::new(2).expect("valid doc id"),
-            InternalDocId::new(4).expect("valid doc id"),
-        ]
-    );
+    assert_eq!(hits.len(), 2);
+    assert!(hits.contains(&garuda_index_flat::FlatSearchHit {
+        doc_id: InternalDocId::new(2).expect("valid doc id"),
+        score: 1.0,
+    }));
+    assert!(hits.contains(&garuda_index_flat::FlatSearchHit {
+        doc_id: InternalDocId::new(4).expect("valid doc id"),
+        score: 1.0,
+    }));
 }
 
 #[test]
