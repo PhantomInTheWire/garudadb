@@ -75,9 +75,10 @@ pub fn run_command(db: &Database, command: RunnableCommand) -> Result<(), String
         }
         RunnableCommand::Query { name, source } => {
             let collection = open_collection(db, &name)?;
+            let vector_field = collection.schema().vector.name.clone();
             let query = match source {
-                QuerySource::Vector(args) => vector_query(args)?,
-                QuerySource::ById(args) => id_query(args)?,
+                QuerySource::Vector(args) => vector_query(vector_field.clone(), args)?,
+                QuerySource::ById(args) => id_query(vector_field, args)?,
             };
             print_json(&collection.query(query).map_err(|status| status.message)?)
         }
@@ -177,9 +178,12 @@ fn write_jsonl(
     Err(result.status.message.clone())
 }
 
-fn vector_query(args: VectorQueryArgs) -> Result<VectorQuery, String> {
+fn vector_query(
+    vector_field: garuda_types::FieldName,
+    args: VectorQueryArgs,
+) -> Result<VectorQuery, String> {
     let mut query = VectorQuery::by_vector(
-        field_name(VECTOR_FIELD),
+        vector_field,
         args.value,
         TopK::new(args.options.top_k).map_err(|status| status.message)?,
     );
@@ -187,9 +191,12 @@ fn vector_query(args: VectorQueryArgs) -> Result<VectorQuery, String> {
     Ok(query)
 }
 
-fn id_query(args: ByIdQueryArgs) -> Result<VectorQuery, String> {
+fn id_query(
+    vector_field: garuda_types::FieldName,
+    args: ByIdQueryArgs,
+) -> Result<VectorQuery, String> {
     let mut query = VectorQuery::by_id(
-        field_name(VECTOR_FIELD),
+        vector_field,
         args.value,
         TopK::new(args.options.top_k).map_err(|status| status.message)?,
     );

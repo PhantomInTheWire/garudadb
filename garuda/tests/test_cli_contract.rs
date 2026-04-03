@@ -411,6 +411,112 @@ fn create_from_schema_should_accept_schema_and_options_file() {
 }
 
 #[test]
+fn query_should_use_collection_vector_field_from_schema() {
+    let tmp = temp_path("cli-custom-vector-field");
+    std::fs::create_dir_all(&tmp).expect("create temp root");
+    let schema_path = tmp.join("schema.json");
+    let docs_path = tmp.join("docs.jsonl");
+
+    std::fs::write(
+        &schema_path,
+        serde_json::json!({
+            "schema": {
+                "name": "docs",
+                "primary_key": "pk",
+                "fields": [
+                    {
+                        "name": "pk",
+                        "field_type": "String",
+                        "index": "None",
+                        "nullability": "Required",
+                        "default_value": null
+                    },
+                    {
+                        "name": "rank",
+                        "field_type": "Int64",
+                        "index": "None",
+                        "nullability": "Required",
+                        "default_value": null
+                    },
+                    {
+                        "name": "category",
+                        "field_type": "String",
+                        "index": "None",
+                        "nullability": "Required",
+                        "default_value": null
+                    },
+                    {
+                        "name": "score",
+                        "field_type": "Float64",
+                        "index": "None",
+                        "nullability": "Required",
+                        "default_value": null
+                    }
+                ],
+                "vector": {
+                    "name": "feature",
+                    "dimension": 4,
+                    "metric": "Cosine",
+                    "indexes": "DefaultFlat"
+                }
+            },
+            "options": {
+                "access_mode": "ReadWrite",
+                "storage_access": "MmapPreferred",
+                "segment_max_docs": 7
+            }
+        })
+        .to_string(),
+    )
+    .expect("write schema file");
+
+    write_seed_docs(&docs_path);
+
+    let create = run_cli(&[
+        "--root",
+        tmp.to_str().expect("utf8"),
+        "create-from-schema",
+        schema_path.to_str().expect("utf8"),
+    ]);
+    assert!(create.status.success(), "create-from-schema should succeed");
+
+    let insert = run_cli(&[
+        "--root",
+        tmp.to_str().expect("utf8"),
+        "insert-jsonl",
+        "docs",
+        docs_path.to_str().expect("utf8"),
+    ]);
+    assert!(insert.status.success(), "insert should succeed");
+
+    let query = run_cli(&[
+        "--root",
+        tmp.to_str().expect("utf8"),
+        "query",
+        "docs",
+        "vector",
+        "--value",
+        "1.0,0.0,0.0,0.0",
+        "--top-k",
+        "2",
+    ]);
+    assert!(query.status.success(), "vector query should succeed");
+
+    let by_id = run_cli(&[
+        "--root",
+        tmp.to_str().expect("utf8"),
+        "query",
+        "docs",
+        "by-id",
+        "--value",
+        "doc-1",
+        "--top-k",
+        "2",
+    ]);
+    assert!(by_id.status.success(), "by-id query should succeed");
+}
+
+#[test]
 fn create_from_schema_requires_options_in_file() {
     let tmp = temp_path("cli-invalid-schema-file");
     std::fs::create_dir_all(&tmp).expect("create temp root");
@@ -467,6 +573,34 @@ fn insert_jsonl_requires_fields_in_each_document() {
         docs_path.to_str().expect("utf8"),
     ]);
     assert!(!insert.status.success(), "missing fields should fail");
+}
+
+#[test]
+fn insert_jsonl_rejects_unsigned_integer_literals_that_exceed_i64() {
+    let tmp = temp_path("cli-large-unsigned-int");
+    std::fs::create_dir_all(&tmp).expect("create temp root");
+    let docs_path = tmp.join("docs.jsonl");
+
+    std::fs::write(
+        &docs_path,
+        "{\"id\":\"doc-1\",\"fields\":{\"pk\":\"doc-1\",\"rank\":18446744073709551615,\"category\":\"alpha\",\"score\":0.9},\"vector\":[1.0,0.0,0.0,0.0]}\n",
+    )
+    .expect("write invalid docs jsonl");
+
+    let create = run_cli(&["--root", tmp.to_str().expect("utf8"), "create", "docs", "4"]);
+    assert!(create.status.success(), "create should succeed");
+
+    let insert = run_cli(&[
+        "--root",
+        tmp.to_str().expect("utf8"),
+        "insert-jsonl",
+        "docs",
+        docs_path.to_str().expect("utf8"),
+    ]);
+    assert!(
+        !insert.status.success(),
+        "out-of-range integer literal should fail"
+    );
 }
 
 #[test]

@@ -217,10 +217,15 @@ fn parse_scalar_value(value: serde_json::Value) -> Result<ScalarValue, String> {
         serde_json::Value::Null => Ok(ScalarValue::Null),
         serde_json::Value::Bool(value) => Ok(ScalarValue::Bool(value)),
         serde_json::Value::Number(value) => {
-            if let Some(value) = value.as_i64() {
+            if value.is_i64() {
+                let value = value.as_i64().expect("i64 json number");
                 return Ok(ScalarValue::Int64(value));
             }
-            if let Some(value) = value.as_f64() {
+            if value.is_u64() {
+                return Err(String::from("unsigned integer literal exceeds i64 range"));
+            }
+            if value.is_f64() {
+                let value = value.as_f64().expect("f64 json number");
                 return Ok(ScalarValue::Float64(value));
             }
             Err(String::from("unsupported numeric value"))
