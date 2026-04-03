@@ -1,4 +1,104 @@
 //! IVF index construction, centroid assignment, and list search.
+//!
+//! This crate implements a small, deterministic IVF variant around three
+//! pieces of state:
+//!
+//! - `IvfIndexConfig`: vector dimension, metric, and IVF parameters.
+//! - `Vec<IvfBuildEntry>`: the stored `(doc_id, vector)` rows.
+//! - `IvfState`: centroids, per-list membership, and live/deleted bookkeeping.
+//!
+//! `IvfIndex` is the persisted/searchable form. `WritingIvfIndex` is the
+//! incremental mutable form that can accept inserts/removes and occasionally
+//! retrain.
+//!
+//! Implementation outline:
+//!
+//! 1. Build-time data model
+//! - Entries are stored once in `entries`.
+//! - Each inverted list stores one centroid and a list of `IvfEntryIndex`
+//!   values that point into `entries`.
+//! - Live membership is tracked separately from historical storage so deletions
+//!   can remove a doc from search without compacting `entries`.
+//! - Scores are always "higher is better". `score_doc` provides that ordering
+//!   for all supported metrics.
+//!
+//! 2. List count
+//! - The runtime list count is `min(entry_count, n_list)`.
+//! - Empty builds therefore produce zero lists.
+//! - Small builds never create more lists than live entries.
+//!
+//! 3. Deterministic centroid initialization
+//! - The first centroid is the entry farthest from the global mean.
+//! - Each later centroid is the entry whose nearest existing centroid is worst.
+//! - Centroids are therefore chosen without RNG state.
+//! - Rebuilding the same live entries yields the same initial seeds.
+//!
+//! 4. Lloyd training
+//! - Training alternates between:
+//!   - assigning every entry to its nearest centroid, and
+//!   - recomputing each centroid as the arithmetic mean of its assigned entries.
+//! - The number of passes is exactly `training_iterations`.
+//! - If a centroid receives no assignments during recomputation, that slot falls
+//!   back to `entries[list_index].vector`.
+//! - After the final assignment pass, the crate materializes per-list
+//!   `IvfEntryIndex` vectors.
+//!
+//! 5. Query-time search
+//! - Search validates query dimension and returns early on an empty index.
+//! - Every non-empty list is scored against the query using its centroid.
+//! - Lists are sorted by centroid score descending, then `list_index` ascending.
+//! - Only the best `min(nprobe, non_empty_lists)` lists are scanned.
+//! - Every entry in the chosen lists is scored against the query.
+//! - Final hits are sorted by score descending, then `doc_id` ascending, and
+//!   truncated to `top_k`.
+//!
+//! 6. Incremental insert
+//! - `WritingIvfIndex` starts empty and inserts entries one by one.
+//! - While the current list count is still below `min(live_len, n_list)`, each
+//!   new live entry becomes its own singleton list whose centroid is that
+//!   vector.
+//! - Once the target list count is reached, a new entry is assigned to the
+//!   nearest centroid, appended to that list, and that list centroid is updated
+//!   to the exact mean of its current members.
+//! - Incremental insert does not run full Lloyd retraining.
+//!
+//! 7. Incremental remove
+//! - Removal looks up the live entry by `doc_id`, marks its slot deleted, and
+//!   removes its `IvfEntryIndex` from the owning list.
+//! - If the list still has members, its centroid is recomputed from those live
+//!   members.
+//! - If the list becomes empty, the empty list remains in place until retrain or
+//!   full reset.
+//! - Removed docs disappear from search and from persisted `stored_lists()`.
+//!
+//! 8. Churn-triggered retraining
+//! - `WritingIvfIndex` counts successful removes as churn events.
+//! - Retrain becomes pending when either:
+//!   - churn reaches `max(live_len / 6, 32)`, or
+//!   - at least `1/5` of lists are empty.
+//! - The next insert applies retraining first by rebuilding from current live
+//!   entries, then inserts the new entry into that rebuilt state.
+//! - If all live entries are removed, runtime state is cleared immediately.
+//!
+//! 9. Persisted layout
+//! - `stored_lists()` exports:
+//!   - centroid vectors in list order, and
+//!   - `doc_id`s for each list in that same order.
+//! - `from_parts` validates centroid count, list count, and centroid dimension
+//!   before rebuilding in-memory `IvfEntryIndex` membership.
+//! - Persisted lists must match the live entry set exactly: no duplicates, no
+//!   missing docs, no unknown docs.
+//!
+//! 10. Determinism and non-goals
+//! - Build-time training is deterministic because initialization, assignment,
+//!   sorting, and tie-breaking are deterministic.
+//! - The implementation is single-threaded and in-memory.
+//! - Search scans whole selected lists; there is no product quantization or
+//!   residual encoding in this crate.
+//! - Deletion is lazy at the storage layer: historical `entries` slots are not
+//!   compacted in place.
+//! - Incremental maintenance favors simple exact centroid updates plus periodic
+//!   rebuilds over continuous online k-means optimization.
 
 mod centroids;
 mod persistence;
