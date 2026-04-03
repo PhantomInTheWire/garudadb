@@ -63,8 +63,8 @@
 //!   - `candidates`: a max-heap of frontier nodes ordered by best score first.
 //!   - `results`: a min-heap wrapper (`WorstScoredNode`) that keeps the current
 //!     best `candidate_limit` nodes and exposes the current worst one.
-//! - The loop pops the best frontier node. If that node is already worse than
-//!   the current worst result, the search stops.
+//! - The loop pops the best frontier node. If that node's score is strictly
+//!   worse than the current worst result score, the search stops.
 //! - Otherwise it visits the node's neighbors, scores unseen neighbors, and
 //!   inserts them when either:
 //!   - the result heap still has capacity, or
@@ -139,10 +139,15 @@
 //!   proportional to in-degree.
 //!
 //! 11. Entry point semantics
-//! - Build tracks insertion descent from the current top-level entry point
-//!   selected during build progression.
-//! - Runtime state caches an active entry point at the current highest level.
-//! - Query-time search starts from the cached active entry point and descends
+//! - Build-time insertion descent uses a local `(entry_point, max_level)` pair
+//!   that starts at node 0 and only changes when a newly inserted node reaches
+//!   a strictly higher sampled level.
+//! - Runtime state separately caches an active entry point on the highest level
+//!   that still has at least one active node.
+//! - When multiple active nodes share that highest level, the cached runtime
+//!   entry point is the one with the greatest `NodeIndex` (the newest such
+//!   node), and incremental insert follows the same rule on equal levels.
+//! - Query-time search starts from that cached active entry point and descends
 //!   greedily from there.
 //! - This keeps query entry-point selection valid after deletions mark nodes
 //!   inactive without scanning all historical nodes.

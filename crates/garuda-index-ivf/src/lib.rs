@@ -1,11 +1,19 @@
 //! IVF index construction, centroid assignment, and list search.
 
+mod centroids;
+mod persistence;
+mod state;
+
 use garuda_math::score_doc;
+use persistence::{build_list_entry_indexes, validate_stored_lists};
+use state::IvfEntryIndex;
+use state::IvfInvertedList;
+use state::IvfState;
+
 use garuda_types::{
     DenseVector, DistanceMetric, InternalDocId, IvfIndexParams, IvfProbeCount, RemoveResult,
     Status, StatusCode, TopK, VectorDimension,
 };
-use std::collections::HashMap;
 
 const CHURN_EVENT_DIVISOR: usize = 6;
 const CHURN_EVENT_MIN: usize = 32;
@@ -55,125 +63,6 @@ impl IvfCentroids {
     pub fn iter(&self) -> std::slice::Iter<'_, DenseVector> {
         self.0.iter()
     }
-
-    fn initialize(metric: DistanceMetric, entries: &[IvfBuildEntry], list_count: usize) -> Self {
-        let mut centroid_indexes = Vec::with_capacity(list_count);
-        centroid_indexes.push(Self::initial_centroid_index(metric, entries));
-
-        while centroid_indexes.len() < list_count {
-            let next = Self::next_centroid_index(metric, entries, &centroid_indexes);
-            centroid_indexes.push(next);
-        }
-
-        let mut centroids = Vec::with_capacity(list_count);
-
-        for index in centroid_indexes {
-            centroids.push(entries[index].vector.clone());
-        }
-
-        Self::new(centroids)
-    }
-
-    fn initial_centroid_index(metric: DistanceMetric, entries: &[IvfBuildEntry]) -> usize {
-        let mut sums = vec![0.0; entries[0].vector.len()];
-
-        for entry in entries {
-            add_to_sums(&mut sums, entry.vector.as_slice());
-        }
-
-        let mean = centroid_from_sums(&mut sums, entries.len());
-        let mut best_index = 0usize;
-        let mut best_score = score_doc(metric, entries[0].vector.as_slice(), mean.as_slice());
-
-        for (entry_index, entry) in entries.iter().enumerate().skip(1) {
-            let score = score_doc(metric, entry.vector.as_slice(), mean.as_slice());
-            if score < best_score {
-                best_index = entry_index;
-                best_score = score;
-            }
-        }
-
-        best_index
-    }
-
-    fn assign_entries(&self, metric: DistanceMetric, entries: &[IvfBuildEntry]) -> Vec<usize> {
-        let mut assignments = Vec::with_capacity(entries.len());
-
-        for entry in entries {
-            assignments.push(nearest_centroid_index(metric, &entry.vector, self.iter()));
-        }
-
-        assignments
-    }
-
-    fn recompute(
-        &self,
-        dimension: VectorDimension,
-        entries: &[IvfBuildEntry],
-        assignments: &[usize],
-    ) -> Self {
-        let list_count = self.len();
-        let dimension = dimension.get();
-        let mut sums = vec![vec![0.0; dimension]; list_count];
-        let mut counts = vec![0usize; list_count];
-
-        for (entry, &list_index) in entries.iter().zip(assignments) {
-            counts[list_index] += 1;
-            add_to_sums(&mut sums[list_index], entry.vector.as_slice());
-        }
-
-        let mut centroids = Vec::with_capacity(list_count);
-
-        for list_index in 0..list_count {
-            if counts[list_index] == 0 {
-                centroids.push(entries[list_index].vector.clone());
-                continue;
-            }
-
-            centroids.push(centroid_from_sums(
-                &mut sums[list_index],
-                counts[list_index],
-            ));
-        }
-
-        Self::new(centroids)
-    }
-
-    fn next_centroid_index(
-        metric: DistanceMetric,
-        entries: &[IvfBuildEntry],
-        centroid_indexes: &[usize],
-    ) -> usize {
-        let mut next_index = 0usize;
-        let mut next_score = f32::INFINITY;
-
-        for (entry_index, entry) in entries.iter().enumerate() {
-            if centroid_indexes.contains(&entry_index) {
-                continue;
-            }
-
-            let nearest_score = centroid_indexes
-                .iter()
-                .map(|&centroid_index| {
-                    score_doc(
-                        metric,
-                        entry.vector.as_slice(),
-                        entries[centroid_index].vector.as_slice(),
-                    )
-                })
-                .fold(f32::NEG_INFINITY, f32::max);
-
-            if nearest_score < next_score {
-                next_index = entry_index;
-                next_score = nearest_score;
-            }
-        }
-
-        next_index
-    }
-    fn into_vec(self) -> Vec<DenseVector> {
-        self.0
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -220,57 +109,8 @@ pub struct IvfIndex {
     state: IvfState,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct WritingIvfIndex {
-    config: IvfIndexConfig,
-    state: IvfState,
-    churn_events: usize,
-    retrain_state: IvfRetrainState,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum IvfRetrainState {
-    Ready,
-    Pending,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct IvfState {
-    entries: Vec<IvfBuildEntry>,
-    inverted_lists: Vec<IvfInvertedList>,
-    entry_index_by_doc_id: HashMap<InternalDocId, IvfEntryIndex>,
-    entry_slots: Vec<IvfEntrySlot>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum IvfEntrySlot {
-    Live { list_index: usize },
-    Deleted,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct IvfEntryIndex(usize);
-
-impl IvfEntryIndex {
-    fn new(value: usize) -> Self {
-        Self(value)
-    }
-
-    fn get(self) -> usize {
-        self.0
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct IvfInvertedList {
-    centroid: DenseVector,
-    entry_indexes: Vec<IvfEntryIndex>,
-}
-
 impl IvfIndex {
     pub fn build(config: IvfIndexConfig, entries: Vec<IvfBuildEntry>) -> Self {
-        assert_entries_match_dimension(config.dimension, &entries);
-
         let trained = train_lists(&config, &entries);
 
         Self {
@@ -316,6 +156,14 @@ impl IvfIndex {
     pub fn remove(&mut self, doc_id: InternalDocId) -> RemoveResult {
         self.state.remove_incremental(&self.config, doc_id)
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct WritingIvfIndex {
+    config: IvfIndexConfig,
+    state: IvfState,
+    churn_events: usize,
+    retrain_state: IvfRetrainState,
 }
 
 impl WritingIvfIndex {
@@ -375,211 +223,16 @@ impl WritingIvfIndex {
     }
 }
 
-impl IvfState {
-    fn new(
-        entries: Vec<IvfBuildEntry>,
-        centroids: IvfCentroids,
-        list_entry_indexes: Vec<Vec<IvfEntryIndex>>,
-    ) -> Self {
-        assert_eq!(centroids.len(), list_entry_indexes.len(), "ivf list layout");
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum IvfRetrainState {
+    Ready,
+    Pending,
+}
 
-        let mut entry_index_by_doc_id = HashMap::with_capacity(entries.len());
-        for (entry_index, entry) in entries.iter().enumerate() {
-            entry_index_by_doc_id.insert(entry.doc_id, IvfEntryIndex::new(entry_index));
-        }
-
-        let mut entry_slots = vec![IvfEntrySlot::Deleted; entries.len()];
-        for (list_index, entry_indexes) in list_entry_indexes.iter().enumerate() {
-            for &entry_index in entry_indexes {
-                entry_slots[entry_index.get()] = IvfEntrySlot::Live { list_index };
-            }
-        }
-
-        let inverted_lists = centroids
-            .into_vec()
-            .into_iter()
-            .zip(list_entry_indexes)
-            .map(|(centroid, entry_indexes)| IvfInvertedList {
-                centroid,
-                entry_indexes,
-            })
-            .collect();
-
-        Self {
-            entries,
-            inverted_lists,
-            entry_index_by_doc_id,
-            entry_slots,
-        }
-    }
-
-    fn empty() -> Self {
-        Self::new(Vec::new(), IvfCentroids::default(), Vec::new())
-    }
-
-    fn search(
-        &self,
-        config: &IvfIndexConfig,
-        request: IvfSearchRequest<'_>,
-    ) -> Result<Vec<IvfSearchHit>, Status> {
-        search_entries(config, &self.entries, &self.inverted_lists, request)
-    }
-
-    fn stored_lists(&self) -> IvfStoredLists {
-        let mut doc_ids_by_list = Vec::with_capacity(self.inverted_lists.len());
-
-        for list in &self.inverted_lists {
-            let mut doc_ids = Vec::with_capacity(list.entry_indexes.len());
-
-            for &entry_index in &list.entry_indexes {
-                doc_ids.push(self.entries[entry_index.get()].doc_id);
-            }
-
-            doc_ids_by_list.push(doc_ids);
-        }
-
-        IvfStoredLists {
-            centroids: IvfCentroids::new(
-                self.inverted_lists
-                    .iter()
-                    .map(|list| list.centroid.clone())
-                    .collect(),
-            ),
-            doc_ids_by_list,
-        }
-    }
-
-    fn len(&self) -> usize {
-        self.entry_index_by_doc_id.len()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.entry_index_by_doc_id.is_empty()
-    }
-
-    fn list_count(&self) -> usize {
-        self.inverted_lists.len()
-    }
-
-    fn push_new_list(&mut self, entry_index: IvfEntryIndex) -> usize {
-        let list_index = self.inverted_lists.len();
-        self.inverted_lists.push(IvfInvertedList {
-            centroid: self.entries[entry_index.get()].vector.clone(),
-            entry_indexes: vec![entry_index],
-        });
-
-        list_index
-    }
-
-    fn insert_incremental(&mut self, config: &IvfIndexConfig, entry: IvfBuildEntry) {
-        assert_eq!(
-            entry.vector.len(),
-            config.dimension.get(),
-            "ivf index entry dimension"
-        );
-
-        let entry_index = self.entries.len();
-        self.entries.push(entry);
-        let entry_index = IvfEntryIndex::new(entry_index);
-        self.entry_index_by_doc_id
-            .insert(self.entries[entry_index.get()].doc_id, entry_index);
-        self.entry_slots.push(IvfEntrySlot::Deleted);
-
-        if self.inverted_lists.is_empty() {
-            let list_index = self.push_new_list(entry_index);
-            self.entry_slots[entry_index.get()] = IvfEntrySlot::Live { list_index };
-            return;
-        }
-
-        let list_count = config.list_count(self.len());
-        if self.inverted_lists.len() < list_count {
-            let list_index = self.push_new_list(entry_index);
-            self.entry_slots[entry_index.get()] = IvfEntrySlot::Live { list_index };
-            return;
-        }
-
-        let list_index = nearest_centroid_index(
-            config.metric,
-            &self.entries[entry_index.get()].vector,
-            self.inverted_lists.iter().map(|list| &list.centroid),
-        );
-        self.inverted_lists[list_index]
-            .entry_indexes
-            .push(entry_index);
-        self.inverted_lists[list_index].centroid = centroid_for_list(
-            config.dimension,
-            &self.entries,
-            &self.inverted_lists[list_index].entry_indexes,
-        );
-        self.entry_slots[entry_index.get()] = IvfEntrySlot::Live { list_index };
-    }
-
-    fn remove_incremental(
-        &mut self,
-        config: &IvfIndexConfig,
-        doc_id: InternalDocId,
-    ) -> RemoveResult {
-        let Some(entry_index) = self.entry_index_by_doc_id.remove(&doc_id) else {
-            return RemoveResult::Missing;
-        };
-
-        let raw_entry_index = entry_index.get();
-        let list_index = match self.entry_slots[raw_entry_index] {
-            IvfEntrySlot::Live { list_index } => list_index,
-            IvfEntrySlot::Deleted => unreachable!("ivf entry slot should be live for known doc id"),
-        };
-        self.entry_slots[raw_entry_index] = IvfEntrySlot::Deleted;
-
-        let list = &mut self.inverted_lists[list_index];
-        let original_len = list.entry_indexes.len();
-        list.entry_indexes.retain(|&index| index != entry_index);
-        assert_ne!(
-            original_len,
-            list.entry_indexes.len(),
-            "ivf list membership must contain removed entry"
-        );
-
-        if list.entry_indexes.is_empty() {
-            return RemoveResult::Removed;
-        }
-
-        list.centroid = centroid_for_list(config.dimension, &self.entries, &list.entry_indexes);
-        RemoveResult::Removed
-    }
-
-    fn empty_list_count(&self) -> usize {
-        self.inverted_lists
-            .iter()
-            .filter(|list| list.entry_indexes.is_empty())
-            .count()
-    }
-
-    fn retrained(&self, config: &IvfIndexConfig) -> Self {
-        let entries = self.live_entries();
-        let trained = train_lists(config, &entries);
-        Self::new(entries, trained.centroids, trained.list_entry_indexes)
-    }
-
-    fn live_entries(&self) -> Vec<IvfBuildEntry> {
-        let mut entries = Vec::with_capacity(self.len());
-
-        for (entry_index, entry) in self.entries.iter().enumerate() {
-            if !matches!(self.entry_slots[entry_index], IvfEntrySlot::Live { .. }) {
-                continue;
-            }
-
-            entries.push(entry.clone());
-        }
-
-        entries
-    }
-
-    fn clear(&mut self) {
-        self.entries.clear();
-        self.inverted_lists.clear();
-        self.entry_index_by_doc_id.clear();
-        self.entry_slots.clear();
-    }
+#[derive(Clone)]
+struct TrainedLists {
+    centroids: IvfCentroids,
+    list_entry_indexes: Vec<Vec<IvfEntryIndex>>,
 }
 
 fn mark_retrain_pending_after_churn(
@@ -609,13 +262,9 @@ fn mark_retrain_pending_after_churn(
     *churn_events = 0;
 }
 
-#[derive(Clone)]
-struct TrainedLists {
-    centroids: IvfCentroids,
-    list_entry_indexes: Vec<Vec<IvfEntryIndex>>,
-}
-
 fn train_lists(config: &IvfIndexConfig, entries: &[IvfBuildEntry]) -> TrainedLists {
+    centroids::assert_entries_match_dimension(config.dimension, entries);
+
     if entries.is_empty() {
         return TrainedLists {
             centroids: IvfCentroids::default(),
@@ -623,34 +272,14 @@ fn train_lists(config: &IvfIndexConfig, entries: &[IvfBuildEntry]) -> TrainedLis
         };
     }
 
-    let centroids = initialize_centroids(config, entries);
+    let centroids =
+        IvfCentroids::initialize(config.metric, entries, config.list_count(entries.len()));
     let (centroids, assignments) = run_lloyd_iterations(config, entries, centroids);
     let list_entry_indexes = materialize_list_entry_indexes(config, entries, &assignments);
     TrainedLists {
         centroids,
         list_entry_indexes,
     }
-}
-
-fn initialize_centroids(config: &IvfIndexConfig, entries: &[IvfBuildEntry]) -> IvfCentroids {
-    IvfCentroids::initialize(config.metric, entries, config.list_count(entries.len()))
-}
-
-fn assign_entries(
-    config: &IvfIndexConfig,
-    entries: &[IvfBuildEntry],
-    centroids: &IvfCentroids,
-) -> Vec<usize> {
-    centroids.assign_entries(config.metric, entries)
-}
-
-fn recompute_centroids(
-    config: &IvfIndexConfig,
-    entries: &[IvfBuildEntry],
-    assignments: &[usize],
-    centroids: &IvfCentroids,
-) -> IvfCentroids {
-    centroids.recompute(config.dimension, entries, assignments)
 }
 
 fn run_lloyd_iterations(
@@ -661,8 +290,8 @@ fn run_lloyd_iterations(
     let mut assignments = vec![0usize; entries.len()];
 
     for _ in 0..config.params.training_iterations.get() {
-        assignments = assign_entries(config, entries, &centroids);
-        centroids = recompute_centroids(config, entries, &assignments, &centroids);
+        assignments = centroids.assign_entries(config.metric, entries);
+        centroids = centroids.recompute(config.dimension, entries, &assignments);
     }
 
     (centroids, assignments)
@@ -680,138 +309,6 @@ fn materialize_list_entry_indexes(
     }
 
     list_entry_indexes
-}
-fn nearest_centroid_index<'a>(
-    metric: DistanceMetric,
-    vector: &DenseVector,
-    centroids: impl IntoIterator<Item = &'a DenseVector>,
-) -> usize {
-    let mut centroids = centroids.into_iter().enumerate();
-    let (mut best_index, best_centroid) = centroids.next().expect("ivf centroids");
-    let mut best_score = score_doc(metric, vector.as_slice(), best_centroid.as_slice());
-
-    for (index, centroid) in centroids {
-        let score = score_doc(metric, vector.as_slice(), centroid.as_slice());
-        if score > best_score {
-            best_index = index;
-            best_score = score;
-        }
-    }
-
-    best_index
-}
-
-fn centroid_for_list(
-    dimension: VectorDimension,
-    entries: &[IvfBuildEntry],
-    entry_indexes: &[IvfEntryIndex],
-) -> DenseVector {
-    let mut sums = vec![0.0; dimension.get()];
-
-    for &entry_index in entry_indexes {
-        add_to_sums(&mut sums, entries[entry_index.get()].vector.as_slice());
-    }
-
-    centroid_from_sums(&mut sums, entry_indexes.len())
-}
-
-fn add_to_sums(sums: &mut [f32], values: &[f32]) {
-    sums.iter_mut()
-        .zip(values)
-        .for_each(|(sum, value)| *sum += *value);
-}
-
-fn centroid_from_sums(sums: &mut [f32], count: usize) -> DenseVector {
-    let scale = count as f32;
-
-    for value in sums.iter_mut() {
-        *value /= scale;
-    }
-
-    DenseVector::parse(sums.to_vec()).expect("ivf centroid vector")
-}
-
-fn assert_entries_match_dimension(dimension: VectorDimension, entries: &[IvfBuildEntry]) {
-    for entry in entries {
-        assert_eq!(
-            entry.vector.len(),
-            dimension.get(),
-            "ivf index entry dimension"
-        );
-    }
-}
-
-fn build_list_entry_indexes(
-    entries: &[IvfBuildEntry],
-    doc_ids_by_list: &[Vec<InternalDocId>],
-) -> Result<Vec<Vec<IvfEntryIndex>>, Status> {
-    let mut entry_index_by_doc_id = HashMap::with_capacity(entries.len());
-
-    for (entry_index, entry) in entries.iter().enumerate() {
-        entry_index_by_doc_id.insert(entry.doc_id, entry_index);
-    }
-
-    let mut list_entry_indexes = Vec::with_capacity(doc_ids_by_list.len());
-
-    for doc_ids in doc_ids_by_list {
-        let mut indexes = Vec::with_capacity(doc_ids.len());
-
-        for &doc_id in doc_ids {
-            let Some(entry_index) = entry_index_by_doc_id.remove(&doc_id) else {
-                return Err(Status::err(
-                    StatusCode::Internal,
-                    "persisted ivf lists do not match live entries",
-                ));
-            };
-
-            indexes.push(IvfEntryIndex::new(entry_index));
-        }
-
-        list_entry_indexes.push(indexes);
-    }
-
-    if entry_index_by_doc_id.is_empty() {
-        return Ok(list_entry_indexes);
-    }
-
-    Err(Status::err(
-        StatusCode::Internal,
-        "persisted ivf lists do not match live entries",
-    ))
-}
-
-fn validate_stored_lists(
-    config: &IvfIndexConfig,
-    entries: &[IvfBuildEntry],
-    stored: &IvfStoredLists,
-) -> Result<(), Status> {
-    let expected_list_count = config.list_count(entries.len());
-    if stored.centroids.len() != expected_list_count {
-        return Err(Status::err(
-            StatusCode::Internal,
-            "persisted ivf centroid count does not match live entries",
-        ));
-    }
-
-    if stored.doc_ids_by_list.len() != expected_list_count {
-        return Err(Status::err(
-            StatusCode::Internal,
-            "persisted ivf list count does not match live entries",
-        ));
-    }
-
-    for centroid in stored.centroids.iter() {
-        if centroid.len() == config.dimension.get() {
-            continue;
-        }
-
-        return Err(Status::err(
-            StatusCode::Internal,
-            "persisted ivf centroid dimension does not match index dimension",
-        ));
-    }
-
-    Ok(())
 }
 
 fn search_entries(
