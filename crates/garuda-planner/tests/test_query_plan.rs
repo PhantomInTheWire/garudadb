@@ -44,6 +44,30 @@ fn hnsw_query_plan_should_use_public_ef_search_override() {
 }
 
 #[test]
+fn hnsw_query_plan_should_use_schema_default_when_search_is_default() {
+    let plan = build_query_plan(
+        VectorQuery::by_vector(
+            field_name("embedding"),
+            DenseVector::parse(vec![1.0, 0.0, 0.0, 0.0]).expect("valid vector"),
+            TopK::new(3).expect("valid top_k"),
+        ),
+        None,
+        &schema(VectorIndexState::FlatAndHnsw {
+            default: FlatHnswDefault::Hnsw,
+            hnsw: HnswIndexParams::default(),
+        }),
+    )
+    .expect("build query plan");
+
+    assert_eq!(
+        plan.search,
+        SegmentSearchPlan::Hnsw {
+            ef_search: HnswIndexParams::default().ef_search,
+        }
+    );
+}
+
+#[test]
 fn indexed_and_filter_should_split_prefilter_and_residual() {
     let query = VectorQuery::by_vector(
         field_name("embedding"),
@@ -171,6 +195,31 @@ fn ivf_query_plan_should_use_public_nprobe_override() {
         plan.search,
         SegmentSearchPlan::Ivf {
             nprobe: IvfProbeCount::new(5).expect("valid nprobe"),
+        }
+    );
+}
+
+#[test]
+fn ivf_query_plan_should_use_schema_default_when_search_is_default() {
+    let params = IvfIndexParams::default();
+    let plan = build_query_plan(
+        VectorQuery::by_vector(
+            field_name("embedding"),
+            DenseVector::parse(vec![1.0, 0.0, 0.0, 0.0]).expect("valid vector"),
+            TopK::new(3).expect("valid top_k"),
+        ),
+        None,
+        &schema(VectorIndexState::FlatAndIvf {
+            default: FlatIvfDefault::Ivf,
+            ivf: params.clone(),
+        }),
+    )
+    .expect("build ivf plan");
+
+    assert_eq!(
+        plan.search,
+        SegmentSearchPlan::Ivf {
+            nprobe: params.n_probe,
         }
     );
 }

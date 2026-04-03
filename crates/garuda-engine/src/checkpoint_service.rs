@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 pub(crate) fn checkpoint_state(state: &mut CollectionRuntime) -> Result<(), Status> {
     let version_manager = VersionManager::new(&state.path);
-    let had_manifest = version_manager.exists();
+    let had_manifest = version_manager.exists()?;
 
     if had_manifest {
         state.id_map_snapshot_id = state.id_map_snapshot_id.next();

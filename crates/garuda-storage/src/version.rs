@@ -16,10 +16,8 @@ impl VersionManager {
         }
     }
 
-    pub fn exists(&self) -> bool {
-        manifest_paths(&self.collection_path)
-            .map(|paths| !paths.is_empty())
-            .unwrap_or(false)
+    pub fn exists(&self) -> Result<bool, Status> {
+        Ok(!manifest_paths(&self.collection_path)?.is_empty())
     }
 
     pub fn read_latest_manifest(&self) -> Result<Manifest, Status> {
@@ -37,7 +35,7 @@ impl VersionManager {
     }
 
     pub fn next_manifest_version(&self) -> Result<ManifestVersionId, Status> {
-        if !self.exists() {
+        if !self.exists()? {
             return Ok(ManifestVersionId::new(0));
         }
 

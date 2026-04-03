@@ -1,9 +1,9 @@
 //! Query planning helpers that map user requests to segment execution plans.
 
 use garuda_types::{
-    CollectionSchema, FieldName, FilterExpr, HnswEfSearch, IndexKind, IvfProbeCount,
-    QueryVectorSource, ScalarCompareOp, ScalarFieldSchema, ScalarPredicate, ScalarPrefilter,
-    ScalarType, ScalarValue, TopK, VectorProjection, VectorQuery, VectorSearch,
+    CollectionSchema, FieldName, FilterExpr, HnswEfSearch, IvfProbeCount, QueryVectorSource,
+    ScalarCompareOp, ScalarFieldSchema, ScalarPredicate, ScalarPrefilter, ScalarType, ScalarValue,
+    TopK, VectorIndexState, VectorProjection, VectorQuery, VectorSearch,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -56,41 +56,98 @@ fn search_plan(
     search: VectorSearch,
     schema: &CollectionSchema,
 ) -> Result<SegmentSearchPlan, garuda_types::Status> {
-    match (schema.vector.indexes.default_kind(), search) {
-        (IndexKind::Flat, VectorSearch::Default) => Ok(SegmentSearchPlan::Flat),
-        (IndexKind::Flat, _) => Err(garuda_types::Status::err(
+    match (&schema.vector.indexes, search) {
+        (VectorIndexState::DefaultFlat, VectorSearch::Default)
+        | (
+            VectorIndexState::FlatAndHnsw {
+                default: garuda_types::FlatHnswDefault::Flat,
+                ..
+            },
+            VectorSearch::Default,
+        )
+        | (
+            VectorIndexState::FlatAndIvf {
+                default: garuda_types::FlatIvfDefault::Flat,
+                ..
+            },
+            VectorSearch::Default,
+        ) => Ok(SegmentSearchPlan::Flat),
+        (VectorIndexState::DefaultFlat, _)
+        | (
+            VectorIndexState::FlatAndHnsw {
+                default: garuda_types::FlatHnswDefault::Flat,
+                ..
+            },
+            _,
+        )
+        | (
+            VectorIndexState::FlatAndIvf {
+                default: garuda_types::FlatIvfDefault::Flat,
+                ..
+            },
+            _,
+        ) => Err(garuda_types::Status::err(
             garuda_types::StatusCode::InvalidArgument,
             "query search override does not match the default index",
         )),
-        (IndexKind::Hnsw, VectorSearch::Default) => Ok(SegmentSearchPlan::Hnsw {
-            ef_search: schema
-                .vector
-                .indexes
-                .hnsw_params()
-                .expect("hnsw default requires hnsw params")
-                .ef_search,
+        (VectorIndexState::HnswOnly(params), VectorSearch::Default)
+        | (
+            VectorIndexState::FlatAndHnsw {
+                default: garuda_types::FlatHnswDefault::Hnsw,
+                hnsw: params,
+            },
+            VectorSearch::Default,
+        ) => Ok(SegmentSearchPlan::Hnsw {
+            ef_search: params.ef_search,
         }),
-        (IndexKind::Hnsw, VectorSearch::Hnsw { ef_search }) => {
-            Ok(SegmentSearchPlan::Hnsw { ef_search })
-        }
-        (IndexKind::Hnsw, VectorSearch::Ivf { .. }) => Err(garuda_types::Status::err(
+        (VectorIndexState::HnswOnly(_), VectorSearch::Hnsw { ef_search })
+        | (
+            VectorIndexState::FlatAndHnsw {
+                default: garuda_types::FlatHnswDefault::Hnsw,
+                ..
+            },
+            VectorSearch::Hnsw { ef_search },
+        ) => Ok(SegmentSearchPlan::Hnsw { ef_search }),
+        (VectorIndexState::HnswOnly(_), VectorSearch::Ivf { .. })
+        | (
+            VectorIndexState::FlatAndHnsw {
+                default: garuda_types::FlatHnswDefault::Hnsw,
+                ..
+            },
+            VectorSearch::Ivf { .. },
+        ) => Err(garuda_types::Status::err(
             garuda_types::StatusCode::InvalidArgument,
             "query search override does not match the default index",
         )),
-        (IndexKind::Ivf, VectorSearch::Default) => Ok(SegmentSearchPlan::Ivf {
-            nprobe: schema
-                .vector
-                .indexes
-                .ivf_params()
-                .expect("ivf default requires ivf params")
-                .n_probe,
+        (VectorIndexState::IvfOnly(params), VectorSearch::Default)
+        | (
+            VectorIndexState::FlatAndIvf {
+                default: garuda_types::FlatIvfDefault::Ivf,
+                ivf: params,
+            },
+            VectorSearch::Default,
+        ) => Ok(SegmentSearchPlan::Ivf {
+            nprobe: params.n_probe,
         }),
-        (IndexKind::Ivf, VectorSearch::Ivf { nprobe }) => Ok(SegmentSearchPlan::Ivf { nprobe }),
-        (IndexKind::Ivf, VectorSearch::Hnsw { .. }) => Err(garuda_types::Status::err(
+        (VectorIndexState::IvfOnly(_), VectorSearch::Ivf { nprobe })
+        | (
+            VectorIndexState::FlatAndIvf {
+                default: garuda_types::FlatIvfDefault::Ivf,
+                ..
+            },
+            VectorSearch::Ivf { nprobe },
+        ) => Ok(SegmentSearchPlan::Ivf { nprobe }),
+        (VectorIndexState::IvfOnly(_), VectorSearch::Hnsw { .. })
+        | (
+            VectorIndexState::FlatAndIvf {
+                default: garuda_types::FlatIvfDefault::Ivf,
+                ..
+            },
+            VectorSearch::Hnsw { .. },
+        ) => Err(garuda_types::Status::err(
             garuda_types::StatusCode::InvalidArgument,
             "query search override does not match the default index",
         )),
-        (IndexKind::Scalar, _) => panic!("vector index default cannot be scalar"),
     }
 }
 

@@ -1,0 +1,12 @@
+[package]
+name = "garuda-test-utils"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+garuda-engine = { path = "../garuda-engine" }
+garuda-types = { path = "../garuda-types" }
