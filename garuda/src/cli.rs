@@ -146,7 +146,7 @@ pub enum QuerySource {
 #[derive(Args)]
 pub struct QueryOptions {
     #[arg(long)]
-    pub top_k: usize,
+    pub top_k: NonZeroUsize,
     #[arg(long)]
     pub filter: Option<String>,
     #[arg(long, value_enum, default_value_t = VectorProjectionArg::Exclude)]
