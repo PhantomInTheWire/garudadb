@@ -199,6 +199,17 @@ struct SearchStats {
     record_indexes: HashMap<InternalDocId, usize>,
 }
 
+pub(crate) struct CandidateNprobeInput {
+    pub(crate) nprobe: IvfProbeCount,
+    pub(crate) top_k: TopK,
+    pub(crate) budget: AnnBudgetPolicy,
+    pub(crate) candidate_top_k: TopK,
+    pub(crate) candidate_doc_count: usize,
+    pub(crate) visible_doc_count: usize,
+    pub(crate) allowed_visible_doc_count: usize,
+    pub(crate) populated_list_count: usize,
+}
+
 fn search_ivf_hits(
     segment: SearchSegment<'_>,
     query_vector: &garuda_types::DenseVector,
@@ -212,16 +223,16 @@ fn search_ivf_hits(
     let request = garuda_index_ivf::IvfSearchRequest::new(
         query_vector,
         candidate_top_k,
-        search_candidate_nprobe(
-            recall.nprobe,
-            recall.top_k,
-            recall.budget,
+        search_candidate_nprobe(CandidateNprobeInput {
+            nprobe: recall.nprobe,
+            top_k: recall.top_k,
+            budget: recall.budget,
             candidate_top_k,
-            indexed_doc_count,
+            candidate_doc_count: indexed_doc_count,
             visible_doc_count,
             allowed_visible_doc_count,
-            index.populated_list_count(),
-        ),
+            populated_list_count: index.populated_list_count(),
+        }),
     );
 
     index.search(request)
@@ -349,49 +360,40 @@ fn ivf_hit(hit: IvfSearchHit) -> (InternalDocId, f32) {
     (hit.doc_id, hit.score)
 }
 
-pub(crate) fn search_candidate_nprobe(
-    nprobe: IvfProbeCount,
-    top_k: TopK,
-    budget: AnnBudgetPolicy,
-    candidate_top_k: TopK,
-    record_count: usize,
-    visible_doc_count: usize,
-    allowed_visible_doc_count: usize,
-    populated_list_count: usize,
-) -> IvfProbeCount {
-    if matches!(budget, AnnBudgetPolicy::Requested)
-        && candidate_top_k == top_k
-        && record_count == visible_doc_count
+pub(crate) fn search_candidate_nprobe(input: CandidateNprobeInput) -> IvfProbeCount {
+    if matches!(input.budget, AnnBudgetPolicy::Requested)
+        && input.candidate_top_k == input.top_k
+        && input.candidate_doc_count == input.visible_doc_count
     {
-        return nprobe;
+        return input.nprobe;
     }
 
-    if populated_list_count <= candidate_top_k.get() {
-        return IvfProbeCount::new(populated_list_count as u32)
+    if input.populated_list_count <= input.candidate_top_k.get() {
+        return IvfProbeCount::new(input.populated_list_count as u32)
             .expect("small list count should fit nprobe");
     }
 
-    if record_count > visible_doc_count {
-        return IvfProbeCount::new(populated_list_count as u32)
+    if input.candidate_doc_count > input.visible_doc_count {
+        return IvfProbeCount::new(input.populated_list_count as u32)
             .expect("populated list count should fit nprobe");
     }
 
-    if allowed_visible_doc_count == 0 {
-        return IvfProbeCount::new(populated_list_count as u32)
+    if input.allowed_visible_doc_count == 0 {
+        return IvfProbeCount::new(input.populated_list_count as u32)
             .expect("populated list count should fit nprobe");
     }
 
-    let requested_nprobe = nprobe.get() as usize;
-    let widened = if allowed_visible_doc_count < visible_doc_count {
+    let requested_nprobe = input.nprobe.get() as usize;
+    let widened = if input.allowed_visible_doc_count < input.visible_doc_count {
         requested_nprobe
-            .saturating_mul(visible_doc_count)
-            .div_ceil(allowed_visible_doc_count)
+            .saturating_mul(input.visible_doc_count)
+            .div_ceil(input.allowed_visible_doc_count)
     } else {
         requested_nprobe
-            .saturating_mul(candidate_top_k.get())
-            .div_ceil(top_k.get())
+            .saturating_mul(input.candidate_top_k.get())
+            .div_ceil(input.top_k.get())
     }
-    .min(populated_list_count) as u32;
+    .min(input.populated_list_count) as u32;
 
     IvfProbeCount::new(widened).expect("candidate nprobe should stay valid")
 }

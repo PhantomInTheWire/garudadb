@@ -141,9 +141,7 @@ pub fn prefilter_doc_ids(
     predicates: Option<&[ScalarPredicate]>,
     scalar_indexes: &BTreeMap<FieldName, ScalarIndex>,
 ) -> Option<HashSet<InternalDocId>> {
-    let Some(predicates) = predicates else {
-        return None;
-    };
+    let predicates = predicates?;
 
     let mut doc_ids: Option<HashSet<InternalDocId>> = None;
 
