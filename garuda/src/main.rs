@@ -17,7 +17,7 @@ fn main() -> Result<(), String> {
             println!("{}", root.display());
             Ok(())
         }
-        command => {
+        Command::Run(command) => {
             let db = Database::open(&root).map_err(|status| status.message)?;
             run_command(&db, command)
         }

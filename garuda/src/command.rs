@@ -4,10 +4,10 @@ use garuda_types::{
     ScalarFieldSchema, TopK, VectorDimension, VectorFieldSchema, VectorIndexState, VectorQuery,
 };
 
-use crate::cli::{Command, QueryArgs, QuerySource};
+use crate::cli::{ByIdQueryArgs, QueryOptions, QuerySource, RunnableCommand, VectorQueryArgs};
 use crate::parsing::{
     field_name, parse_doc_id, parse_field_name, parse_index_params, parse_query_search,
-    parse_scalar_json_literal, parse_vector_arg, print_json, read_collection_file, read_jsonl_docs,
+    parse_scalar_json_literal, print_json, read_collection_file, read_jsonl_docs,
 };
 
 const PRIMARY_KEY_FIELD: &str = "pk";
@@ -17,10 +17,9 @@ pub fn default_segment_max_docs() -> usize {
     CollectionOptions::default().segment_max_docs
 }
 
-pub fn run_command(db: &Database, command: Command) -> Result<(), String> {
+pub fn run_command(db: &Database, command: RunnableCommand) -> Result<(), String> {
     match command {
-        Command::Init => unreachable!("main handles init"),
-        Command::Create {
+        RunnableCommand::Create {
             name,
             dimension,
             metric,
@@ -44,37 +43,37 @@ pub fn run_command(db: &Database, command: Command) -> Result<(), String> {
             println!("{name}");
             Ok(())
         }
-        Command::CreateFromSchema { path } => {
+        RunnableCommand::CreateFromSchema { path } => {
             let (schema, options) = read_collection_file(&path)?;
             db.create_collection(schema, options)
                 .map_err(|status| status.message)?;
             println!("ok");
             Ok(())
         }
-        Command::InsertJsonl { name, path } => {
+        RunnableCommand::InsertJsonl { name, path } => {
             write_jsonl(&open_collection(db, &name)?, &path, Collection::insert)
         }
-        Command::UpsertJsonl { name, path } => {
+        RunnableCommand::UpsertJsonl { name, path } => {
             write_jsonl(&open_collection(db, &name)?, &path, Collection::upsert)
         }
-        Command::UpdateJsonl { name, path } => {
+        RunnableCommand::UpdateJsonl { name, path } => {
             write_jsonl(&open_collection(db, &name)?, &path, Collection::update)
         }
-        Command::DeleteIds { name, ids } => {
+        RunnableCommand::DeleteIds { name, ids } => {
             let ids = ids
                 .into_iter()
                 .map(parse_doc_id)
                 .collect::<Result<Vec<_>, _>>()?;
             print_json(&open_collection(db, &name)?.delete(ids))
         }
-        Command::DeleteFilter { name, filter } => {
+        RunnableCommand::DeleteFilter { name, filter } => {
             open_collection(db, &name)?
                 .delete_by_filter(&filter)
                 .map_err(|status| status.message)?;
             println!("ok");
             Ok(())
         }
-        Command::Query { name, source } => {
+        RunnableCommand::Query { name, source } => {
             let collection = open_collection(db, &name)?;
             let query = match source {
                 QuerySource::Vector(args) => vector_query(args)?,
@@ -82,24 +81,24 @@ pub fn run_command(db: &Database, command: Command) -> Result<(), String> {
             };
             print_json(&collection.query(query).map_err(|status| status.message)?)
         }
-        Command::Fetch { name, id } => {
+        RunnableCommand::Fetch { name, id } => {
             print_json(&open_collection(db, &name)?.fetch(vec![parse_doc_id(id)?]))
         }
-        Command::CreateIndex { name, field, kind } => {
+        RunnableCommand::CreateIndex { name, field, kind } => {
             open_collection(db, &name)?
                 .create_index(&parse_field_name(field)?, parse_index_params(kind)?)
                 .map_err(|status| status.message)?;
             println!("ok");
             Ok(())
         }
-        Command::DropIndex { name, field, kind } => {
+        RunnableCommand::DropIndex { name, field, kind } => {
             open_collection(db, &name)?
                 .drop_index(&parse_field_name(field)?, kind.into())
                 .map_err(|status| status.message)?;
             println!("ok");
             Ok(())
         }
-        Command::AddColumn {
+        RunnableCommand::AddColumn {
             name,
             column,
             field_type,
@@ -122,37 +121,37 @@ pub fn run_command(db: &Database, command: Command) -> Result<(), String> {
             println!("ok");
             Ok(())
         }
-        Command::RenameColumn { name, old, new } => {
+        RunnableCommand::RenameColumn { name, old, new } => {
             open_collection(db, &name)?
                 .alter_column(&parse_field_name(old)?, &parse_field_name(new)?)
                 .map_err(|status| status.message)?;
             println!("ok");
             Ok(())
         }
-        Command::DropColumn { name, column } => {
+        RunnableCommand::DropColumn { name, column } => {
             open_collection(db, &name)?
                 .drop_column(&parse_field_name(column)?)
                 .map_err(|status| status.message)?;
             println!("ok");
             Ok(())
         }
-        Command::Flush { name } => {
+        RunnableCommand::Flush { name } => {
             open_collection(db, &name)?
                 .flush()
                 .map_err(|status| status.message)?;
             println!("ok");
             Ok(())
         }
-        Command::Optimize { name } => {
+        RunnableCommand::Optimize { name } => {
             open_collection(db, &name)?
                 .optimize(OptimizeOptions)
                 .map_err(|status| status.message)?;
             println!("ok");
             Ok(())
         }
-        Command::Schema { name } => print_json(&open_collection(db, &name)?.schema()),
-        Command::Options { name } => print_json(&open_collection(db, &name)?.options()),
-        Command::Stats { name } => print_json(&open_collection(db, &name)?.stats()),
+        RunnableCommand::Schema { name } => print_json(&open_collection(db, &name)?.schema()),
+        RunnableCommand::Options { name } => print_json(&open_collection(db, &name)?.options()),
+        RunnableCommand::Stats { name } => print_json(&open_collection(db, &name)?.stats()),
     }
 }
 
@@ -178,31 +177,31 @@ fn write_jsonl(
     Err(result.status.message.clone())
 }
 
-fn vector_query(args: QueryArgs) -> Result<VectorQuery, String> {
+fn vector_query(args: VectorQueryArgs) -> Result<VectorQuery, String> {
     let mut query = VectorQuery::by_vector(
         field_name(VECTOR_FIELD),
-        parse_vector_arg(&args.value)?,
-        TopK::new(args.top_k).map_err(|status| status.message)?,
+        args.value,
+        TopK::new(args.options.top_k).map_err(|status| status.message)?,
     );
-    apply_query_args(&mut query, args)?;
+    apply_query_options(&mut query, args.options)?;
     Ok(query)
 }
 
-fn id_query(mut args: QueryArgs) -> Result<VectorQuery, String> {
+fn id_query(args: ByIdQueryArgs) -> Result<VectorQuery, String> {
     let mut query = VectorQuery::by_id(
         field_name(VECTOR_FIELD),
-        parse_doc_id(std::mem::take(&mut args.value))?,
-        TopK::new(args.top_k).map_err(|status| status.message)?,
+        args.value,
+        TopK::new(args.options.top_k).map_err(|status| status.message)?,
     );
-    apply_query_args(&mut query, args)?;
+    apply_query_options(&mut query, args.options)?;
     Ok(query)
 }
 
-fn apply_query_args(query: &mut VectorQuery, args: QueryArgs) -> Result<(), String> {
-    query.filter = args.filter;
-    query.output_fields = args.fields;
-    query.vector_projection = args.vector_projection.into();
-    query.search = parse_query_search(args.search)?;
+fn apply_query_options(query: &mut VectorQuery, options: QueryOptions) -> Result<(), String> {
+    query.filter = options.filter;
+    query.output_fields = options.fields;
+    query.vector_projection = options.vector_projection.into();
+    query.search = parse_query_search(options.search)?;
     Ok(())
 }
 
