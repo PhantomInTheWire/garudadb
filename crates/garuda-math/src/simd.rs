@@ -2,6 +2,10 @@ pub(crate) fn dot(lhs: &[f32], rhs: &[f32]) -> f32 {
     implementation::dot(lhs, rhs)
 }
 
+pub(crate) fn l2_norm(vector: &[f32]) -> f32 {
+    implementation::l2_norm(vector)
+}
+
 pub(crate) fn squared_l2(lhs: &[f32], rhs: &[f32]) -> f32 {
     implementation::squared_l2(lhs, rhs)
 }
@@ -33,13 +37,28 @@ pub(crate) fn squared_l2_scalar(lhs: &[f32], rhs: &[f32]) -> f32 {
     sum
 }
 
+#[cfg_attr(target_arch = "aarch64", allow(dead_code))]
+pub(crate) fn l2_norm_scalar(vector: &[f32]) -> f32 {
+    let mut sum = 0.0f32;
+
+    for value in vector {
+        sum += value * value;
+    }
+
+    sum.sqrt()
+}
+
 #[cfg(not(target_arch = "aarch64"))]
 mod implementation {
-    use crate::simd::{dot_scalar, squared_l2_scalar};
+    use crate::simd::{dot_scalar, l2_norm_scalar, squared_l2_scalar};
 
     pub(super) fn dot(lhs: &[f32], rhs: &[f32]) -> f32 {
         assert_eq!(lhs.len(), rhs.len());
         dot_scalar(lhs, rhs)
+    }
+
+    pub(super) fn l2_norm(vector: &[f32]) -> f32 {
+        l2_norm_scalar(vector)
     }
 
     pub(super) fn squared_l2(lhs: &[f32], rhs: &[f32]) -> f32 {
@@ -74,6 +93,10 @@ mod implementation {
 
     pub(super) fn dot(lhs: &[f32], rhs: &[f32]) -> f32 {
         unsafe { dot_neon(lhs, rhs) }
+    }
+
+    pub(super) fn l2_norm(vector: &[f32]) -> f32 {
+        unsafe { l2_norm_neon(vector) }
     }
 
     pub(super) fn squared_l2(lhs: &[f32], rhs: &[f32]) -> f32 {
@@ -134,6 +157,29 @@ mod implementation {
         }
 
         sum
+    }
+
+    #[inline]
+    #[target_feature(enable = "neon")]
+    unsafe fn l2_norm_neon(vector: &[f32]) -> f32 {
+        let mut index = 0usize;
+        let len = vector.len();
+        let mut acc = vdupq_n_f32(0.0);
+
+        while index + 4 <= len {
+            let values = unsafe { vld1q_f32(vector.as_ptr().add(index)) };
+            acc = vfmaq_f32(acc, values, values);
+            index += 4;
+        }
+
+        let mut sum = vaddvq_f32(acc);
+        while index < len {
+            let value = unsafe { *vector.get_unchecked(index) };
+            sum += value * value;
+            index += 1;
+        }
+
+        sum.sqrt()
     }
 
     #[inline]

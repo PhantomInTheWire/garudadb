@@ -3,7 +3,8 @@ use crate::{
     IvfBuildEntry, IvfCentroids, IvfIndexConfig, IvfSearchHit, IvfSearchRequest, IvfStoredLists,
     search_entries, train_lists,
 };
-use garuda_types::{DenseVector, InternalDocId, RemoveResult, Status};
+use garuda_math::l2_norm;
+use garuda_types::{DenseVector, DistanceMetric, InternalDocId, RemoveResult, Status};
 use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -17,7 +18,15 @@ pub(super) struct IvfState {
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct IvfInvertedList {
     pub(super) centroid: DenseVector,
+    pub(super) residual_bound: IvfResidualBound,
     pub(super) entry_indexes: Vec<IvfEntryIndex>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum IvfResidualBound {
+    Cosine,
+    InnerProduct { max_residual_norm: f32 },
+    L2 { max_distance_to_centroid: f32 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,6 +50,7 @@ impl IvfEntryIndex {
 
 impl IvfState {
     pub(super) fn new(
+        config: &IvfIndexConfig,
         entries: Vec<IvfBuildEntry>,
         centroids: IvfCentroids,
         list_entry_indexes: Vec<Vec<IvfEntryIndex>>,
@@ -63,9 +73,15 @@ impl IvfState {
             .into_vec()
             .into_iter()
             .zip(list_entry_indexes)
-            .map(|(centroid, entry_indexes)| IvfInvertedList {
-                centroid,
-                entry_indexes,
+            .map(|(centroid, entry_indexes)| {
+                let residual_bound =
+                    residual_bound_for_list(config.metric, &centroid, &entries, &entry_indexes);
+
+                IvfInvertedList {
+                    centroid,
+                    residual_bound,
+                    entry_indexes,
+                }
             })
             .collect();
 
@@ -78,7 +94,12 @@ impl IvfState {
     }
 
     pub(super) fn empty() -> Self {
-        Self::new(Vec::new(), IvfCentroids::default(), Vec::new())
+        Self {
+            entries: Vec::new(),
+            inverted_lists: Vec::new(),
+            entry_index_by_doc_id: HashMap::new(),
+            entry_slots: Vec::new(),
+        }
     }
 
     pub(super) fn search(
@@ -125,11 +146,17 @@ impl IvfState {
         self.inverted_lists.len()
     }
 
-    fn push_new_list(&mut self, entry_index: IvfEntryIndex) -> usize {
+    fn push_new_list(&mut self, config: &IvfIndexConfig, entry_index: IvfEntryIndex) -> usize {
         let list_index = self.inverted_lists.len();
+        let centroid = self.entries[entry_index.get()].vector.clone();
+        let entry_indexes = vec![entry_index];
+        let residual_bound =
+            residual_bound_for_list(config.metric, &centroid, &self.entries, &entry_indexes);
+
         self.inverted_lists.push(IvfInvertedList {
-            centroid: self.entries[entry_index.get()].vector.clone(),
-            entry_indexes: vec![entry_index],
+            centroid,
+            residual_bound,
+            entry_indexes,
         });
 
         list_index
@@ -150,14 +177,14 @@ impl IvfState {
         self.entry_slots.push(IvfEntrySlot::Deleted);
 
         if self.inverted_lists.is_empty() {
-            let list_index = self.push_new_list(entry_index);
+            let list_index = self.push_new_list(config, entry_index);
             self.entry_slots[entry_index.get()] = IvfEntrySlot::Live { list_index };
             return;
         }
 
         let list_count = config.list_count(self.len());
         if self.inverted_lists.len() < list_count {
-            let list_index = self.push_new_list(entry_index);
+            let list_index = self.push_new_list(config, entry_index);
             self.entry_slots[entry_index.get()] = IvfEntrySlot::Live { list_index };
             return;
         }
@@ -170,11 +197,7 @@ impl IvfState {
         self.inverted_lists[list_index]
             .entry_indexes
             .push(entry_index);
-        self.inverted_lists[list_index].centroid = centroid_for_list(
-            config.dimension,
-            &self.entries,
-            &self.inverted_lists[list_index].entry_indexes,
-        );
+        self.recompute_list(config, list_index);
         self.entry_slots[entry_index.get()] = IvfEntrySlot::Live { list_index };
     }
 
@@ -203,11 +226,13 @@ impl IvfState {
             "ivf list membership must contain removed entry"
         );
 
-        if list.entry_indexes.is_empty() {
+        if !list.entry_indexes.is_empty() {
+            self.recompute_list(config, list_index);
             return RemoveResult::Removed;
         }
 
-        list.centroid = centroid_for_list(config.dimension, &self.entries, &list.entry_indexes);
+        list.residual_bound =
+            residual_bound_for_list(config.metric, &list.centroid, &self.entries, &[]);
         RemoveResult::Removed
     }
 
@@ -221,7 +246,12 @@ impl IvfState {
     pub(super) fn retrained(&self, config: &IvfIndexConfig) -> Self {
         let entries = self.live_entries();
         let trained = train_lists(config, &entries);
-        Self::new(entries, trained.centroids, trained.list_entry_indexes)
+        Self::new(
+            config,
+            entries,
+            trained.centroids,
+            trained.list_entry_indexes,
+        )
     }
 
     pub(super) fn live_entries(&self) -> Vec<IvfBuildEntry> {
@@ -244,4 +274,84 @@ impl IvfState {
         self.entry_index_by_doc_id.clear();
         self.entry_slots.clear();
     }
+
+    fn recompute_list(&mut self, config: &IvfIndexConfig, list_index: usize) {
+        let list = &mut self.inverted_lists[list_index];
+        assert!(
+            !list.entry_indexes.is_empty(),
+            "recompute requires live list"
+        );
+        list.centroid = centroid_for_list(config.dimension, &self.entries, &list.entry_indexes);
+        list.residual_bound = residual_bound_for_list(
+            config.metric,
+            &list.centroid,
+            &self.entries,
+            &list.entry_indexes,
+        );
+    }
+}
+
+fn residual_bound_for_list(
+    metric: DistanceMetric,
+    centroid: &DenseVector,
+    entries: &[IvfBuildEntry],
+    entry_indexes: &[IvfEntryIndex],
+) -> IvfResidualBound {
+    match metric {
+        DistanceMetric::Cosine => IvfResidualBound::Cosine,
+        DistanceMetric::InnerProduct => IvfResidualBound::InnerProduct {
+            max_residual_norm: max_residual_norm(centroid, entries, entry_indexes),
+        },
+        DistanceMetric::L2 => IvfResidualBound::L2 {
+            max_distance_to_centroid: max_residual_norm(centroid, entries, entry_indexes),
+        },
+    }
+}
+
+impl IvfResidualBound {
+    pub(super) fn upper_bound(self, centroid_score: f32, query_vector: &[f32]) -> f32 {
+        match self {
+            Self::Cosine => f32::INFINITY,
+            Self::InnerProduct { max_residual_norm } => {
+                centroid_score + l2_norm(query_vector) * max_residual_norm
+            }
+            Self::L2 {
+                max_distance_to_centroid,
+            } => {
+                let centroid_distance = -centroid_score;
+                -(centroid_distance - max_distance_to_centroid).max(0.0)
+            }
+        }
+    }
+}
+
+fn max_residual_norm(
+    centroid: &DenseVector,
+    entries: &[IvfBuildEntry],
+    entry_indexes: &[IvfEntryIndex],
+) -> f32 {
+    let mut max_norm = 0.0;
+
+    for &entry_index in entry_indexes {
+        let norm = l2_norm_of_difference(
+            centroid.as_slice(),
+            entries[entry_index.get()].vector.as_slice(),
+        );
+        if norm > max_norm {
+            max_norm = norm;
+        }
+    }
+
+    max_norm
+}
+
+fn l2_norm_of_difference(lhs: &[f32], rhs: &[f32]) -> f32 {
+    let mut sum = 0.0;
+
+    for (left, right) in lhs.iter().zip(rhs) {
+        let delta = left - right;
+        sum += delta * delta;
+    }
+
+    sum.sqrt()
 }

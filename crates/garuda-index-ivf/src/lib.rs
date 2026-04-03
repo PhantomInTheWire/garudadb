@@ -5,7 +5,8 @@
 //!
 //! - `IvfIndexConfig`: vector dimension, metric, and IVF parameters.
 //! - `Vec<IvfBuildEntry>`: the stored `(doc_id, vector)` rows.
-//! - `IvfState`: centroids, per-list membership, and live/deleted bookkeeping.
+//! - `IvfState`: centroids, residual bounds, per-list membership, and
+//!   live/deleted bookkeeping.
 //!
 //! `IvfIndex` is the persisted/searchable form. `WritingIvfIndex` is the
 //! incremental mutable form that can accept inserts/removes and occasionally
@@ -47,8 +48,17 @@
 //! - Search validates query dimension and returns early on an empty index.
 //! - Every non-empty list is scored against the query using its centroid.
 //! - Lists are sorted by centroid score descending, then `list_index` ascending.
-//! - Only the best `min(nprobe, non_empty_lists)` lists are scanned.
-//! - Every entry in the chosen lists is scored against the query.
+//! - Search always scans at least the best `min(nprobe, non_empty_lists)`
+//!   lists.
+//! - L2 and inner-product queries may keep scanning ranked lists beyond that
+//!   minimum until every remaining list is upper-bounded below the current
+//!   top-k threshold.
+//! - Equal-score ties are not pruned early because final hit ordering also
+//!   breaks ties by `doc_id`.
+//! - Cosine queries do not use residual-bound early stopping.
+//! - Cosine search scans exactly the best `min(nprobe, non_empty_lists)` lists
+//!   and does not scan beyond that minimum.
+//! - Every scanned entry is scored against the query.
 //! - Final hits are sorted by score descending, then `doc_id` ascending, and
 //!   truncated to `top_k`.
 //!
@@ -60,13 +70,14 @@
 //! - Once the target list count is reached, a new entry is assigned to the
 //!   nearest centroid, appended to that list, and that list centroid is updated
 //!   to the exact mean of its current members.
+//! - Residual bounds are recomputed whenever a list centroid changes.
 //! - Incremental insert does not run full Lloyd retraining.
 //!
 //! 7. Incremental remove
 //! - Removal looks up the live entry by `doc_id`, marks its slot deleted, and
 //!   removes its `IvfEntryIndex` from the owning list.
 //! - If the list still has members, its centroid is recomputed from those live
-//!   members.
+//!   members and its residual bound is recomputed from that same membership.
 //! - If the list becomes empty, the empty list remains in place until retrain or
 //!   full reset.
 //! - Incremental remove therefore does only list-local exact maintenance; it
@@ -88,6 +99,8 @@
 //!   - `doc_id`s for each list in that same order.
 //! - `from_parts` validates centroid count, list count, and centroid dimension
 //!   before rebuilding in-memory `IvfEntryIndex` membership.
+//! - Residual bounds are rebuilt from the persisted centroids and live entries;
+//!   they are derived state, not persisted bytes.
 //! - Persisted lists must match the live entry set exactly: no duplicates, no
 //!   missing docs, no unknown docs.
 //!
@@ -95,8 +108,8 @@
 //! - Build-time training is deterministic because initialization, assignment,
 //!   sorting, and tie-breaking are deterministic.
 //! - The implementation is single-threaded and in-memory.
-//! - Search scans whole selected lists; there is no product quantization or
-//!   residual encoding in this crate.
+//! - Search still scans whole selected lists; there is no product quantization
+//!   or residual encoding in this crate.
 //! - Deletion is lazy at the storage layer: historical `entries` slots are not
 //!   compacted in place.
 //! - Incremental maintenance favors simple exact centroid updates plus periodic
@@ -214,11 +227,14 @@ pub struct IvfIndex {
 impl IvfIndex {
     pub fn build(config: IvfIndexConfig, entries: Vec<IvfBuildEntry>) -> Self {
         let trained = train_lists(&config, &entries);
+        let state = IvfState::new(
+            &config,
+            entries,
+            trained.centroids,
+            trained.list_entry_indexes,
+        );
 
-        Self {
-            config,
-            state: IvfState::new(entries, trained.centroids, trained.list_entry_indexes),
-        }
+        Self { config, state }
     }
 
     pub fn from_parts(
@@ -229,10 +245,8 @@ impl IvfIndex {
         validate_stored_lists(&config, &entries, &stored)?;
 
         let entry_indexes = build_list_entry_indexes(&entries, &stored.doc_ids_by_list)?;
-        Ok(Self {
-            config,
-            state: IvfState::new(entries, stored.centroids, entry_indexes),
-        })
+        let state = IvfState::new(&config, entries, stored.centroids, entry_indexes);
+        Ok(Self { config, state })
     }
 
     pub fn search(&self, request: IvfSearchRequest<'_>) -> Result<Vec<IvfSearchHit>, Status> {
@@ -453,30 +467,138 @@ fn search_entries(
             .total_cmp(&left.1)
             .then_with(|| left.0.cmp(&right.0))
     });
-    list_scores.truncate((request.nprobe.get() as usize).min(list_scores.len()));
 
+    if config.metric == DistanceMetric::Cosine {
+        return Ok(scan_ranked_lists(
+            config,
+            entries,
+            inverted_lists,
+            &request,
+            &list_scores[..(request.nprobe.get() as usize).min(list_scores.len())],
+        ));
+    }
+
+    Ok(scan_ranked_lists_with_pruning(
+        config,
+        entries,
+        inverted_lists,
+        &request,
+        &list_scores,
+    ))
+}
+
+fn scan_ranked_lists(
+    config: &IvfIndexConfig,
+    entries: &[IvfBuildEntry],
+    inverted_lists: &[IvfInvertedList],
+    request: &IvfSearchRequest<'_>,
+    list_scores: &[(usize, f32)],
+) -> Vec<IvfSearchHit> {
     let mut hits = Vec::new();
 
-    for (list_index, _) in list_scores {
-        for &entry_index in &inverted_lists[list_index].entry_indexes {
-            let entry = &entries[entry_index.get()];
-            hits.push(IvfSearchHit {
-                doc_id: entry.doc_id,
-                score: score_doc(
-                    config.metric,
-                    request.query_vector.as_slice(),
-                    entry.vector.as_slice(),
-                ),
-            });
+    for &(list_index, _) in list_scores {
+        scan_list(
+            config,
+            entries,
+            &inverted_lists[list_index],
+            request,
+            &mut hits,
+        );
+    }
+
+    sort_hits(&mut hits);
+    hits.truncate(request.top_k.get());
+    hits
+}
+
+fn scan_ranked_lists_with_pruning(
+    config: &IvfIndexConfig,
+    entries: &[IvfBuildEntry],
+    inverted_lists: &[IvfInvertedList],
+    request: &IvfSearchRequest<'_>,
+    list_scores: &[(usize, f32)],
+) -> Vec<IvfSearchHit> {
+    let minimum_scanned_list_count = (request.nprobe.get() as usize).min(list_scores.len());
+    let mut hits = Vec::new();
+
+    for (rank, (list_index, _)) in list_scores.iter().copied().enumerate() {
+        scan_list(
+            config,
+            entries,
+            &inverted_lists[list_index],
+            request,
+            &mut hits,
+        );
+        sort_hits(&mut hits);
+        if hits.len() > request.top_k.get() {
+            hits.truncate(request.top_k.get());
+        }
+
+        if rank + 1 < minimum_scanned_list_count {
+            continue;
+        }
+
+        if hits.len() < request.top_k.get() {
+            continue;
+        }
+
+        let Some(best_remaining_upper_bound) = best_remaining_upper_bound(
+            inverted_lists,
+            request.query_vector.as_slice(),
+            &list_scores[(rank + 1)..],
+        ) else {
+            break;
+        };
+        if best_remaining_upper_bound < hits.last().expect("top_k threshold").score {
+            break;
         }
     }
 
+    sort_hits(&mut hits);
+    hits.truncate(request.top_k.get());
+    hits
+}
+
+fn scan_list(
+    config: &IvfIndexConfig,
+    entries: &[IvfBuildEntry],
+    list: &IvfInvertedList,
+    request: &IvfSearchRequest<'_>,
+    hits: &mut Vec<IvfSearchHit>,
+) {
+    for &entry_index in &list.entry_indexes {
+        let entry = &entries[entry_index.get()];
+        hits.push(IvfSearchHit {
+            doc_id: entry.doc_id,
+            score: score_doc(
+                config.metric,
+                request.query_vector.as_slice(),
+                entry.vector.as_slice(),
+            ),
+        });
+    }
+}
+
+fn sort_hits(hits: &mut [IvfSearchHit]) {
     hits.sort_by(|left, right| {
         right
             .score
             .total_cmp(&left.score)
             .then_with(|| left.doc_id.cmp(&right.doc_id))
     });
-    hits.truncate(request.top_k.get());
-    Ok(hits)
+}
+
+fn best_remaining_upper_bound(
+    inverted_lists: &[IvfInvertedList],
+    query_vector: &[f32],
+    remaining_list_scores: &[(usize, f32)],
+) -> Option<f32> {
+    remaining_list_scores
+        .iter()
+        .map(|&(list_index, centroid_score)| {
+            inverted_lists[list_index]
+                .residual_bound
+                .upper_bound(centroid_score, query_vector)
+        })
+        .max_by(f32::total_cmp)
 }

@@ -349,6 +349,48 @@ fn all_live_persisted_query_with_small_nprobe_should_not_widen_to_all_lists() {
 }
 
 #[test]
+fn persisted_reopen_with_small_nprobe_should_keep_same_ivf_results() {
+    let (_root, db) = database("ivf-persisted-reopen-small-nprobe");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+    seed_collection(&collection);
+    seed_more_collection_docs(&collection);
+    collection.flush().expect("flush");
+
+    collection
+        .create_index(
+            &field_name("embedding"),
+            IndexParams::Ivf(IvfIndexParams::default()),
+        )
+        .expect("create ivf index");
+
+    let mut query = VectorQuery::by_vector(
+        field_name("embedding"),
+        dense_vector(vec![1.0, 0.0, 0.0, 0.0]),
+        common::top_k(4),
+    );
+    query.search = VectorSearch::Ivf {
+        nprobe: IvfProbeCount::new(1).expect("valid nprobe"),
+    };
+
+    let before = collection
+        .query(query.clone())
+        .expect("query before reopen");
+    drop(collection);
+
+    let reopened = db
+        .open_collection(&collection_name("docs"))
+        .expect("reopen collection");
+    let after = reopened.query(query).expect("query after reopen");
+
+    assert_eq!(
+        before.iter().map(|doc| doc.id.clone()).collect::<Vec<_>>(),
+        after.iter().map(|doc| doc.id.clone()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn ivf_with_more_lists_than_live_docs_should_roundtrip_flush_and_reopen() {
     let (_root, db) = database("ivf-small-data-roundtrip");
     let mut schema = default_schema("docs");

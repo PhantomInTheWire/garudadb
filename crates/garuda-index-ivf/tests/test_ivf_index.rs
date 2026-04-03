@@ -54,6 +54,62 @@ fn vector(values: [f32; 2]) -> DenseVector {
     DenseVector::parse(values.to_vec()).expect("vector")
 }
 
+fn stored(centroids: [[f32; 2]; 2], doc_ids_by_list: [[u64; 2]; 2]) -> IvfStoredLists {
+    IvfStoredLists {
+        centroids: IvfCentroids::new(centroids.into_iter().map(vector).collect()),
+        doc_ids_by_list: doc_ids_by_list
+            .into_iter()
+            .map(|doc_ids| {
+                doc_ids
+                    .into_iter()
+                    .map(|doc_id| InternalDocId::new(doc_id).expect("doc id"))
+                    .collect()
+            })
+            .collect(),
+    }
+}
+
+fn stored_lists(centroids: &[[f32; 2]], doc_ids_by_list: &[&[u64]]) -> IvfStoredLists {
+    IvfStoredLists {
+        centroids: IvfCentroids::new(centroids.iter().copied().map(vector).collect()),
+        doc_ids_by_list: doc_ids_by_list
+            .iter()
+            .map(|doc_ids| {
+                doc_ids
+                    .iter()
+                    .copied()
+                    .map(|doc_id| InternalDocId::new(doc_id).expect("doc id"))
+                    .collect()
+            })
+            .collect(),
+    }
+}
+
+fn brute_force_hits(
+    metric: DistanceMetric,
+    entries: &[(u64, [f32; 2])],
+    query: &DenseVector,
+    top_k: TopK,
+) -> Vec<(InternalDocId, f32)> {
+    let mut hits = entries
+        .iter()
+        .map(|(doc_id, vector_values)| {
+            (
+                InternalDocId::new(*doc_id).expect("doc id"),
+                garuda_math::score_doc(metric, query.as_slice(), vector(*vector_values).as_slice()),
+            )
+        })
+        .collect::<Vec<_>>();
+    hits.sort_by(|left, right| {
+        right
+            .1
+            .total_cmp(&left.1)
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    hits.truncate(top_k.get());
+    hits
+}
+
 fn stored_list_sse(index: &IvfIndex, values_by_doc_id: &[(u64, f32)]) -> f32 {
     let lists = index.stored_lists();
     let values_by_doc_id = values_by_doc_id
@@ -88,6 +144,166 @@ fn search_rejects_dimension_mismatch() {
         .expect_err("dimension mismatch");
 
     assert_eq!(error.code, StatusCode::InvalidArgument);
+}
+
+#[test]
+fn l2_boundary_pruning_should_keep_correct_top_hit() {
+    let config = config();
+    let source = [
+        (1, [0.01, 0.0]),
+        (2, [0.02, 0.0]),
+        (3, [0.25, 0.0]),
+        (4, [0.24, 0.0]),
+    ];
+    let entries = source
+        .map(|(doc_id, values)| entry(doc_id, values))
+        .to_vec();
+    let index = IvfIndex::from_parts(
+        config,
+        entries.clone(),
+        stored([[0.0, 0.0], [0.2, 0.0]], [[1, 2], [3, 4]]),
+    )
+    .expect("from parts");
+    let query = vector([0.0, 0.0]);
+    let top_k = TopK::new(1).expect("top k");
+    let nprobe = IvfProbeCount::new(1).expect("probe count");
+
+    let hits = index
+        .search(IvfSearchRequest::new(&query, top_k, nprobe))
+        .expect("search");
+
+    assert_eq!(
+        hits.iter()
+            .map(|hit| (hit.doc_id, hit.score))
+            .collect::<Vec<_>>(),
+        brute_force_hits(DistanceMetric::L2, &source, &query, top_k)
+    );
+}
+
+#[test]
+fn inner_product_boundary_pruning_should_keep_correct_top_hit() {
+    let config = IvfIndexConfig::new(
+        VectorDimension::new(2).expect("dimension"),
+        DistanceMetric::InnerProduct,
+        IvfIndexParams {
+            n_list: IvfListCount::new(2).expect("list count"),
+            n_probe: IvfProbeCount::new(1).expect("probe count"),
+            training_iterations: IvfTrainingIterations::new(4).expect("iterations"),
+        },
+    );
+    let source = [
+        (1, [1.0, 0.0]),
+        (2, [0.98, 0.0]),
+        (3, [0.81, 0.0]),
+        (4, [0.82, 0.0]),
+    ];
+    let entries = source
+        .map(|(doc_id, values)| entry(doc_id, values))
+        .to_vec();
+    let index = IvfIndex::from_parts(
+        config,
+        entries.clone(),
+        stored([[0.99, 0.0], [0.85, 0.0]], [[1, 2], [3, 4]]),
+    )
+    .expect("from parts");
+    let query = vector([1.0, 0.0]);
+    let top_k = TopK::new(1).expect("top k");
+    let nprobe = IvfProbeCount::new(1).expect("probe count");
+
+    let hits = index
+        .search(IvfSearchRequest::new(&query, top_k, nprobe))
+        .expect("search");
+
+    assert_eq!(
+        hits.iter()
+            .map(|hit| (hit.doc_id, hit.score))
+            .collect::<Vec<_>>(),
+        brute_force_hits(DistanceMetric::InnerProduct, &source, &query, top_k)
+    );
+}
+
+#[test]
+fn l2_boundary_pruning_should_check_all_remaining_lists_before_stopping() {
+    let config = IvfIndexConfig::new(
+        VectorDimension::new(2).expect("dimension"),
+        DistanceMetric::L2,
+        IvfIndexParams {
+            n_list: IvfListCount::new(3).expect("list count"),
+            n_probe: IvfProbeCount::new(1).expect("probe count"),
+            training_iterations: IvfTrainingIterations::new(4).expect("iterations"),
+        },
+    );
+    let source = [
+        (1, [1.0, 0.0]),
+        (2, [0.0, 0.0]),
+        (3, [1.0, 0.0]),
+        (4, [0.9, 0.0]),
+        (5, [0.3, 0.0]),
+        (6, [0.4, 0.0]),
+    ];
+    let entries = source
+        .map(|(doc_id, values)| entry(doc_id, values))
+        .to_vec();
+    let index = IvfIndex::from_parts(
+        config,
+        entries.clone(),
+        stored_lists(
+            &[[0.0, 0.0], [1.0, 0.0], [0.35, 0.0]],
+            &[&[2], &[1, 3, 4], &[5, 6]],
+        ),
+    )
+    .expect("from parts");
+    let query = vector([0.0, 0.0]);
+    let top_k = TopK::new(1).expect("top k");
+    let nprobe = IvfProbeCount::new(1).expect("probe count");
+
+    let hits = index
+        .search(IvfSearchRequest::new(&query, top_k, nprobe))
+        .expect("search");
+
+    assert_eq!(
+        hits.iter()
+            .map(|hit| (hit.doc_id, hit.score))
+            .collect::<Vec<_>>(),
+        brute_force_hits(DistanceMetric::L2, &source, &query, top_k)
+    );
+}
+
+#[test]
+fn l2_boundary_pruning_should_preserve_doc_id_tiebreaks_on_equal_scores() {
+    let config = IvfIndexConfig::new(
+        VectorDimension::new(2).expect("dimension"),
+        DistanceMetric::L2,
+        IvfIndexParams {
+            n_list: IvfListCount::new(2).expect("list count"),
+            n_probe: IvfProbeCount::new(1).expect("probe count"),
+            training_iterations: IvfTrainingIterations::new(4).expect("iterations"),
+        },
+    );
+    let source = [(10, [0.0, 0.0]), (5, [1.0, 0.0])];
+    let entries = source
+        .map(|(doc_id, values)| entry(doc_id, values))
+        .to_vec();
+    let index = IvfIndex::from_parts(
+        config,
+        entries.clone(),
+        stored_lists(&[[0.0, 0.0], [1.0, 0.0]], &[&[10], &[5]]),
+    )
+    .expect("from parts");
+    let query = vector([0.5, 0.0]);
+    let top_k = TopK::new(1).expect("top k");
+    let nprobe = IvfProbeCount::new(1).expect("probe count");
+
+    let hits = index
+        .search(IvfSearchRequest::new(&query, top_k, nprobe))
+        .expect("search");
+
+    assert_eq!(
+        hits.iter()
+            .map(|hit| (hit.doc_id, hit.score))
+            .collect::<Vec<_>>(),
+        brute_force_hits(DistanceMetric::L2, &source, &query, top_k)
+    );
 }
 
 #[test]
