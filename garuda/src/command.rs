@@ -181,7 +181,7 @@ fn vector_query(
     let mut query = VectorQuery::by_vector(
         vector_field,
         args.value,
-        TopK::new(args.options.top_k).map_err(|status| status.message)?,
+        TopK::new(args.options.top_k.get()).map_err(|status| status.message)?,
     );
     apply_query_options(&mut query, args.options)?;
     Ok(query)
@@ -194,7 +194,7 @@ fn id_query(
     let mut query = VectorQuery::by_id(
         vector_field,
         args.value,
-        TopK::new(args.options.top_k).map_err(|status| status.message)?,
+        TopK::new(args.options.top_k.get()).map_err(|status| status.message)?,
     );
     apply_query_options(&mut query, args.options)?;
     Ok(query)

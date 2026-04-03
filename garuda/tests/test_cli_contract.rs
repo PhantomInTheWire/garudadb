@@ -207,6 +207,19 @@ fn insert_upsert_update_query_fetch_and_delete_commands_should_roundtrip() {
     ]);
     assert!(by_id.status.success(), "query by id should succeed");
 
+    let invalid_top_k = run_cli(&[
+        "--root",
+        tmp.to_str().expect("utf8"),
+        "query",
+        "docs",
+        "vector",
+        "--value",
+        "1.0,0.0,0.0,0.0",
+        "--top-k",
+        "0",
+    ]);
+    assert!(!invalid_top_k.status.success(), "top-k zero should fail");
+
     let fetch = run_cli(&[
         "--root",
         tmp.to_str().expect("utf8"),
