@@ -14,7 +14,9 @@ mod state;
 mod validation;
 mod write_service;
 
-use checkpoint_service::checkpoint_state;
+use checkpoint_service::{
+    checkpoint_state, discard_staged_checkpoint, publish_checkpoint, stage_checkpoint,
+};
 use garuda_storage::{
     collection_dir, ensure_database_root, ensure_existing_collection_dir, ensure_new_collection_dir,
 };
@@ -34,7 +36,8 @@ use segment_ddl::{
 use state::CollectionRuntime;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
 use validation::validate_field_default;
 use write_service::{WriteCommand, apply_delete_by_filter, apply_write_command};
 
@@ -52,6 +55,8 @@ pub struct Database {
 #[derive(Clone)]
 pub struct Collection {
     inner: Arc<RwLock<CollectionRuntime>>,
+    revision: Arc<AtomicU64>,
+    checkpoint_lock: Arc<Mutex<()>>,
     _lock: Arc<CollectionLock>,
 }
 
@@ -78,6 +83,8 @@ impl Database {
 
         let collection = Collection {
             inner: Arc::new(RwLock::new(create_collection_state(path, schema, options))),
+            revision: Arc::new(AtomicU64::new(0)),
+            checkpoint_lock: Arc::new(Mutex::new(())),
             _lock: lock,
         };
         collection.checkpoint()?;
@@ -92,6 +99,8 @@ impl Database {
 
         Ok(Collection {
             inner: Arc::new(RwLock::new(load_collection_state(path)?)),
+            revision: Arc::new(AtomicU64::new(0)),
+            checkpoint_lock: Arc::new(Mutex::new(())),
             _lock: lock,
         })
     }
@@ -217,7 +226,12 @@ impl Collection {
     pub fn delete_by_filter(&self, raw_filter: &str) -> Result<(), Status> {
         let mut state = self.write_state();
         ensure_collection_is_writable(&state)?;
-        apply_delete_by_filter(&mut state, raw_filter)
+        let changed = apply_delete_by_filter(&mut state, raw_filter)?;
+        if changed {
+            self.bump_revision();
+        }
+
+        Ok(())
     }
 
     pub fn fetch(&self, ids: Vec<DocId>) -> HashMap<DocId, Doc> {
@@ -241,10 +255,27 @@ impl Collection {
     }
 
     fn checkpoint(&self) -> Result<(), Status> {
-        self.with_checkpoint(|state| {
-            ensure_collection_is_writable(state)?;
-            Ok(())
-        })
+        let _checkpoint_guard = self
+            .checkpoint_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (base_revision, base_state) = {
+            let state = self.read_state();
+            ensure_collection_is_writable(&state)?;
+            (self.revision(), state.clone())
+        };
+        let staged = stage_checkpoint(base_state)?;
+
+        {
+            let mut state = self.write_state();
+            if self.revision() == base_revision {
+                *state = publish_checkpoint(staged)?;
+                self.bump_revision();
+                return Ok(());
+            }
+        }
+
+        discard_staged_checkpoint(staged)
     }
 
     fn mutate_and_checkpoint(
@@ -261,6 +292,10 @@ impl Collection {
         &self,
         mutate: impl FnOnce(&mut CollectionRuntime) -> Result<(), Status>,
     ) -> Result<(), Status> {
+        let _checkpoint_guard = self
+            .checkpoint_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut state = self.write_state();
         let snapshot = state.clone();
 
@@ -269,6 +304,7 @@ impl Collection {
             *state = snapshot;
             return Err(status);
         }
+        self.bump_revision();
 
         Ok(())
     }
@@ -279,7 +315,9 @@ impl Collection {
             return write_results_for_denied_command(command, status);
         }
 
-        apply_write_command(&mut state, command)
+        let results = apply_write_command(&mut state, command);
+        self.bump_revision_if_any_ok(&results);
+        results
     }
 
     fn read_state(&self) -> std::sync::RwLockReadGuard<'_, CollectionRuntime> {
@@ -292,6 +330,20 @@ impl Collection {
         self.inner
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn revision(&self) -> u64 {
+        self.revision.load(Ordering::Acquire)
+    }
+
+    fn bump_revision(&self) {
+        self.revision.fetch_add(1, Ordering::AcqRel);
+    }
+
+    fn bump_revision_if_any_ok(&self, results: &[WriteResult]) {
+        if results.iter().any(|result| result.status.is_ok()) {
+            self.bump_revision();
+        }
     }
 }
 
