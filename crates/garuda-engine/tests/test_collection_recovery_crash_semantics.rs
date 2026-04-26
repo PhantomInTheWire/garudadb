@@ -2,7 +2,7 @@ mod common;
 
 use common::{build_doc, collection_name, database, default_options, default_schema, doc_id};
 use garuda_segment::{WalOp, append_wal_ops};
-use garuda_storage::WRITING_SEGMENT_ID;
+use garuda_storage::{WRITING_SEGMENT_ID, segment_wal_path};
 use garuda_types::{CollectionOptions, ScalarValue};
 use std::fs;
 
@@ -241,6 +241,53 @@ fn stale_wal_after_flush_with_rolled_segments_keeps_flushed_docs_visible() {
         .expect("reopen after stale wal");
 
     assert_eq!(reopened.stats().doc_count, 2);
+    assert!(
+        reopened
+            .fetch(vec![doc_id("doc-1")])
+            .contains_key(&doc_id("doc-1"))
+    );
+    assert!(
+        reopened
+            .fetch(vec![doc_id("doc-2")])
+            .contains_key(&doc_id("doc-2"))
+    );
+}
+
+#[test]
+fn flush_error_on_wal_reset_failure_preserves_reopen_recovery() {
+    let (_root, db) = database("checkpoint-reset-wal-failure");
+    let collection = db
+        .create_collection(default_schema("docs"), default_options())
+        .expect("create collection");
+
+    let inserted = collection.insert(vec![build_doc(
+        "doc-1",
+        1,
+        "alpha",
+        0.9,
+        [1.0, 0.0, 0.0, 0.0],
+    )]);
+    assert!(inserted[0].status.is_ok());
+    collection.flush().expect("baseline flush");
+
+    let inserted = collection.insert(vec![build_doc(
+        "doc-2",
+        2,
+        "beta",
+        0.8,
+        [0.0, 1.0, 0.0, 0.0],
+    )]);
+    assert!(inserted[0].status.is_ok());
+
+    let wal_path = segment_wal_path(&collection.path(), WRITING_SEGMENT_ID);
+    fs::create_dir(wal_path.with_file_name("data.wal.tmp")).expect("block wal temp file");
+
+    assert!(collection.flush().is_err());
+    drop(collection);
+
+    let reopened = db
+        .open_collection(&collection_name("docs"))
+        .expect("reopen after failed flush");
     assert!(
         reopened
             .fetch(vec![doc_id("doc-1")])

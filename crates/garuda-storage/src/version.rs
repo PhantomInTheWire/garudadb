@@ -29,9 +29,7 @@ impl VersionManager {
     pub fn write_manifest(&self, manifest: &Manifest) -> Result<(), Status> {
         let path = manifest_path(&self.collection_path, manifest.manifest_version_id);
         let bytes = encode_manifest(manifest)?;
-        write_file_atomically(&path, &bytes)?;
-        let _ = self.remove_stale_manifests(manifest.manifest_version_id);
-        Ok(())
+        write_file_atomically(&path, &bytes)
     }
 
     pub fn next_manifest_version(&self) -> Result<ManifestVersionId, Status> {
@@ -43,7 +41,7 @@ impl VersionManager {
         Ok(current.next())
     }
 
-    fn remove_stale_manifests(&self, keep: ManifestVersionId) -> Result<(), Status> {
+    pub fn remove_stale_manifests(&self, keep: ManifestVersionId) -> Result<(), Status> {
         for (version_id, path) in manifest_paths(&self.collection_path)? {
             if version_id == keep {
                 continue;

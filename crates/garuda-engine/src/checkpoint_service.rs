@@ -4,14 +4,26 @@ use garuda_storage::{
     SnapshotKind, VersionManager, WRITING_SEGMENT_ID, delete_snapshot_path, id_map_snapshot_path,
     manifest_path, read_file, remove_old_snapshots, remove_path_if_exists, segment_data_path,
     segment_dir, segment_flat_index_path, segment_hnsw_index_path, segment_ivf_index_path,
-    segment_scalar_index_dir, segment_wal_path, write_delete_snapshot, write_file_atomically,
-    write_id_map_snapshot,
+    segment_scalar_index_dir, write_delete_snapshot, write_file_atomically, write_id_map_snapshot,
 };
 use garuda_types::{SegmentId, Status, StatusCode};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 pub(crate) fn checkpoint_state(state: &mut CollectionRuntime) -> Result<(), Status> {
+    let staged = stage_checkpoint(state.clone())?;
+    *state = publish_checkpoint(staged)?;
+
+    Ok(())
+}
+
+pub(crate) struct StagedCheckpoint {
+    state: CollectionRuntime,
+    version_manager: VersionManager,
+    rollback: CheckpointFiles,
+}
+
+pub(crate) fn stage_checkpoint(mut state: CollectionRuntime) -> Result<StagedCheckpoint, Status> {
     let version_manager = VersionManager::new(&state.path);
     let had_manifest = version_manager.exists()?;
 
@@ -26,23 +38,50 @@ pub(crate) fn checkpoint_state(state: &mut CollectionRuntime) -> Result<(), Stat
         .seal_writing_segment(&mut state.next_segment_id, &state.schema);
     state.rebuild_indexes();
 
-    let rollback = capture_checkpoint_files(state)?;
-    let persist_result = write_checkpoint_files(state, &version_manager);
+    let rollback = capture_checkpoint_files(&state)?;
+    let persist_result = write_checkpoint_data_files(&state);
 
     if let Err(status) = persist_result {
         rollback.restore()?;
         return Err(status);
     }
 
-    let _ = remove_old_snapshots(&state.path, SnapshotKind::IdMap, state.id_map_snapshot_id);
-    let _ = remove_old_snapshots(&state.path, SnapshotKind::Delete, state.delete_snapshot_id);
-
-    let _ = remove_stale_segment_dirs(state);
-
-    Ok(())
+    Ok(StagedCheckpoint {
+        state,
+        version_manager,
+        rollback,
+    })
 }
 
-fn write_checkpoint_files(
+pub(crate) fn publish_checkpoint(staged: StagedCheckpoint) -> Result<CollectionRuntime, Status> {
+    let StagedCheckpoint {
+        state,
+        version_manager,
+        rollback,
+    } = staged;
+    if let Err(status) = write_checkpoint_manifest(&state, &version_manager) {
+        rollback.restore()?;
+        return Err(status);
+    }
+
+    if let Err(status) = reset_wal(&state.path, WRITING_SEGMENT_ID) {
+        rollback.restore()?;
+        return Err(status);
+    }
+
+    let _ = version_manager.remove_stale_manifests(state.manifest_version_id);
+    let _ = remove_old_snapshots(&state.path, SnapshotKind::IdMap, state.id_map_snapshot_id);
+    let _ = remove_old_snapshots(&state.path, SnapshotKind::Delete, state.delete_snapshot_id);
+    let _ = remove_stale_segment_dirs(&state);
+
+    Ok(state)
+}
+
+pub(crate) fn discard_staged_checkpoint(staged: StagedCheckpoint) -> Result<(), Status> {
+    staged.rollback.restore()
+}
+
+fn write_checkpoint_manifest(
     state: &CollectionRuntime,
     version_manager: &VersionManager,
 ) -> Result<(), Status> {
@@ -62,6 +101,11 @@ fn write_checkpoint_files(
             .map(|segment| segment.meta.clone())
             .collect(),
     };
+
+    version_manager.write_manifest(&manifest)
+}
+
+fn write_checkpoint_data_files(state: &CollectionRuntime) -> Result<(), Status> {
     write_all_segments(state)?;
     write_id_map_snapshot(
         &state.path,
@@ -76,11 +120,6 @@ fn write_checkpoint_files(
         state.delete_snapshot_id,
         state.meta.deleted_doc_ids().copied(),
     )?;
-    version_manager.write_manifest(&manifest)?;
-
-    if reset_wal(&state.path, WRITING_SEGMENT_ID).is_err() {
-        return Ok(());
-    }
 
     Ok(())
 }
@@ -200,10 +239,6 @@ fn capture_checkpoint_files(state: &CollectionRuntime) -> Result<CheckpointFiles
     files.push(capture_path(&delete_snapshot_path(
         &state.path,
         state.delete_snapshot_id,
-    ))?);
-    files.push(capture_path(&segment_wal_path(
-        &state.path,
-        WRITING_SEGMENT_ID,
     ))?);
     files.push(capture_path(&manifest_path(
         &state.path,

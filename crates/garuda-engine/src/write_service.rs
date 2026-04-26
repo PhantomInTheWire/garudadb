@@ -44,11 +44,11 @@ pub(crate) fn replay_wal_ops(
 pub(crate) fn apply_delete_by_filter(
     state: &mut CollectionRuntime,
     raw_filter: &str,
-) -> Result<(), Status> {
+) -> Result<bool, Status> {
     let filter = parse_required_filter(raw_filter, &state.schema)?;
     let ids = collect_matching_doc_ids(state, &filter);
     if ids.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
 
     let results = apply_delete_batch(state, ids);
@@ -60,7 +60,7 @@ pub(crate) fn apply_delete_by_filter(
         return Err(result.status);
     }
 
-    Ok(())
+    Ok(true)
 }
 
 fn apply_doc_batch(
