@@ -36,6 +36,7 @@ pub(crate) fn create_collection_state(
         id_map_snapshot_id: SnapshotId::new(INITIAL_SNAPSHOT_ID),
         delete_snapshot_id: SnapshotId::new(INITIAL_SNAPSHOT_ID),
         manifest_version_id: ManifestVersionId::new(INITIAL_MANIFEST_VERSION_ID),
+        revision: 0,
         segments: SegmentManager::new(Vec::new(), writing_segment),
         meta: MetadataStore::new(),
     }
@@ -58,6 +59,7 @@ pub(crate) fn load_collection_state(path: PathBuf) -> Result<CollectionRuntime, 
         id_map_snapshot_id: manifest.id_map_snapshot_id,
         delete_snapshot_id: manifest.delete_snapshot_id,
         manifest_version_id: manifest.manifest_version_id,
+        revision: 0,
         segments: SegmentManager::new(persisted_segments, writing_segment),
         meta: MetadataStore::from_parts(id_map, delete_store),
     };

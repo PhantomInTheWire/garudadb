@@ -24,6 +24,7 @@ pub(crate) struct CollectionRuntime {
     pub(crate) id_map_snapshot_id: SnapshotId,
     pub(crate) delete_snapshot_id: SnapshotId,
     pub(crate) manifest_version_id: ManifestVersionId,
+    pub(crate) revision: u64,
     pub(crate) segments: SegmentManager,
     pub(crate) meta: MetadataStore,
 }
@@ -48,6 +49,7 @@ impl CollectionRuntime {
         let inserted_doc_id = doc.id.clone();
         self.append_new_record(doc);
         self.refresh_metadata();
+        self.revision += 1;
         WriteResult::ok(inserted_doc_id)
     }
 
@@ -64,6 +66,7 @@ impl CollectionRuntime {
         self.delete_existing_if_present(&doc.id);
         self.append_new_record(merged_doc);
         self.refresh_metadata();
+        self.revision += 1;
         WriteResult::ok(doc.id)
     }
 
@@ -72,6 +75,7 @@ impl CollectionRuntime {
             return WriteResult::err(id, StatusCode::NotFound, "document not found");
         }
 
+        self.revision += 1;
         WriteResult::ok(id)
     }
 
