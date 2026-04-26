@@ -64,9 +64,7 @@ pub(crate) fn publish_checkpoint(staged: StagedCheckpoint) -> Result<CollectionR
         return Err(status);
     }
 
-    if reset_wal(&state.path, WRITING_SEGMENT_ID).is_err() {
-        return Ok(state);
-    }
+    let _ = reset_wal(&state.path, WRITING_SEGMENT_ID);
 
     let _ = version_manager.remove_stale_manifests(state.manifest_version_id);
     let _ = remove_old_snapshots(&state.path, SnapshotKind::IdMap, state.id_map_snapshot_id);

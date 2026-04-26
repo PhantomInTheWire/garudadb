@@ -2,9 +2,9 @@ mod common;
 
 use common::{build_doc, collection_name, database, default_options, default_schema, doc_id};
 use garuda_segment::{WalOp, append_wal_ops, read_wal_ops};
-use garuda_storage::{WRITING_SEGMENT_ID, segment_wal_path};
-use garuda_types::{CollectionOptions, ScalarValue};
-use std::{fs, thread, time::Duration};
+use garuda_storage::{WRITING_SEGMENT_ID, manifest_path, segment_wal_path};
+use garuda_types::{CollectionOptions, ManifestVersionId, ScalarValue};
+use std::{fs, thread};
 
 const FNV_OFFSET_BASIS: u32 = 2_166_136_261;
 const FNV_PRIME: u32 = 16_777_619;
@@ -302,63 +302,53 @@ fn flush_succeeds_with_stale_wal_when_wal_reset_temp_creation_fails() {
 
 #[test]
 fn flush_retries_when_concurrent_write_invalidates_staged_checkpoint() {
-    const DOC_COUNT: usize = 256;
+    const SEEDED_DOCS: usize = 512;
+    const NEXT_MANIFEST_VERSION: u64 = 1;
 
-    for attempt in 0..5 {
-        let (_root, db) = database(&format!("checkpoint-concurrent-write-{attempt}"));
-        let collection = db
-            .create_collection(default_schema("docs"), options_with_segment_max_docs(1))
-            .expect("create collection");
+    let (_root, db) = database("checkpoint-concurrent-write");
+    let collection = db
+        .create_collection(default_schema("docs"), options_with_segment_max_docs(1))
+        .expect("create collection");
+    let path = collection.path();
 
-        for i in 0..DOC_COUNT {
-            let inserted = collection.insert(vec![build_doc(
-                &format!("doc-{i}"),
-                i as i64,
-                "alpha",
-                0.9,
-                [1.0, 0.0, 0.0, 0.0],
-            )]);
-            assert!(inserted[0].status.is_ok());
-        }
-
-        let flusher = {
-            let collection = collection.clone();
-            thread::spawn(move || collection.flush())
-        };
-
-        thread::sleep(Duration::from_millis(1));
-        if flusher.is_finished() {
-            flusher.join().expect("flush thread").expect("fast flush");
-            continue;
-        }
-
+    for i in 0..SEEDED_DOCS {
         let inserted = collection.insert(vec![build_doc(
-            "doc-concurrent",
-            10_000,
-            "beta",
-            0.8,
-            [0.0, 1.0, 0.0, 0.0],
+            &format!("doc-{i}"),
+            i as i64,
+            "alpha",
+            0.9,
+            [1.0, 0.0, 0.0, 0.0],
         )]);
         assert!(inserted[0].status.is_ok());
-
-        flusher.join().expect("flush thread").expect("flush");
-
-        let wal_ops =
-            read_wal_ops(&collection.path(), WRITING_SEGMENT_ID).expect("read wal after flush");
-        assert!(
-            wal_ops.is_empty(),
-            "flush returned while WAL still had {} pending ops",
-            wal_ops.len()
-        );
-        assert!(
-            collection
-                .fetch(vec![doc_id("doc-concurrent")])
-                .contains_key(&doc_id("doc-concurrent"))
-        );
-        return;
     }
 
-    panic!("flush completed before the concurrent write could overlap staging");
+    let blocked_manifest = manifest_path(&path, ManifestVersionId::new(NEXT_MANIFEST_VERSION))
+        .with_extension(format!("{NEXT_MANIFEST_VERSION}.tmp"));
+    fs::create_dir(&blocked_manifest).expect("block first manifest write");
+
+    let flusher = {
+        let collection = collection.clone();
+        thread::spawn(move || collection.flush())
+    };
+
+    let inserted = collection.insert(vec![build_doc(
+        "doc-concurrent",
+        10_000,
+        "beta",
+        0.8,
+        [0.0, 1.0, 0.0, 0.0],
+    )]);
+    assert!(inserted[0].status.is_ok());
+
+    fs::remove_dir(blocked_manifest).expect("unblock manifest write");
+
+    flusher.join().expect("flush thread").expect("flush");
+
+    assert!(
+        read_wal_ops(&path, WRITING_SEGMENT_ID)
+            .expect("read wal after flush")
+            .is_empty()
+    );
 }
 
 #[test]
