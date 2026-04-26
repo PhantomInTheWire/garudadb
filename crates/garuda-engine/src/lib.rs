@@ -34,7 +34,7 @@ use segment_ddl::{
 use state::CollectionRuntime;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use validation::validate_field_default;
 use write_service::{WriteCommand, apply_delete_by_filter, apply_write_command};
 
@@ -52,6 +52,7 @@ pub struct Database {
 #[derive(Clone)]
 pub struct Collection {
     inner: Arc<RwLock<CollectionRuntime>>,
+    checkpoint_lock: Arc<Mutex<()>>,
     _lock: Arc<CollectionLock>,
 }
 
@@ -78,6 +79,7 @@ impl Database {
 
         let collection = Collection {
             inner: Arc::new(RwLock::new(create_collection_state(path, schema, options))),
+            checkpoint_lock: Arc::new(Mutex::new(())),
             _lock: lock,
         };
         collection.checkpoint()?;
@@ -92,6 +94,7 @@ impl Database {
 
         Ok(Collection {
             inner: Arc::new(RwLock::new(load_collection_state(path)?)),
+            checkpoint_lock: Arc::new(Mutex::new(())),
             _lock: lock,
         })
     }
@@ -185,17 +188,40 @@ impl Collection {
     }
 
     pub fn optimize(&self, _options: OptimizeOptions) -> Result<(), Status> {
-        self.mutate_and_checkpoint(|state| {
-            state.segments.optimize(
-                &mut state.next_segment_id,
-                state.options.segment_max_docs,
-                &state.schema,
-                |doc_id| state.meta.is_deleted(doc_id),
+        let mut optimized = {
+            let state = self.read_state();
+            ensure_collection_is_writable(&state)?;
+            let mut optimized = state.clone();
+            let meta = optimized.meta.clone();
+            optimized.segments.optimize(
+                &mut optimized.next_segment_id,
+                optimized.options.segment_max_docs,
+                &optimized.schema,
+                |doc_id| meta.is_deleted(doc_id),
             );
-            state.rebuild_indexes();
+            optimized.rebuild_indexes();
+            optimized
+        };
 
-            Ok(())
-        })
+        let _checkpoint_guard = self.lock_checkpoint();
+        let mut state = self.write_state();
+        ensure_collection_is_writable(&state)?;
+        if state.revision != optimized.revision {
+            return Err(Status::err(
+                StatusCode::FailedPrecondition,
+                "optimize conflicted with a concurrent collection mutation; retry optimize",
+            ));
+        }
+
+        let snapshot = state.clone();
+        std::mem::swap(&mut *state, &mut optimized);
+        if let Err(status) = checkpoint_state(&mut state) {
+            *state = snapshot;
+            return Err(status);
+        }
+        state.revision += 1;
+
+        Ok(())
     }
 
     pub fn insert(&self, docs: Vec<Doc>) -> Vec<WriteResult> {
@@ -261,6 +287,7 @@ impl Collection {
         &self,
         mutate: impl FnOnce(&mut CollectionRuntime) -> Result<(), Status>,
     ) -> Result<(), Status> {
+        let _checkpoint_guard = self.lock_checkpoint();
         let mut state = self.write_state();
         let snapshot = state.clone();
 
@@ -269,6 +296,7 @@ impl Collection {
             *state = snapshot;
             return Err(status);
         }
+        state.revision += 1;
 
         Ok(())
     }
@@ -291,6 +319,12 @@ impl Collection {
     fn write_state(&self) -> std::sync::RwLockWriteGuard<'_, CollectionRuntime> {
         self.inner
             .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn lock_checkpoint(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.checkpoint_lock
+            .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
