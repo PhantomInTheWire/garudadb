@@ -64,9 +64,8 @@ pub(crate) fn publish_checkpoint(staged: StagedCheckpoint) -> Result<CollectionR
         return Err(status);
     }
 
-    if let Err(status) = reset_wal(&state.path, WRITING_SEGMENT_ID) {
-        rollback.restore()?;
-        return Err(status);
+    if reset_wal(&state.path, WRITING_SEGMENT_ID).is_err() {
+        return Ok(state);
     }
 
     let _ = version_manager.remove_stale_manifests(state.manifest_version_id);

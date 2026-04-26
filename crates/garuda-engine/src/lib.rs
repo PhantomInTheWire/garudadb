@@ -259,23 +259,26 @@ impl Collection {
             .checkpoint_lock
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let (base_revision, base_state) = {
-            let state = self.read_state();
-            ensure_collection_is_writable(&state)?;
-            (self.revision(), state.clone())
-        };
-        let staged = stage_checkpoint(base_state)?;
 
-        {
-            let mut state = self.write_state();
-            if self.revision() == base_revision {
-                *state = publish_checkpoint(staged)?;
-                self.bump_revision();
-                return Ok(());
+        loop {
+            let (base_revision, base_state) = {
+                let state = self.read_state();
+                ensure_collection_is_writable(&state)?;
+                (self.revision(), state.clone())
+            };
+            let staged = stage_checkpoint(base_state)?;
+
+            {
+                let mut state = self.write_state();
+                if self.revision() == base_revision {
+                    *state = publish_checkpoint(staged)?;
+                    self.bump_revision();
+                    return Ok(());
+                }
             }
-        }
 
-        discard_staged_checkpoint(staged)
+            discard_staged_checkpoint(staged)?;
+        }
     }
 
     fn mutate_and_checkpoint(
